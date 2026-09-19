@@ -20,9 +20,7 @@ def menubar() -> None:
     try:
         import rumps  # noqa: F401
     except ImportError:
-        click.echo(
-            "rumps is not installed. Install with: uv tool install 'prudence-dev[menubar]'"
-        )
+        click.echo("rumps is not installed. Install with: uv tool install 'prudence-dev[menubar]'")
         return
 
     from prudence.menubar.app import run
