@@ -118,8 +118,12 @@ def render_item(item: sampling.SampleItem) -> list[str]:
         f"commit {item.commit_hash[:10]}  repo {item.repo_name}  committer {item.committer_at}"
         f"  +{item.added_lines} lines, {item.files_changed} files",
     ]
+    if item.paths:
+        lines.append(f"  files: {_files(item.paths, set(item.paths))}")
     for index, candidate in enumerate(item.candidates, start=1):
         lines.append(f"  {index}) {_candidate(candidate)}")
+        if candidate.files:
+            lines.append(f"       edited: {_files(candidate.files, set(item.paths))}")
     lines.append(
         f"  time window picks: 4h -> {_short(item.pick_4h)}, 24h -> {_short(item.pick_24h)}"
     )
@@ -152,6 +156,13 @@ def _candidate(candidate: sampling.Candidate) -> str:
     if candidate.line_match_rank is not None:
         detail += f"  line_match rank {candidate.line_match_rank} ({candidate.lines_matched} lines)"
     return detail
+
+
+def _files(paths: list[str], highlight: set[str], limit: int = 6) -> str:
+    """Up to `limit` paths, an asterisk marking those the commit also touched."""
+    shown = [f"{p}*" if p in highlight else p for p in paths[:limit]]
+    more = f" (+{len(paths) - limit} more)" if len(paths) > limit else ""
+    return ", ".join(shown) + more
 
 
 def _short(session_id: str | None) -> str:

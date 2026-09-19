@@ -45,6 +45,7 @@ class Candidate:
     edits: int
     line_match_rank: int | None = None
     lines_matched: int | None = None
+    files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +62,7 @@ class SampleItem:
     candidates: list[Candidate] = field(default_factory=list)
     pick_4h: str | None = None
     pick_24h: str | None = None
+    paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -135,6 +137,7 @@ def draw_sample(
                     edits=count,
                     line_match_rank=winners.get(session_id, (None, None))[0],
                     lines_matched=winners.get(session_id, (None, None))[1],
+                    files=_session_files(connection, session_id),
                 )
                 for session_id, (first_at, last_at, count) in sorted(active.items())
             ]
@@ -149,6 +152,7 @@ def draw_sample(
                     candidates=candidates,
                     pick_4h=_pick(times, sessions, moment, NEAR_WINDOW),
                     pick_24h=_pick(times, sessions, moment, HARD_QUARTER_WINDOW),
+                    paths=_commit_paths(connection, commit_hash),
                 )
             )
 
@@ -215,6 +219,29 @@ def score(connection: sqlite3.Connection) -> dict[str, MethodScore]:
                 if true_session is not None and guess == true_session:
                     stat.correct += 1
     return scores
+
+
+def _commit_paths(connection: sqlite3.Connection, commit_hash: str) -> list[str]:
+    """Paths the commit added lines to; empty at metadata-only, where no lines are kept."""
+    return [
+        row[0]
+        for row in connection.execute(
+            "SELECT DISTINCT path FROM commit_line WHERE commit_hash = ? ORDER BY path",
+            (commit_hash,),
+        )
+    ]
+
+
+def _session_files(connection: sqlite3.Connection, session_id: str) -> list[str]:
+    """Files a session edited, most edited first; empty at metadata-only."""
+    return [
+        row[0]
+        for row in connection.execute(
+            "SELECT rel_path FROM edit WHERE session_id = ? AND rel_path IS NOT NULL"
+            " GROUP BY rel_path ORDER BY COUNT(*) DESC, rel_path",
+            (session_id,),
+        )
+    ]
 
 
 def _edits(connection: sqlite3.Connection, repo_key: str) -> tuple[list[str], list[str]]:
