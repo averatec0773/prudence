@@ -12,15 +12,20 @@ local store. Surfaces never contain analysis logic.
 ```
 src/prudence/
   paths.py        every path Prudence reads or writes, in one place
+  config.py       the user's choices, as TOML: which repositories, at which level
   scan.py         read-only inventory of agent history on this machine
   sources/        where we see the developer's work: one module per agent
     claude_code.py
-  store/          Prudence's own record: repository identity now; the raw archive and
-    identity.py   the derived tables next
+  store/          Prudence's own record
+    identity.py   which repository a directory belongs to
+    db.py         the one SQLite file: connection, file mode, archive migrations
+    archive.py    the agent's bytes, compressed, unmodified, appended incrementally
+    derived.py    the versioned tables built from the archive and nothing else
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
 plugin/           (next) the Claude Code plugin: skills, hooks, .mcp.json
-tests/            pytest; fixtures are anonymised, one directory per observed format version
+tests/            pytest; fixtures are synthetic, one file per observed format version
+docs/reference/store-schema.md   every table and column, with its trust level
 ```
 
 ## Rules
@@ -46,7 +51,13 @@ tests/            pytest; fixtures are anonymised, one directory per observed fo
 ## Adding things
 
 - A new agent: one module in `sources/` that finds the agent's files and yields records.
-- A new derived fact: one function in `facts/` with a version and its test cases as data.
+- A new derived table or column: `store/derived.py`, then bump `PARSER_VERSION` and
+  document the change in `docs/reference/store-schema.md`. Never write a migration.
+- A new derived fact computed from those tables: one function in `facts/` with a version
+  and its test cases as data. `derived.py` builds the tables; `facts/` reads them.
+- A new archive column: `store/db.py`, with `ARCHIVE_SCHEMA_VERSION` bumped and a step in
+  `migrate`. Archive tables are the only ones that are migrated rather than rebuilt.
+- A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
 
