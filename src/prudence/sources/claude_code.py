@@ -33,6 +33,7 @@ class SessionFile:
     last_at: datetime | None
     size_bytes: int
     entrypoint: str | None
+    git_branch: str | None = None
 
 
 def list_session_files(projects_dir: Path | None = None) -> list[Path]:
@@ -53,6 +54,7 @@ def read_session_file(path: Path) -> SessionFile:
     cwd: str | None = None
     first_at: datetime | None = None
     entrypoint: str | None = None
+    git_branch: str | None = None
     with path.open("rb") as fh:
         for _ in range(HEAD_RECORDS):
             line = fh.readline()
@@ -67,7 +69,9 @@ def read_session_file(path: Path) -> SessionFile:
                 first_at = _timestamp(record)
             if entrypoint is None and isinstance(record.get("entrypoint"), str):
                 entrypoint = record["entrypoint"]
-            if cwd and first_at and entrypoint:
+            if git_branch is None and isinstance(record.get("gitBranch"), str):
+                git_branch = record["gitBranch"]
+            if cwd and first_at and entrypoint and git_branch:
                 break
     last_at = _last_timestamp(path)
     return SessionFile(
@@ -78,6 +82,7 @@ def read_session_file(path: Path) -> SessionFile:
         last_at=last_at or first_at,
         size_bytes=path.stat().st_size,
         entrypoint=entrypoint,
+        git_branch=git_branch,
     )
 
 

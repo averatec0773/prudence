@@ -27,6 +27,7 @@ from pathlib import Path
 from prudence.paths import claude_file_history_dir, claude_projects_dir
 from prudence.sources import claude_code
 from prudence.store.identity import identify
+from prudence.store.repos import Resolver
 
 CHUNK_BYTES = 4 * 1024 * 1024
 READ_BLOCK = 1024 * 1024
@@ -58,21 +59,23 @@ def collect_targets(
     enabled_keys: set[str],
     projects_dir: Path | None = None,
     file_history_dir: Path | None = None,
+    resolver: Resolver | None = None,
 ) -> list[Target]:
     """Every file belonging to an enabled repository: transcript, subagents, spills, history.
 
-    A session's repository comes from the first record's working directory, the same
-    rule the scan uses, so enabling a repository in `init` and ingesting it agree.
+    A session's repository comes from the first record's working directory. When that
+    directory no longer exists, which is the normal case for a Claude Desktop worktree,
+    `store.repos` maps it back by prefix or pattern and the session is archived like any
+    other. Without a resolver only the directory itself is consulted.
     """
     root = projects_dir or claude_projects_dir()
     history_root = file_history_dir or claude_file_history_dir()
     targets: list[Target] = []
     for path in claude_code.list_session_files(root):
         session = claude_code.read_session_file(path)
-        identity = identify(session.cwd) if session.cwd else None
-        if identity is None or identity.key not in enabled_keys:
+        key = _repo_key(session, resolver)
+        if key is None or key not in enabled_keys:
             continue
-        key = identity.key
         targets.append(Target(path, "transcript", session.session_id, key))
         session_dir = path.parent / session.session_id
         targets.extend(_files_in(session_dir / "subagents", "subagent", session.session_id, key))
@@ -207,6 +210,13 @@ def archive_totals(connection: sqlite3.Connection) -> tuple[int, int, int]:
         "SELECT COALESCE(SUM(LENGTH(data)), 0) AS stored FROM archive_chunk WHERE superseded = 0"
     ).fetchone()
     return row["files"], row["size"], stored["stored"]
+
+
+def _repo_key(session: claude_code.SessionFile, resolver: Resolver | None) -> str | None:
+    if resolver is not None:
+        return resolver.resolve(session.cwd, session.git_branch).repo_key
+    identity = identify(session.cwd) if session.cwd else None
+    return identity.key if identity else None
 
 
 def _files_in(directory: Path, source: str, session_id: str, repo_key: str) -> list[Target]:

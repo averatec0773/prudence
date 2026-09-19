@@ -9,6 +9,7 @@ from prudence import __version__
 from prudence.cli.ingest import ingest
 from prudence.cli.init import init
 from prudence.cli.rebuild import rebuild
+from prudence.cli.sessions import sessions
 from prudence.cli.status import status
 
 
@@ -21,4 +22,5 @@ def main() -> None:
 main.add_command(init)
 main.add_command(ingest)
 main.add_command(rebuild)
+main.add_command(sessions)
 main.add_command(status)

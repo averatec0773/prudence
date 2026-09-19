@@ -1,7 +1,7 @@
 """`prudence ingest`: copy new bytes into the archive, then rebuild what they mean.
 
 Archiving and parsing are one command because they are one promise: after `ingest`,
-what the agent wrote is in the archive and the tables agree with it. They are two
+what the agent wrote is in the archive and the tables agree with it. They are separate
 functions because only the first is irreversible.
 """
 
@@ -11,7 +11,7 @@ import click
 
 from prudence import config as config_module
 from prudence.cli.render import size
-from prudence.store import archive, db, derived
+from prudence.store import db, pipeline
 
 
 @click.command()
@@ -32,21 +32,62 @@ def ingest() -> None:
 def _run(config: config_module.Config) -> None:
     connection = db.connect()
     try:
-        targets = archive.collect_targets(set(config.repositories))
-        stats = archive.archive(connection, targets)
-        click.echo(
-            f"Archived: {stats.files_seen} files seen, {stats.new_files} new, "
-            f"{stats.rearchived_files} rewritten, {stats.unchanged_files} unchanged, "
-            f"{size(stats.new_bytes)} new ({stats.new_bytes} bytes), "
-            f"{stats.elapsed:.1f} s."
-        )
-        if stats.missing_files:
-            click.echo(f"{stats.missing_files} files disappeared while reading; skipped.")
-        built = derived.build(connection, config.levels)
-        click.echo(
-            f"Parsed: {built.sessions} sessions, {built.records} records, "
-            f"{built.turns} turns, {built.tool_calls} tool calls, "
-            f"{built.unknown_types} unknown record types, {built.elapsed:.1f} s."
-        )
+        result = pipeline.run(connection, config, with_archive=True)
+        for line in report(result):
+            click.echo(line)
     finally:
         connection.close()
+
+
+def report(result: pipeline.Result) -> list[str]:
+    """What each step of the pipeline did, in the order it did it."""
+    lines = []
+    archived = result.archived
+    if archived is not None:
+        lines.append(
+            f"Archived: {archived.files_seen} files seen, {archived.new_files} new, "
+            f"{archived.rearchived_files} rewritten, {archived.unchanged_files} unchanged, "
+            f"{size(archived.new_bytes)} new ({archived.new_bytes} bytes), "
+            f"{archived.elapsed:.1f} s."
+        )
+        if archived.missing_files:
+            lines.append(f"{archived.missing_files} files disappeared while reading; skipped.")
+    parsed = result.parsed
+    lines.append(
+        f"Parsed: {parsed.sessions} sessions, {parsed.records} records, "
+        f"{parsed.turns} turns, {parsed.tool_calls} tool calls, {parsed.edits} edits, "
+        f"{parsed.commands} commands, {parsed.unknown_types} unknown record types, "
+        f"{parsed.elapsed:.1f} s."
+    )
+    recovered = {
+        method: count
+        for method, count in parsed.mapping_methods.items()
+        if method not in ("cwd", "unassigned")
+    }
+    if recovered or parsed.unassigned_sessions:
+        detail = ", ".join(f"{count} by {method}" for method, count in sorted(recovered.items()))
+        lines.append(
+            f"Sessions mapped to a repository the hard way: {detail or 'none'}; "
+            f"{parsed.unassigned_sessions} still unassigned."
+        )
+    harvested = result.harvested
+    lines.append(
+        f"Commits: {harvested.commits + harvested.merges} harvested from "
+        f"{harvested.repositories} repositories ({harvested.merges} of them merges, which "
+        f"carry no lines; {harvested.added_lines} added lines, "
+        f"{harvested.excluded_paths} generated paths skipped), {harvested.elapsed:.1f} s."
+    )
+    attributed = result.attributed
+    lines.append(
+        f"Attributed: {attributed.commits_attributed} commits "
+        f"({attributed.in_session} in session, {attributed.git_ai_note} by git-ai note, "
+        f"{attributed.line_match_winners} by line match "
+        f"from {attributed.line_match_candidates} candidates), {attributed.elapsed:.1f} s."
+    )
+    if attributed.unresolved_hashes or attributed.unreadable_notes:
+        lines.append(
+            f"{attributed.unresolved_hashes} commit hashes named in a session no longer "
+            f"resolve; {attributed.unreadable_notes} git-ai notes were not in the expected "
+            "format and were skipped."
+        )
+    return lines

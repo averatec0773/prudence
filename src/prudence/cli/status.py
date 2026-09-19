@@ -15,7 +15,7 @@ from prudence import __version__
 from prudence import config as config_module
 from prudence.cli.render import size
 from prudence.paths import database_file
-from prudence.store import archive, db, derived
+from prudence.store import archive, attribution, commits, db, derived
 
 
 @click.command()
@@ -31,10 +31,17 @@ def status() -> None:
     database_exists = database_file().exists()
     connection = db.connect() if database_exists else None
     try:
-        lines.append(f"{'repository':<32} {'level':<14} {'files':>7} {'archived':>10}")
+        lines.append(
+            f"{'repository':<28} {'level':<14} {'files':>7} {'archived':>10} "
+            f"{'sessions':>8} {'edits':>7} {'commits':>8}"
+        )
         for repo in sorted(config.repositories.values(), key=lambda r: r.name):
             files, archived = _per_repo(connection, repo.key)
-            lines.append(f"{repo.name[:32]:<32} {repo.level:<14} {files:>7} {size(archived):>10}")
+            counted = _per_repo_derived(connection, repo.key)
+            lines.append(
+                f"{repo.name[:28]:<28} {repo.level:<14} {files:>7} {size(archived):>10} "
+                f"{counted['sessions']:>8} {counted['edits']:>7} {counted['commits']:>8}"
+            )
         lines.append("")
         if connection is None:
             lines.append("Nothing ingested yet. Run `prudence ingest`.")
@@ -57,6 +64,23 @@ def _per_repo(connection: sqlite3.Connection | None, repo_key: str) -> tuple[int
     return row["files"], row["size"]
 
 
+def _per_repo_derived(connection: sqlite3.Connection | None, repo_key: str) -> dict[str, int]:
+    """Sessions, edits and commits recorded for one repository, zero before the first build."""
+    counted = {"sessions": 0, "edits": 0, "commits": 0}
+    if connection is None:
+        return counted
+    for name, statement in (
+        ("sessions", "SELECT COUNT(*) FROM session WHERE repo_key = ?"),
+        ("edits", "SELECT COUNT(*) FROM edit WHERE repo_key = ?"),
+        ("commits", 'SELECT COUNT(*) FROM "commit" WHERE repo_key = ?'),
+    ):
+        try:
+            counted[name] = connection.execute(statement, (repo_key,)).fetchone()[0]
+        except sqlite3.OperationalError:
+            counted[name] = 0
+    return counted
+
+
 def _store_lines(connection: sqlite3.Connection) -> list[str]:
     files, original, stored = archive.archive_totals(connection)
     counts = derived.counts(connection)
@@ -68,14 +92,72 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
         return lines
     lines.append(
         f"derived: {counts['session']} sessions, {counts['record']} records, "
-        f"{counts['turn']} turns, {counts['tool_call']} tool calls "
-        f"(parser version {derived.PARSER_VERSION})"
+        f"{counts['turn']} turns, {counts['tool_call']} tool calls, {counts['edit']} edits, "
+        f"{counts['command']} commands (parser version {derived.PARSER_VERSION})"
     )
+    lines.extend(_command_lines(connection))
+    lines.extend(_commit_lines(connection))
+    lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
         "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
     ).fetchone()[0]
     if resumed:
         lines.append(f"resumed sessions noted: {resumed}")
+    return lines + _unknown_lines(connection)
+
+
+def _command_lines(connection: sqlite3.Connection) -> list[str]:
+    rows = connection.execute(
+        "SELECT command_class, COUNT(*) AS n FROM command GROUP BY command_class ORDER BY n DESC"
+    ).fetchall()
+    if not rows:
+        return []
+    detail = ", ".join(f"{row['n']} {row['command_class']}" for row in rows)
+    return [f"commands by class: {detail}"]
+
+
+def _commit_lines(connection: sqlite3.Connection) -> list[str]:
+    """What the harvest found and what attribution made of it, with its methods named."""
+    harvested, commit_lines = commits.counts(connection)
+    if not harvested:
+        return ["commits: none harvested yet"]
+    methods = attribution.counts(connection)
+    attributed = connection.execute(
+        "SELECT COUNT(DISTINCT commit_hash) FROM attribution WHERE rank = 1"
+    ).fetchone()[0]
+    detail = ", ".join(f"{count} {method}" for method, count in sorted(methods.items())) or "none"
+    return [
+        f"commits: {harvested} harvested, {commit_lines} added lines hashed "
+        f"(fact version {commits.FACT_VERSION})",
+        f"attributed: {attributed} commits, by method {detail} "
+        f"(fact version {attribution.FACT_VERSION})",
+    ]
+
+
+def _mapping_lines(connection: sqlite3.Connection) -> list[str]:
+    """How many sessions needed a fallback to find their repository, and how many failed."""
+    unassigned = connection.execute(
+        "SELECT COUNT(*) FROM session WHERE repo_key IS NULL"
+    ).fetchone()[0]
+    rows = connection.execute(
+        "SELECT notes, COUNT(*) AS n FROM session WHERE notes LIKE '%repository by%' GROUP BY notes"
+    ).fetchall()
+    recovered: dict[str, int] = {}
+    for row in rows:
+        for part in row["notes"].split("; "):
+            if part.startswith("repository by "):
+                method = part[len("repository by ") :]
+                recovered[method] = recovered.get(method, 0) + row["n"]
+    lines = []
+    if recovered:
+        detail = ", ".join(f"{count} by {method}" for method, count in sorted(recovered.items()))
+        lines.append(f"sessions mapped by a fallback: {detail}")
+    lines.append(f"sessions with no repository: {unassigned}")
+    return lines
+
+
+def _unknown_lines(connection: sqlite3.Connection) -> list[str]:
+    lines: list[str] = []
     unknown = connection.execute(
         "SELECT type, claude_version, count FROM unknown_record_type ORDER BY count DESC, type"
     ).fetchall()

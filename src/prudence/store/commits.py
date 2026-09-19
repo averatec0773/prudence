@@ -1,0 +1,349 @@
+"""Commits, as the right-hand side of attribution: what each one really added.
+
+Harvested from the repository itself, never from the agent, and only with read-only
+commands. Every reachable commit on every branch is read once with `-p -U0`, because a
+commit that is not in the store cannot be attributed and a branch that was never merged
+is still work the developer did.
+
+Three decisions come from the attribution spikes. Generated and vendored paths are
+excluded, because a lock file adds thousands of lines nobody wrote and would drown
+every coverage figure. The committer date is stored in UTC, because an edit made in one
+timezone has to be comparable with a commit made in another. And the patch id and tree
+are stored beside the hash, because round two measured that a third of the hashes the
+agent printed no longer name a reachable object: rebases and squashes rewrite them, and
+the patch id is what lets a rewritten commit be recognised as the same work.
+
+Nothing of the diff is stored. A line becomes a keyed hash through `store.lines`, the
+same function the edits went through, or the two sides would never meet.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import sqlite3
+import subprocess
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from prudence.store import lines as line_module
+from prudence.store.repos import Repository
+
+FACT_VERSION = 1
+
+RECORD = "\x01"
+FIELD = "\x1f"
+LOG_FORMAT = f"{RECORD}%H{FIELD}%cI{FIELD}%aI{FIELD}%T{FIELD}%ae{FIELD}%P"
+
+# Paths whose content is produced rather than written. Approximate in both directions,
+# as the spike said, but leaving them in makes every coverage number meaningless.
+GENERATED = re.compile(
+    r"(^|/)(node_modules|vendor|dist|build|out|coverage|__pycache__|\.next|\.nuxt|target)/"
+    r"|(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb"
+    r"|poetry\.lock|uv\.lock|Pipfile\.lock|Cargo\.lock|go\.sum|composer\.lock|Gemfile\.lock"
+    r"|Podfile\.lock|flake\.lock|pubspec\.lock)$"
+    r"|\.min\.[^/]+$|\.map$|\.lock$"
+    r"|\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tgz|bz2|xz|7z|jar|war|wasm|so|dylib|dll|exe"
+    r"|o|a|class|pyc|woff2?|ttf|eot|otf|mp[34]|mov|avi|db|sqlite3?|bin|dat)$",
+    re.IGNORECASE,
+)
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS "commit"(
+    commit_hash TEXT PRIMARY KEY,
+    repo_key TEXT,
+    committer_at TEXT,
+    author_at TEXT,
+    patch_id TEXT,
+    tree TEXT,
+    added_lines INTEGER NOT NULL DEFAULT 0,
+    files_changed INTEGER NOT NULL DEFAULT 0,
+    is_merge INTEGER NOT NULL DEFAULT 0,
+    author_email_hash TEXT,
+    fact_version INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS commit_repo ON "commit"(repo_key, committer_at);
+CREATE TABLE IF NOT EXISTS commit_line(
+    commit_hash TEXT NOT NULL,
+    path TEXT NOT NULL,
+    line_hash TEXT NOT NULL,
+    PRIMARY KEY (commit_hash, path, line_hash)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS commit_line_hash ON commit_line(line_hash);
+"""
+
+
+@dataclass
+class HarvestStats:
+    repositories: int = 0
+    commits: int = 0
+    merges: int = 0
+    added_lines: int = 0
+    excluded_paths: int = 0
+    unreadable: int = 0
+    elapsed: float = 0.0
+
+
+@dataclass
+class _Commit:
+    commit_hash: str
+    repo_key: str
+    committer_at: str | None
+    author_at: str | None
+    tree: str | None
+    author_email_hash: str | None
+    is_merge: int = 0
+    paths: set[str] | None = None
+
+
+def harvest(
+    connection: sqlite3.Connection,
+    repositories: list[Repository],
+    key: bytes,
+    levels: dict[str, str] | None = None,
+) -> HarvestStats:
+    """Read every reachable commit of every enabled repository into the store.
+
+    At `metadata-only` the commits are counted and dated but their lines are not
+    hashed into the store. A keyed hash is not readable, but a hash of every line an
+    employer's repository ever gained is more than the shape that level promises, and
+    without the left-hand side there would be nothing to match it against anyway.
+    """
+    started = time.monotonic()
+    stats = HarvestStats()
+    levels = levels or {}
+    connection.executescript(SCHEMA)
+    for repository in repositories:
+        directory = repository.toplevel
+        if not directory:
+            stats.unreadable += 1
+            continue
+        stats.repositories += 1
+        _forget(connection, repository.repo_key)
+        patch_ids = _patch_ids(directory)
+        keep_lines = levels.get(repository.repo_key, "full") == "full"
+        _read_commits(connection, repository, directory, key, patch_ids, stats, keep_lines)
+        _read_merges(connection, repository, directory, stats)
+    stats.elapsed = time.monotonic() - started
+    return stats
+
+
+def counts(connection: sqlite3.Connection) -> tuple[int, int]:
+    """Commits and commit lines stored, or zeroes before the first harvest."""
+    try:
+        commits = connection.execute('SELECT COUNT(*) FROM "commit"').fetchone()[0]
+        commit_lines = connection.execute("SELECT COUNT(*) FROM commit_line").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0, 0
+    return commits, commit_lines
+
+
+def utc(stamp: str | None) -> str | None:
+    """Any ISO timestamp as UTC to the second, the one form everything is compared in."""
+    if not stamp:
+        return None
+    try:
+        moment = datetime.fromisoformat(stamp.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _forget(connection: sqlite3.Connection, repo_key: str) -> None:
+    connection.execute(
+        "DELETE FROM commit_line WHERE commit_hash IN"
+        ' (SELECT commit_hash FROM "commit" WHERE repo_key = ?)',
+        (repo_key,),
+    )
+    connection.execute('DELETE FROM "commit" WHERE repo_key = ?', (repo_key,))
+
+
+def _read_commits(
+    connection: sqlite3.Connection,
+    repository: Repository,
+    directory: str,
+    key: bytes,
+    patch_ids: dict[str, str],
+    stats: HarvestStats,
+    keep_lines: bool,
+) -> None:
+    """One streaming pass over the diffs, hashing added lines as they go past."""
+    process = _log(directory, "--no-merges", "-p", "-U0", f"--format={LOG_FORMAT}")
+    if process is None:
+        stats.unreadable += 1
+        return
+    current: _Commit | None = None
+    seen: set[tuple[str, str]] = set()
+    path: str | None = None
+    in_hunk = False
+    pending: list[tuple[str, str, str]] = []
+    assert process.stdout is not None
+    for raw in process.stdout:
+        line = raw.rstrip("\n")
+        if line.startswith(RECORD):
+            _flush(connection, current, seen, pending, patch_ids, stats)
+            current = _parse_header(line, repository.repo_key)
+            seen, path, in_hunk = set(), None, False
+            continue
+        if current is None:
+            continue
+        if line.startswith("diff --git "):
+            path, in_hunk = None, False
+        elif not in_hunk and line.startswith("+++ "):
+            path = _path(line[4:], stats)
+        elif line.startswith("@@"):
+            in_hunk = path is not None
+        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            path, in_hunk = None, False
+        elif in_hunk and path is not None and line.startswith("+"):
+            digest = line_module.hash_line(key, line[1:])
+            if digest is not None and (path, digest) not in seen:
+                seen.add((path, digest))
+                if keep_lines:
+                    pending.append((current.commit_hash, path, digest))
+    _flush(connection, current, seen, pending, patch_ids, stats)
+    process.stdout.close()
+    process.wait()
+
+
+def _read_merges(
+    connection: sqlite3.Connection, repository: Repository, directory: str, stats: HarvestStats
+) -> None:
+    """Merges carry no lines of their own, but a commit missing from the store is a hole."""
+    process = _log(directory, "--merges", f"--format={LOG_FORMAT}")
+    if process is None:
+        return
+    assert process.stdout is not None
+    rows = []
+    for raw in process.stdout:
+        line = raw.rstrip("\n")
+        if not line.startswith(RECORD):
+            continue
+        commit = _parse_header(line, repository.repo_key)
+        if commit is None:
+            continue
+        commit.is_merge = 1
+        rows.append(_row(commit, None, 0, 0))
+    process.stdout.close()
+    process.wait()
+    connection.executemany(
+        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', rows
+    )
+    stats.merges += len(rows)
+
+
+def _flush(
+    connection: sqlite3.Connection,
+    commit: _Commit | None,
+    seen: set[tuple[str, str]],
+    pending: list[tuple[str, str, str]],
+    patch_ids: dict[str, str],
+    stats: HarvestStats,
+) -> None:
+    if commit is None:
+        return
+    paths = {path for path, _ in seen}
+    connection.execute(
+        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        _row(commit, patch_ids.get(commit.commit_hash), len(seen), len(paths)),
+    )
+    if pending:
+        connection.executemany("INSERT OR REPLACE INTO commit_line VALUES (?, ?, ?)", pending)
+    stats.commits += 1
+    stats.added_lines += len(seen)
+    pending.clear()
+
+
+def _row(commit: _Commit, patch_id: str | None, added: int, files: int) -> tuple:
+    return (
+        commit.commit_hash,
+        commit.repo_key,
+        commit.committer_at,
+        commit.author_at,
+        patch_id,
+        commit.tree,
+        added,
+        files,
+        commit.is_merge,
+        commit.author_email_hash,
+        FACT_VERSION,
+    )
+
+
+def _parse_header(line: str, repo_key: str) -> _Commit | None:
+    fields = line[len(RECORD) :].split(FIELD)
+    if len(fields) < 5 or len(fields[0]) < 7:
+        return None
+    email = fields[4].strip().lower()
+    return _Commit(
+        commit_hash=fields[0],
+        repo_key=repo_key,
+        committer_at=utc(fields[1]),
+        author_at=utc(fields[2]),
+        tree=fields[3] or None,
+        author_email_hash=hashlib.sha256(email.encode()).hexdigest() if email else None,
+    )
+
+
+def _path(raw: str, stats: HarvestStats) -> str | None:
+    """The post-image path of a diff, or None when it is deleted or generated."""
+    text = raw.strip()
+    if text in ("/dev/null", ""):
+        return None
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1].encode().decode("unicode_escape", "replace")
+    if text.startswith("b/"):
+        text = text[2:]
+    text = text.split("\t")[0]
+    if GENERATED.search(text):
+        stats.excluded_paths += 1
+        return None
+    return text
+
+
+def _patch_ids(directory: str) -> dict[str, str]:
+    """`git log -p | git patch-id` in one go: a stable id per commit, rewrites and all."""
+    try:
+        log = subprocess.Popen(
+            ["git", "-C", directory, "log", "--all", "--no-merges", "-p", "-U0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        ids = subprocess.Popen(
+            ["git", "-C", directory, "patch-id", "--stable"],
+            stdin=log.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError:
+        return {}
+    if log.stdout is not None:
+        log.stdout.close()
+    result: dict[str, str] = {}
+    assert ids.stdout is not None
+    for line in ids.stdout:
+        parts = line.split()
+        if len(parts) == 2:
+            result[parts[1]] = parts[0]
+    ids.stdout.close()
+    ids.wait()
+    log.wait()
+    return result
+
+
+def _log(directory: str, *args: str) -> subprocess.Popen | None:
+    try:
+        return subprocess.Popen(
+            ["git", "-C", directory, "log", "--all", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError:
+        return None

@@ -11,8 +11,10 @@ type the parser does not know is counted in `unknown_record_type` and otherwise
 treated as a plain record.
 
 What is deliberately not stored: message text, in any table, at any capture level.
-`metadata-only` additionally stores no file paths and no working directory, so an
-employer's repository leaves nothing but shape and counts.
+`metadata-only` additionally stores no file paths, no working directory, no command
+text and no line hashes, so an employer's repository leaves nothing but shape and
+counts. A keyed line hash is not readable, but it is still a fingerprint of their code,
+and the promise made for that level is shape only.
 """
 
 from __future__ import annotations
@@ -21,12 +23,16 @@ import hashlib
 import json
 import sqlite3
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from prudence.store import archive
+from prudence.store import archive, repos
+from prudence.store import commits as commits_module
+from prudence.store import edits as edits_module
+from prudence.store import lines as lines_module
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 # Record types this version understands. Anything else is counted and kept as a record.
 KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
@@ -34,7 +40,16 @@ KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
 # Tool inputs whose file path is a fact worth keeping (at `full` capture only).
 PATH_TOOLS = frozenset({"Edit", "Write", "Read", "NotebookEdit"})
 
-TABLES = ("session", "record", "turn", "tool_call", "unknown_record_type")
+TABLES = (
+    "session",
+    "record",
+    "turn",
+    "tool_call",
+    "edit",
+    "edit_line",
+    "command",
+    "unknown_record_type",
+)
 
 SCHEMA = {
     "session": """
@@ -87,6 +102,39 @@ SCHEMA = {
             is_error INTEGER,
             parser_version INTEGER NOT NULL
         )""",
+    "edit": """
+        CREATE TABLE {name}(
+            tool_use_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            turn_id TEXT,
+            repo_key TEXT,
+            tool_name TEXT,
+            file_path TEXT,
+            rel_path TEXT,
+            edited_at TEXT,
+            lines_added INTEGER NOT NULL DEFAULT 0,
+            lines_removed INTEGER NOT NULL DEFAULT 0,
+            is_new_file INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL
+        )""",
+    "edit_line": """
+        CREATE TABLE {name}(
+            tool_use_id TEXT NOT NULL,
+            side TEXT NOT NULL,
+            line_hash TEXT NOT NULL,
+            PRIMARY KEY(tool_use_id, side, line_hash)
+        ) WITHOUT ROWID""",
+    "command": """
+        CREATE TABLE {name}(
+            tool_use_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            turn_id TEXT,
+            command_class TEXT,
+            exit_code INTEGER,
+            commit_hash TEXT,
+            command_text TEXT,
+            parser_version INTEGER NOT NULL
+        )""",
     "unknown_record_type": """
         CREATE TABLE {name}(
             type TEXT NOT NULL,
@@ -103,6 +151,11 @@ INDEXES = (
     "CREATE INDEX IF NOT EXISTS turn_session ON turn(session_id)",
     "CREATE INDEX IF NOT EXISTS tool_call_session ON tool_call(session_id)",
     "CREATE INDEX IF NOT EXISTS tool_call_name ON tool_call(tool_name)",
+    "CREATE INDEX IF NOT EXISTS edit_session ON edit(session_id)",
+    "CREATE INDEX IF NOT EXISTS edit_repo_path ON edit(repo_key, rel_path)",
+    "CREATE INDEX IF NOT EXISTS edit_line_hash ON edit_line(line_hash)",
+    "CREATE INDEX IF NOT EXISTS command_session ON command(session_id, command_class)",
+    "CREATE INDEX IF NOT EXISTS command_commit ON command(commit_hash)",
 )
 
 
@@ -112,9 +165,15 @@ class BuildStats:
     records: int = 0
     turns: int = 0
     tool_calls: int = 0
+    edits: int = 0
+    edit_lines: int = 0
+    commands: int = 0
     unknown_types: int = 0
     replayed_records: int = 0
+    unassigned_sessions: int = 0
     elapsed: float = 0.0
+    mapping_methods: Counter[str] = field(default_factory=Counter)
+    command_classes: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass
@@ -130,6 +189,8 @@ class _ToolCall:
     input_bytes: int = 0
     result_bytes: int | None = None
     is_error: int | None = None
+    edit: edits_module.EditFacts | None = None
+    command: edits_module.CommandFacts | None = None
 
 
 @dataclass
@@ -139,6 +200,7 @@ class _Session:
     session_id: str
     repo_key: str | None
     capture_level: str
+    mapping_method: str = "cwd"
     entrypoint: str | None = None
     cwd: str | None = None
     first_at: str | None = None
@@ -152,19 +214,31 @@ class _Session:
     tool_calls: dict[str, _ToolCall] = field(default_factory=dict)
 
 
-def build(connection: sqlite3.Connection, levels: dict[str, str]) -> BuildStats:
+def build(
+    connection: sqlite3.Connection,
+    levels: dict[str, str],
+    resolver: repos.Resolver | None = None,
+) -> BuildStats:
     """Rebuild every derived table from the archive. Idempotent; safe to run at any time."""
     started = time.monotonic()
     stats = BuildStats()
     _create_new_tables(connection)
+    resolver = resolver if resolver is not None else repos.resolver(connection)
+    key = lines_module.load_key()
     seen_records: set[str] = set()
     unknown: dict[tuple[str, str | None], list] = {}
 
-    for row in _transcripts_in_order(connection):
+    for row, head in _transcripts_in_order(connection):
+        match = resolver.resolve(head.cwd, head.git_branch)
+        repo_key = match.repo_key or row["repo_key"]
+        stats.mapping_methods[match.method] += 1
+        if repo_key is None:
+            stats.unassigned_sessions += 1
         session = _Session(
             session_id=row["session_id"] or row["path"],
-            repo_key=row["repo_key"],
-            capture_level=levels.get(row["repo_key"], "full"),
+            repo_key=repo_key,
+            capture_level=levels.get(repo_key, "full"),
+            mapping_method=match.method,
         )
         files = [(row["path"], None)]
         files += [
@@ -177,10 +251,11 @@ def build(connection: sqlite3.Connection, levels: dict[str, str]) -> BuildStats:
         ]
         for path, agent_id in files:
             _read_file(connection, path, session, agent_id, seen_records, unknown)
-        _flush_session(connection, session, stats)
+        _flush_session(connection, session, stats, resolver, key)
 
     _flush_unknown(connection, unknown, stats)
     _swap(connection)
+    repos.save_discoveries(connection, resolver)
     stats.elapsed = time.monotonic() - started
     return stats
 
@@ -196,23 +271,44 @@ def counts(connection: sqlite3.Connection) -> dict[str, int]:
     return result
 
 
-def _transcripts_in_order(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+@dataclass
+class _Head:
+    """What the first records of a transcript say about when and where it ran."""
+
+    first_at: str | None = None
+    cwd: str | None = None
+    git_branch: str | None = None
+
+
+def _transcripts_in_order(
+    connection: sqlite3.Connection,
+) -> list[tuple[sqlite3.Row, _Head]]:
     """Transcripts oldest first, so a resumed session is the one that carries the note."""
-    rows = list(
-        connection.execute(
+    rows = [
+        (row, _head(connection, row["path"]))
+        for row in connection.execute(
             "SELECT path, session_id, repo_key FROM archive_file WHERE source = 'transcript'"
         )
-    )
-    return sorted(rows, key=lambda r: (_first_timestamp(connection, r["path"]) or "", r["path"]))
+    ]
+    return sorted(rows, key=lambda item: (item[1].first_at or "", item[0]["path"]))
 
 
-def _first_timestamp(connection: sqlite3.Connection, path: str) -> str | None:
-    """When a transcript starts, read from its first chunk alone so ordering stays cheap."""
+def _head(connection: sqlite3.Connection, path: str) -> _Head:
+    """When a transcript starts and where it ran, from its first chunk alone."""
+    head = _Head()
     for line in archive.head_lines(connection, path):
         record = _parse(line)
-        if record and isinstance(record.get("timestamp"), str):
-            return record["timestamp"]
-    return None
+        if record is None:
+            continue
+        if head.first_at is None and isinstance(record.get("timestamp"), str):
+            head.first_at = record["timestamp"]
+        if head.cwd is None and isinstance(record.get("cwd"), str):
+            head.cwd = record["cwd"]
+        if head.git_branch is None and isinstance(record.get("gitBranch"), str):
+            head.git_branch = record["gitBranch"]
+        if head.first_at and head.cwd and head.git_branch:
+            break
+    return head
 
 
 def _read_file(
@@ -306,6 +402,14 @@ def _note_tools(
     record: dict,
     full: bool,
 ) -> None:
+    """Fold a tool use, and later its result, into one call, an edit and a command.
+
+    Edits are read as soon as the call is seen, from the input alone, and read again
+    from the result's `structuredPatch` when one arrives, because the spike measured
+    that a quarter of edit results never arrive at all. Keeping only the hashes means
+    no file content is held between the two records.
+    """
+    outcome = record.get("toolUseResult")
     for block in _content_blocks(record):
         kind = block.get("type")
         if kind == "tool_use":
@@ -321,6 +425,8 @@ def _note_tools(
             call.started_at = turn_stamp
             call.file_path = _file_path(name, payload) if full else None
             call.input_bytes = len(json.dumps(payload, ensure_ascii=False).encode())
+            call.edit = edits_module.extract_edit(name, payload, None)
+            call.command = edits_module.extract_command(name, payload, full)
         elif kind == "tool_result":
             tool_use_id = block.get("tool_use_id")
             if not isinstance(tool_use_id, str):
@@ -331,15 +437,42 @@ def _note_tools(
             call.result_bytes = (
                 len(json.dumps(content, ensure_ascii=False).encode()) if content else 0
             )
+            _fold_result(call, outcome)
 
 
-def _flush_session(connection: sqlite3.Connection, session: _Session, stats: BuildStats) -> None:
+def _fold_result(call: _ToolCall, outcome: object) -> None:
+    """What the result adds: the real patch, the exit code, the commit git announced."""
+    if call.is_error:
+        call.edit = None
+    elif isinstance(outcome, dict):
+        better = edits_module.extract_edit(call.tool_name, {}, outcome)
+        if better is not None:
+            better.file_path = better.file_path or (call.edit.file_path if call.edit else None)
+            better.is_new_file = better.is_new_file or bool(call.edit and call.edit.is_new_file)
+            call.edit = better
+    if call.command is None:
+        return
+    exit_code, commit_hash = edits_module.read_result(outcome)
+    call.command.exit_code = exit_code
+    if call.command.command_class == "git_commit":
+        call.command.commit_hash = commit_hash
+
+
+def _flush_session(
+    connection: sqlite3.Connection,
+    session: _Session,
+    stats: BuildStats,
+    resolver: repos.Resolver,
+    key: bytes,
+) -> None:
     if session.record_count == 0 and not session.records:
         return
     notes = []
     if session.resumed:
         notes.append("resumed")
         notes.append(f"replayed {session.replayed} records")
+    if session.mapping_method != "cwd":
+        notes.append(f"repository by {session.mapping_method}")
     connection.executemany(
         "INSERT OR IGNORE INTO record__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         session.records,
@@ -373,6 +506,8 @@ def _flush_session(connection: sqlite3.Connection, session: _Session, stats: Bui
         ],
     )
     stats.tool_calls += len(session.tool_calls)
+    _flush_edits(connection, session, stats, resolver, key)
+    _flush_commands(connection, session, stats)
     connection.execute(
         "INSERT OR REPLACE INTO session__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
@@ -391,6 +526,78 @@ def _flush_session(connection: sqlite3.Connection, session: _Session, stats: Bui
     )
     stats.sessions += 1
     stats.replayed_records += session.replayed
+
+
+def _flush_edits(
+    connection: sqlite3.Connection,
+    session: _Session,
+    stats: BuildStats,
+    resolver: repos.Resolver,
+    key: bytes,
+) -> None:
+    """One row per edit, plus its keyed line hashes, which are the attribution's left side."""
+    full = session.capture_level == "full"
+    rows: list[tuple] = []
+    line_rows: list[tuple] = []
+    for tool_use_id, call in sorted(session.tool_calls.items()):
+        facts = call.edit
+        if facts is None:
+            continue
+        repo_key, rel_path = resolver.repo_of_path(facts.file_path)
+        rows.append(
+            (
+                tool_use_id,
+                call.session_id,
+                call.turn_id,
+                repo_key or session.repo_key,
+                call.tool_name,
+                facts.file_path if full else None,
+                rel_path if full else None,
+                commits_module.utc(call.started_at),
+                len(facts.added),
+                len(facts.removed),
+                1 if facts.is_new_file else 0,
+                edits_module.EDIT_FACT_VERSION,
+            )
+        )
+        if not full:
+            continue
+        for side, block in (("added", facts.added), ("removed", facts.removed)):
+            line_rows.extend(
+                (tool_use_id, side, digest) for digest in lines_module.hash_lines(key, block)
+            )
+    connection.executemany(
+        "INSERT OR REPLACE INTO edit__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+    )
+    connection.executemany("INSERT OR REPLACE INTO edit_line__new VALUES (?, ?, ?)", line_rows)
+    stats.edits += len(rows)
+    stats.edit_lines += len(line_rows)
+
+
+def _flush_commands(connection: sqlite3.Connection, session: _Session, stats: BuildStats) -> None:
+    """One row per shell call: what it was for, and what git said if it committed."""
+    rows: list[tuple] = []
+    for tool_use_id, call in sorted(session.tool_calls.items()):
+        facts = call.command
+        if facts is None:
+            continue
+        rows.append(
+            (
+                tool_use_id,
+                call.session_id,
+                call.turn_id,
+                facts.command_class,
+                facts.exit_code,
+                facts.commit_hash,
+                facts.command_text,
+                edits_module.COMMAND_FACT_VERSION,
+            )
+        )
+        stats.command_classes[facts.command_class] += 1
+    connection.executemany(
+        "INSERT OR REPLACE INTO command__new VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows
+    )
+    stats.commands += len(rows)
 
 
 def _flush_unknown(

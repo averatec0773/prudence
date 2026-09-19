@@ -66,6 +66,16 @@ def database_file() -> Path:
     return data_dir() / "prudence.db"
 
 
+def line_hash_key_file() -> Path:
+    """The secret that keys every line hash, generated once per install.
+
+    It sits beside the config rather than inside the database so that copying the
+    database somewhere else does not carry the ability to test a guessed line
+    against it, and so that deleting it is a one-line way to void every hash.
+    """
+    return config_dir() / "line-hash.key"
+
+
 def lock_file() -> Path:
     """Advisory lock taken for the duration of an ingest, so two never overlap."""
     return data_dir() / "ingest.lock"
