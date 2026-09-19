@@ -6,10 +6,14 @@ from __future__ import annotations
 import click
 
 from prudence import __version__
+from prudence.cli.export import export, import_bundle
+from prudence.cli.forget import forget
+from prudence.cli.hooks import hooks
 from prudence.cli.ingest import ingest
 from prudence.cli.init import init
 from prudence.cli.rebuild import rebuild
 from prudence.cli.sessions import sessions
+from prudence.cli.show import show
 from prudence.cli.status import status
 
 
@@ -23,4 +27,9 @@ main.add_command(init)
 main.add_command(ingest)
 main.add_command(rebuild)
 main.add_command(sessions)
+main.add_command(show)
 main.add_command(status)
+main.add_command(forget)
+main.add_command(export)
+main.add_command(import_bundle)
+main.add_command(hooks)

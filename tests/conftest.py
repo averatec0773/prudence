@@ -159,6 +159,63 @@ class Workspace:
         return identity.key
 
 
+SAMPLE_SESSION = "dddddddd-9999-4999-8999-999999999999"
+SAMPLE_FILE = (
+    "alpha_value = compute_alpha(7)\n"
+    "beta_value = compute_beta(11)\n"
+    "gamma_value = compute_gamma(13)\n"
+)
+
+
+def record_one_session(lab: Workspace, level: str = "full") -> str:
+    """One enabled repository, one session that writes a file and commits it, ingested.
+
+    Shared by the tests for `show`, `forget` and `export`, which all need a store with
+    something in it and none of which is about how that something got there.
+    """
+    from click.testing import CliRunner
+
+    from prudence.cli import main
+
+    (lab.repo / "src").mkdir()
+    (lab.repo / "src" / "app.py").write_text(SAMPLE_FILE)
+    full_hash = commit(lab.repo, "2026-09-15T12:00:00+00:00", "add the app")
+    write_transcript(
+        lab.project,
+        SAMPLE_SESSION,
+        [
+            prompt(
+                SAMPLE_SESSION,
+                str(lab.repo),
+                "Write the app and commit it.",
+                at="2026-09-15T11:55:00.000Z",
+            ),
+            *tool_call(
+                SAMPLE_SESSION,
+                str(lab.repo),
+                "toolu_s1",
+                "Write",
+                {"file_path": f"{lab.repo}/src/app.py", "content": SAMPLE_FILE},
+                at="2026-09-15T11:57:00.000Z",
+            ),
+            *tool_call(
+                SAMPLE_SESSION,
+                str(lab.repo),
+                "toolu_s2",
+                "Bash",
+                {"command": "git commit -am 'add the app'"},
+                result={"stdout": f"[master {full_hash[:7]}] add the app", "stderr": ""},
+                at="2026-09-15T12:00:01.000Z",
+            ),
+        ],
+    )
+    runner = CliRunner()
+    assert runner.invoke(main, ["init", "--enable", "alpha", "--level", level]).exit_code == 0
+    result = runner.invoke(main, ["ingest"])
+    assert result.exit_code == 0, result.output
+    return full_hash
+
+
 @pytest.fixture(autouse=True)
 def isolated_paths(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch

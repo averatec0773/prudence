@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from prudence.paths import claude_file_history_dir, claude_projects_dir
+from prudence.paths import claude_file_history_dir, claude_projects_dir, spool_file
 from prudence.sources import claude_code
 from prudence.store.identity import identify
 from prudence.store.repos import Resolver
@@ -39,9 +39,9 @@ class Target:
     """One file to archive, and what it belongs to."""
 
     path: Path
-    source: str  # transcript, subagent, tool-result, file-history
-    session_id: str
-    repo_key: str
+    source: str  # transcript, subagent, tool-result, file-history, spool
+    session_id: str | None
+    repo_key: str | None
 
 
 @dataclass
@@ -86,6 +86,19 @@ def collect_targets(
             _files_in(history_root / session.session_id, "file-history", session.session_id, key)
         )
     return targets
+
+
+def spool_targets(path: Path | None = None) -> list[Target]:
+    """Prudence's own hook spool, archived like anything else.
+
+    Rule 1 is not only about Claude Code's bytes. The spool is append-only and is never
+    truncated, so it is read incrementally by offset exactly like a growing transcript,
+    and `hook_event` is rebuilt from the archived copy rather than from the live file.
+    A session and a repository are resolved later, from the `cwd` on each line, so the
+    file itself belongs to neither.
+    """
+    target = path or spool_file()
+    return [Target(target, "spool", None, None)] if target.is_file() else []
 
 
 def archive(connection: sqlite3.Connection, targets: list[Target]) -> IngestStats:

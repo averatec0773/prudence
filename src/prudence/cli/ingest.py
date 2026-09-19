@@ -10,7 +10,9 @@ from __future__ import annotations
 import click
 
 from prudence import config as config_module
+from prudence import hooks as hooks_module
 from prudence.cli.render import size
+from prudence.paths import enabled_list_file
 from prudence.store import db, pipeline
 
 
@@ -33,10 +35,23 @@ def _run(config: config_module.Config) -> None:
     connection = db.connect()
     try:
         result = pipeline.run(connection, config, with_archive=True)
+        _refresh_enabled(connection)
         for line in report(result):
             click.echo(line)
     finally:
         connection.close()
+
+
+def _refresh_enabled(connection) -> None:
+    """Keep the hook's enabled list in step with the config, once the hook is installed.
+
+    A repository enabled after `hooks install` would otherwise be invisible to the hook
+    until the user reinstalled it, and a repository disabled after it would keep being
+    recorded, which is the one direction that must never happen silently.
+    """
+    if not enabled_list_file().exists():
+        return
+    hooks_module.write_enabled(hooks_module.enabled_roots(connection))
 
 
 def report(result: pipeline.Result) -> list[str]:
@@ -59,6 +74,13 @@ def report(result: pipeline.Result) -> list[str]:
         f"{parsed.commands} commands, {parsed.unknown_types} unknown record types, "
         f"{parsed.elapsed:.1f} s."
     )
+    hooks = result.hooks
+    if hooks.files or hooks.events:
+        lines.append(
+            f"Hook events: {hooks.events} folded from {hooks.files} spool files "
+            f"({hooks.duplicates} already recorded, {hooks.unreadable} unreadable), "
+            f"{hooks.elapsed:.1f} s."
+        )
     recovered = {
         method: count
         for method, count in parsed.mapping_methods.items()

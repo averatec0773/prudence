@@ -79,3 +79,33 @@ def line_hash_key_file() -> Path:
 def lock_file() -> Path:
     """Advisory lock taken for the duration of an ingest, so two never overlap."""
     return data_dir() / "ingest.lock"
+
+
+def hooks_dir() -> Path:
+    """Where the capture hook is installed, so it works when the package moves."""
+    return data_dir() / "hooks"
+
+
+def hook_script_file() -> Path:
+    """The shell script Claude Code runs. A copy, not the packaged original.
+
+    Claude Code stores an absolute command in its settings file, and a path inside a
+    virtual environment or a `uv tool` install disappears the moment the package is
+    upgraded or moved. A copy under the data directory outlives both.
+    """
+    return hooks_dir() / "prudence-hook.sh"
+
+
+def enabled_list_file() -> Path:
+    """One absolute worktree path per line: all the shell hook needs to read.
+
+    The consent record is `config.toml`, but a POSIX shell script must not parse TOML,
+    so `prudence hooks install` writes the enabled roots out in the plainest form there
+    is and the hook does one prefix comparison against it.
+    """
+    return hooks_dir() / "enabled.txt"
+
+
+def spool_file() -> Path:
+    """Append-only file the hooks write one JSON line to. Archived, never truncated."""
+    return data_dir() / "spool.jsonl"

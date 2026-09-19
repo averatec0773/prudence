@@ -15,7 +15,7 @@ from prudence import __version__
 from prudence import config as config_module
 from prudence.cli.render import size
 from prudence.paths import database_file
-from prudence.store import archive, attribution, commits, db, derived
+from prudence.store import archive, attribution, commits, db, derived, spool
 
 
 @click.command()
@@ -96,6 +96,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
         f"{counts['command']} commands (parser version {derived.PARSER_VERSION})"
     )
     lines.extend(_command_lines(connection))
+    lines.extend(_hook_lines(connection))
     lines.extend(_commit_lines(connection))
     lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
@@ -114,6 +115,14 @@ def _command_lines(connection: sqlite3.Connection) -> list[str]:
         return []
     detail = ", ".join(f"{row['n']} {row['command_class']}" for row in rows)
     return [f"commands by class: {detail}"]
+
+
+def _hook_lines(connection: sqlite3.Connection) -> list[str]:
+    """What the hooks recorded, which is nothing at all until the user installs them."""
+    events, sessions = spool.counts(connection)
+    if not events:
+        return ["hook events: none (run `prudence hooks install` to record git state)"]
+    return [f"hook events: {events} over {sessions} sessions (fact version {spool.FACT_VERSION})"]
 
 
 def _commit_lines(connection: sqlite3.Connection) -> list[str]:

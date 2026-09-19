@@ -16,6 +16,9 @@ src/prudence/
   scan.py         read-only inventory of agent history on this machine
   sources/        where we see the developer's work: one module per agent
     claude_code.py
+  hooks/          the one thing we write into the user's world, and how to undo it
+    __init__.py       install, uninstall and inspect the settings entries
+    prudence-hook.sh  the POSIX shell hook itself, shipped as package data
   store/          Prudence's own record
     identity.py   which repository a directory belongs to
     repos.py      which repository a directory belongs to when it no longer exists
@@ -26,7 +29,10 @@ src/prudence/
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
     attribution.py  which session produced which commit, and how sure we are
-    pipeline.py   the order the five steps run in, so ingest and rebuild agree
+    spool.py      what the hooks saw, folded from the archived spool into hook_event
+    erase.py      taking a session or a repository back out, archive included
+    transfer.py   the whole store as one .tar.gz, and back into an empty one
+    pipeline.py   the order the six steps run in, so ingest and rebuild agree
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
 plugin/           (next) the Claude Code plugin: skills, hooks, .mcp.json
@@ -80,6 +86,27 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
+- A new hook event: the tuple in `hooks/__init__.py` and a branch in `prudence-hook.sh`.
+  The script must stay POSIX shell, must exit 0 on every path, and must write nothing
+  when `PRUDENCE_INTERNAL` is set or the working directory is not in `enabled.txt`.
+- A new column anything can hold: it must survive `export` and `import` untouched,
+  which is automatic as long as `store/transfer.py` knows how to create the table.
+
+## The hooks, and the one thing they are allowed to write
+
+`prudence hooks install` copies `prudence-hook.sh` to `<data dir>/hooks/` and adds six
+synchronous entries to Claude Code's settings file, each running that copy with the
+event name as its argument. The copy exists because Claude Code stores an absolute
+command and a path inside a virtual environment stops existing on the next upgrade.
+
+The script reads the hook JSON from stdin, pulls five known keys with one `awk` pass,
+and stops at once unless the working directory sits under a path in
+`<data dir>/hooks/enabled.txt`, which `hooks install` and every `ingest` write from the
+`repository` table. When it does record, it appends one line to `<data dir>/spool.jsonl`
+with the event, an ISO timestamp, the ids, the working directory, git's HEAD and branch,
+a fingerprint and a count of `git status --porcelain`, and its own elapsed time. It
+never fails and never prints. `ingest` archives that file like a transcript and folds it
+into `hook_event`; the spool is never truncated.
 
 ## Privacy rules for contributors
 
