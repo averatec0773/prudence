@@ -1,0 +1,45 @@
+# Personal (untrack to keep local: git rm --cached TODO.md)
+TODO.md
+.claude/settings.local.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+.venv/
+
+# Python tooling caches
+.ruff_cache/
+.pytest_cache/
+
+# Build output
+dist/
+build/
+out/
+*.egg-info/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/

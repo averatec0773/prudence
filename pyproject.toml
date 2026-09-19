@@ -1,0 +1,39 @@
+[project]
+name = "prudence-coach"
+version = "0.0.1"
+description = "A local-first growth coach for developers who build with AI coding agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "Prudence contributors" },
+]
+dependencies = [
+    "click>=8.1",
+]
+
+[project.scripts]
+prudence = "prudence.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prudence"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
