@@ -11,6 +11,7 @@ from prudence.cli.forget import forget
 from prudence.cli.hooks import hooks
 from prudence.cli.ingest import ingest
 from prudence.cli.init import init
+from prudence.cli.menubar import menubar
 from prudence.cli.rebuild import rebuild
 from prudence.cli.sample import sample
 from prudence.cli.sessions import sessions
@@ -35,3 +36,4 @@ main.add_command(forget)
 main.add_command(export)
 main.add_command(import_bundle)
 main.add_command(hooks)
+main.add_command(menubar)

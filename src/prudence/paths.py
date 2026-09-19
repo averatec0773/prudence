@@ -109,3 +109,8 @@ def enabled_list_file() -> Path:
 def spool_file() -> Path:
     """Append-only file the hooks write one JSON line to. Archived, never truncated."""
     return data_dir() / "spool.jsonl"
+
+
+def reports_dir() -> Path:
+    """Where a surface writes a Markdown report for the user to open, e.g. the menu bar."""
+    return data_dir() / "reports"

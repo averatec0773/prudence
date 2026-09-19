@@ -12,6 +12,9 @@ dependencies = [
     "click>=8.1",
 ]
 
+[project.optional-dependencies]
+menubar = ["rumps>=0.4"]
+
 [project.scripts]
 prudence = "prudence.cli:main"
 
