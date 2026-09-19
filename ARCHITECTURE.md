@@ -26,6 +26,8 @@ src/prudence/
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
     attribution.py  which session produced which commit, and how sure we are
+    sampling.py   the precision sample: the hard quarter, drawn, and every method's score
+    labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the five steps run in, so ingest and rebuild agree
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
@@ -80,6 +82,11 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
+- A user-authored table (typed by a person, not derived from anything Prudence read):
+  its own module beside the derived ones, e.g. `store/labels.py`. It lives next to the
+  derived tables but is never rebuilt: `derived.build`'s table swap and any table a
+  rebuild step drops must not name it, because a rebuild is only safe to run at all
+  when nothing it touches was written by a person.
 
 ## Privacy rules for contributors
 
