@@ -32,6 +32,8 @@ src/prudence/
     spool.py      what the hooks saw, folded from the archived spool into hook_event
     erase.py      taking a session or a repository back out, archive included
     transfer.py   the whole store as one .tar.gz, and back into an empty one
+    sampling.py   the precision sample: the hard quarter, drawn, and every method's score
+    labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the six steps run in, so ingest and rebuild agree
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
@@ -86,6 +88,11 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
+- A user-authored table (typed by a person, not derived from anything Prudence read):
+  its own module beside the derived ones, e.g. `store/labels.py`. It lives next to the
+  derived tables but is never rebuilt: `derived.build`'s table swap and any table a
+  rebuild step drops must not name it, because a rebuild is only safe to run at all
+  when nothing it touches was written by a person.
 - A new hook event: the tuple in `hooks/__init__.py` and a branch in `prudence-hook.sh`.
   The script must stay POSIX shell, must exit 0 on every path, and must write nothing
   when `PRUDENCE_INTERNAL` is set or the working directory is not in `enabled.txt`.
