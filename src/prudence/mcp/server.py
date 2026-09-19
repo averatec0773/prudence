@@ -21,7 +21,7 @@ try:
     from mcp.server.fastmcp import FastMCP
 except ImportError as error:  # pragma: no cover - exercised only when `mcp` is absent
     raise ImportError(
-        "The mcp package is not installed. Install with: uv tool install 'prudence-coach[mcp]'"
+        "The mcp package is not installed. Install with: uv tool install 'prudence-dev[mcp]'"
     ) from error
 
 from prudence.paths import database_file

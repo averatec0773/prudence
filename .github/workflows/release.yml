@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/prudence-coach
+      url: https://pypi.org/p/prudence-dev
     permissions:
       id-token: write
     steps:

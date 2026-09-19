@@ -13,7 +13,7 @@ Before the first tag can publish, the project owner does this once, on pypi.org:
 1. Sign in, go to your account, and create the project's trusted publisher before the
    project exists on PyPI: **Publishing** -> **Add a pending publisher**.
 2. Fill in:
-   - PyPI project name: `prudence-coach`
+   - PyPI project name: `prudence-dev`
    - Owner: `averatec0773`
    - Repository name: `prudence`
    - Workflow name: `release.yml`

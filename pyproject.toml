@@ -1,5 +1,5 @@
 [project]
-name = "prudence-coach"
+name = "prudence-dev"
 version = "0.1.0"
 description = "A local-first growth coach for developers who build with AI coding agents"
 readme = "README.md"

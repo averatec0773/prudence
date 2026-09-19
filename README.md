@@ -25,16 +25,16 @@ Prudence needs Python 3.12 or later and [uv](https://docs.astral.sh/uv/getting-s
 If you don't have Python yet, uv can install it for you.
 
 ```
-uv tool install --python 3.12 prudence-coach
+uv tool install --python 3.12 prudence-dev
 ```
 
 Optional extras:
 
-- `prudence-coach[mcp]` adds the `prudence mcp` server used by the Claude Code plugin.
-- `prudence-coach[menubar]` adds the macOS menu-bar prototype (`prudence menubar`).
+- `prudence-dev[mcp]` adds the `prudence mcp` server used by the Claude Code plugin.
+- `prudence-dev[menubar]` adds the macOS menu-bar prototype (`prudence menubar`).
 
 ```
-uv tool install --python 3.12 "prudence-coach[mcp,menubar]"
+uv tool install --python 3.12 "prudence-dev[mcp,menubar]"
 ```
 
 ## Quick start

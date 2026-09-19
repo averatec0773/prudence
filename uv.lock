@@ -334,7 +334,7 @@ wheels = [
 ]
 
 [[package]]
-name = "prudence-coach"
+name = "prudence-dev"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

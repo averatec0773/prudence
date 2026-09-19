@@ -78,4 +78,4 @@ def test_plugin_readme_names_the_local_install_command_and_the_privacy_statement
     text = (PLUGIN / "README.md").read_text()
     assert "claude --plugin-dir ./plugin" in text
     assert "No message text" in text
-    assert "prudence-coach" in text, "the CLI install instruction"
+    assert "prudence-dev" in text, "the CLI install instruction"

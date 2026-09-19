@@ -21,7 +21,7 @@ def menubar() -> None:
         import rumps  # noqa: F401
     except ImportError:
         click.echo(
-            "rumps is not installed. Install with: uv tool install 'prudence-coach[menubar]'"
+            "rumps is not installed. Install with: uv tool install 'prudence-dev[menubar]'"
         )
         return
 
