@@ -32,6 +32,42 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check wheel contents
+        run: |
+          wheel=$(ls dist/*.whl)
+          listing=$(python3 -m zipfile -l "$wheel")
+          echo "$listing"
+          if ! echo "$listing" | grep -q "prudence/hooks/prudence-hook.sh"; then
+            echo "Missing prudence/hooks/prudence-hook.sh in the wheel"
+            exit 1
+          fi
+          if echo "$listing" | grep -Eq "^\s*(tests/|prudence/tests/)"; then
+            echo "Wheel must not contain a tests directory"
+            exit 1
+          fi
+          if echo "$listing" | grep -q "^plugin/"; then
+            echo "Wheel must not contain the plugin/ directory"
+            exit 1
+          fi
+          if echo "$listing" | grep -q "^docs/"; then
+            echo "Wheel must not contain docs/"
+            exit 1
+          fi
+
   leak-guard:
     runs-on: ubuntu-latest
     steps:

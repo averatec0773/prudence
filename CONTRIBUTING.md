@@ -39,3 +39,33 @@ The repository is English only: code, comments, commit messages, issues, and pul
 ## Style
 
 No em dashes in prose.
+
+## Releasing
+
+Release notes live in `RELEASES.md`, not `CHANGELOG.md`: that name is reserved for a
+private, harness-internal file and must never appear in this public repository (the
+`leak-guard` job in CI fails the build if it ever does).
+
+To cut a release:
+
+1. Bump the version in the two places it is written: `pyproject.toml` and
+   `src/prudence/__init__.py`.
+2. Add an entry to `RELEASES.md` for the new version: what changed, in a short
+   paragraph, plus any known limits.
+3. Commit those changes.
+4. Tag the commit and push the tag:
+   ```
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+5. Pushing the tag runs `.github/workflows/release.yml`, which builds the package,
+   publishes it to PyPI with trusted publishing (no token needed, see `RELEASES.md`
+   for the one-time setup), and creates the GitHub release.
+
+## Versioning
+
+Prudence follows [SemVer](https://semver.org/). While the version stays `0.x`, a
+minor bump may change the store schema in a way that only a rebuild (`prudence
+rebuild`), not a migration, can carry forward: the store's own stability promise (see
+`ARCHITECTURE.md`) is that raw bytes survive, not that every derived table's layout
+does.
