@@ -155,3 +155,35 @@ def test_a_settings_file_that_is_not_json_is_refused_untouched(
     assert result.exit_code != 0
     assert "nothing was written" in result.output
     assert settings.read_text() == "{ this is not json\n"
+
+
+def test_install_quotes_a_script_path_with_a_space(
+    lab: Workspace, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """macOS keeps the data dir under `Application Support`; the command must survive it."""
+    from prudence import hooks as hooks_module
+    from prudence.store import db
+
+    record_one_session(lab)
+    settings = _settings(lab, monkeypatch)
+    script = tmp_path / "Application Support" / "prudence-hook.sh"
+    connection = db.connect()
+    try:
+        result = hooks_module.install(connection, settings_path=settings, script_path=script)
+        assert result.added
+        written = json.loads(settings.read_text())
+        commands = [
+            entry["command"]
+            for groups in written["hooks"].values()
+            for group in groups
+            for entry in group["hooks"]
+            if "prudence-hook.sh" in entry.get("command", "")
+        ]
+        assert len(commands) == 6
+        assert all(cmd.startswith("'") and "Application Support" in cmd for cmd in commands)
+        again = hooks_module.install(connection, settings_path=settings, script_path=script)
+        assert not again.added, "quoted entries are recognised as already present"
+    finally:
+        connection.close()
+    gone = hooks_module.uninstall(settings_path=settings, script_path=script)
+    assert len(gone.removed) == 6

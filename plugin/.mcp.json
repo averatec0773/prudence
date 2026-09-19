@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "prudence": {
+      "command": "prudence",
+      "args": ["mcp"]
+    }
+  }
+}

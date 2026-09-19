@@ -1,0 +1,8 @@
+{
+  "name": "prudence",
+  "version": "0.0.1",
+  "description": "See your own session history inside Claude Code: recent sessions, their edits and commits, and a search tool the agent can call.",
+  "author": {
+    "name": "Prudence contributors"
+  }
+}

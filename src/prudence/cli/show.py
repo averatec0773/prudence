@@ -15,14 +15,12 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
-from datetime import datetime
 
 import click
 
 from prudence.cli.render import size
-from prudence.cli.sessions import SITTING_GAP
 from prudence.paths import database_file
-from prudence.store import attribution, commits, db, derived, edits, spool
+from prudence.store import attribution, commits, db, derived, edits, spool, views
 
 WITHHELD = "file paths withheld at metadata-only"
 
@@ -67,7 +65,7 @@ def resolve(connection: sqlite3.Connection, token: str) -> str:
 
 def render(connection: sqlite3.Connection, session_id: str, list_files: bool = False) -> str:
     """The whole record of one session as text, grouped by kind of fact."""
-    row = connection.execute("SELECT * FROM session WHERE session_id = ?", (session_id,)).fetchone()
+    row = views.session_row(connection, session_id)
     full = row["capture_level"] == "full"
     lines = [f"session {session_id}"]
     lines += _identity(connection, row)
@@ -86,9 +84,7 @@ def _heading(title: str, tables: str, version: str, trust: str) -> list[str]:
 
 
 def _identity(connection: sqlite3.Connection, row: sqlite3.Row) -> list[str]:
-    names = {
-        repo["repo_key"]: repo["name"] for repo in connection.execute("SELECT * FROM repository")
-    }
+    names = views.repository_names(connection)
     lines = _heading(
         "identity",
         "session",
@@ -103,67 +99,37 @@ def _identity(connection: sqlite3.Connection, row: sqlite3.Row) -> list[str]:
         ("working directory", row["cwd"] or WITHHELD),
         ("first record", row["first_at"] or "?"),
         ("last record", row["last_at"] or "?"),
-        ("sittings", str(_sittings(connection, row["session_id"]))),
+        ("sittings", str(views.sittings(connection, row["session_id"]))),
         ("mapping notes", row["notes"] or "none (read straight off the working directory)"),
     ]
     lines += [f"  {label:<20} {value}" for label, value in pairs]
     return lines
 
 
-def _sittings(connection: sqlite3.Connection, session_id: str) -> int:
-    """How many times the developer sat down: a gap over an hour starts a new one."""
-    count = 0
-    previous: datetime | None = None
-    for row in connection.execute(
-        "SELECT timestamp FROM record WHERE session_id = ? AND timestamp IS NOT NULL"
-        " ORDER BY timestamp",
-        (session_id,),
-    ):
-        try:
-            moment = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
-        except (AttributeError, ValueError):
-            continue
-        if previous is None or moment - previous > SITTING_GAP:
-            count += 1
-        previous = moment
-    return max(count, 1)
-
-
 def _counts(connection: sqlite3.Connection, session_id: str) -> list[str]:
-    records = _scalar(connection, "SELECT COUNT(*) FROM record WHERE session_id = ?", session_id)
-    turns = _scalar(connection, "SELECT COUNT(*) FROM turn WHERE session_id = ?", session_id)
-    calls = _scalar(connection, "SELECT COUNT(*) FROM tool_call WHERE session_id = ?", session_id)
+    counted = views.record_turn_toolcall_counts(connection, session_id)
     lines = _heading(
         "counts",
         "record, turn, tool_call",
         f"parser version {derived.PARSER_VERSION}",
         "high, except the turn key which is medium",
     )
-    lines.append(f"  records {records}, turns {turns}, tool calls {calls}")
-    by_tool = connection.execute(
-        "SELECT COALESCE(tool_name, '?') AS name, COUNT(*) AS n FROM tool_call"
-        " WHERE session_id = ? GROUP BY name ORDER BY n DESC, name",
-        (session_id,),
-    ).fetchall()
+    lines.append(
+        f"  records {counted['records']}, turns {counted['turns']}, "
+        f"tool calls {counted['tool_calls']}"
+    )
+    by_tool = views.tool_calls_by_name(connection, session_id)
     lines.append(
         "  tool calls by name: " + (", ".join(f"{r['name']} {r['n']}" for r in by_tool) or "none")
     )
 
-    edit = connection.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(lines_added), 0) AS added,"
-        " COALESCE(SUM(lines_removed), 0) AS removed FROM edit WHERE session_id = ?",
-        (session_id,),
-    ).fetchone()
+    edit = views.edit_totals(connection, session_id)
     lines.append("")
     lines.append(f"  edits (edit, fact version {edits.EDIT_FACT_VERSION}, trust medium)")
     lines.append(
         f"    {edit['n']} edits, {edit['added']} lines added, {edit['removed']} lines removed"
     )
-    by_class = connection.execute(
-        "SELECT command_class, COUNT(*) AS n FROM command WHERE session_id = ?"
-        " GROUP BY command_class ORDER BY n DESC, command_class",
-        (session_id,),
-    ).fetchall()
+    by_class = views.commands_by_class(connection, session_id)
     lines.append(f"  commands (command, fact version {edits.COMMAND_FACT_VERSION}, trust medium)")
     lines.append(
         "    by class: " + (", ".join(f"{r['command_class']} {r['n']}" for r in by_class) or "none")
@@ -181,12 +147,7 @@ def _files(connection: sqlite3.Connection, session_id: str, full: bool) -> list[
     if not full:
         lines.append(f"  {WITHHELD}")
         return lines
-    rows = connection.execute(
-        "SELECT COALESCE(rel_path, file_path, '?') AS path, COUNT(*) AS n,"
-        " SUM(lines_added) AS added, SUM(lines_removed) AS removed FROM edit"
-        " WHERE session_id = ? GROUP BY path ORDER BY added DESC, path",
-        (session_id,),
-    ).fetchall()
+    rows = views.edited_files(connection, session_id)
     if not rows:
         lines.append("  none")
         return lines
@@ -211,12 +172,7 @@ def _commits(connection: sqlite3.Connection, session_id: str) -> list[str]:
         f"fact version {attribution.FACT_VERSION} over commit fact version {commits.FACT_VERSION}",
         "high for in_session and git_ai_note, medium for line_match",
     )
-    rows = connection.execute(
-        "SELECT a.commit_hash, a.method, a.rank, a.lines_matched, a.coverage, c.added_lines,"
-        ' c.committer_at FROM attribution a LEFT JOIN "commit" c ON c.commit_hash = a.commit_hash'
-        " WHERE a.session_id = ? ORDER BY c.committer_at, a.method, a.rank",
-        (session_id,),
-    ).fetchall()
+    rows = views.attributed_commits(connection, session_id)
     if not rows:
         lines.append("  none")
         return lines
@@ -237,14 +193,7 @@ def _commits(connection: sqlite3.Connection, session_id: str) -> list[str]:
 
 def _hooks(connection: sqlite3.Connection, session_id: str) -> list[str]:
     """The hook timeline, per turn: the tree before the turn and after it."""
-    try:
-        rows = connection.execute(
-            "SELECT event, ts, prompt_id, head, dirty_count FROM hook_event"
-            " WHERE session_id = ? ORDER BY ts, event",
-            (session_id,),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    rows = views.hook_timeline(connection, session_id)
     if not rows:
         return []
     lines = _heading(
@@ -277,11 +226,7 @@ def _archive(connection: sqlite3.Connection, session_id: str, list_files: bool) 
         f"archive schema version {db.ARCHIVE_SCHEMA_VERSION}",
         "high: these are the bytes every derived row above was built from",
     )
-    rows = connection.execute(
-        "SELECT path, source, size, generation FROM archive_file WHERE session_id = ?"
-        " ORDER BY source, path",
-        (session_id,),
-    ).fetchall()
+    rows = views.archived_files(connection, session_id)
     if not rows:
         lines.append("  none")
         return lines
@@ -297,7 +242,3 @@ def _archive(connection: sqlite3.Connection, session_id: str, list_files: bool) 
     if not list_files:
         lines.append("  (add --files to list them)")
     return lines
-
-
-def _scalar(connection: sqlite3.Connection, query: str, session_id: str) -> int:
-    return connection.execute(query, (session_id,)).fetchone()[0]

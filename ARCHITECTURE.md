@@ -35,11 +35,16 @@ src/prudence/
     sampling.py   the precision sample: the hard quarter, drawn, and every method's score
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the six steps run in, so ingest and rebuild agree
+    views.py      the read queries `cli/show.py` and the MCP server share; no formatting
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
   menubar/        the macOS menu-bar prototype: summary.py (pure, no rumps) and
                    app.py (the rumps shell, imported only from cli/menubar.py)
-plugin/           (next) the Claude Code plugin: skills, hooks, .mcp.json
+  mcp/            the MCP server: server.py (FastMCP, stdio), the only place `mcp` is
+                   imported; started by `cli/mcp.py`
+plugin/           the Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`
+                  wiring the `prudence mcp` command, `hooks/` (a copy of the hook set,
+                  see plugin/README.md), `skills/sessions`, `skills/recall`
 tests/            pytest; fixtures are synthetic, one file per observed format version
 docs/reference/store-schema.md   every table and column, with its trust level
 ```

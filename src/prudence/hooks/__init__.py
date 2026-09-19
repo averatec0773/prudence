@@ -25,6 +25,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import shlex
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -210,7 +211,6 @@ def present(settings_path: Path | None = None, script_path: Path | None = None) 
         return []
     found = []
     for event, matcher in EVENTS:
-        command = _command(script, event)
         groups = hooks.get(event)
         if not isinstance(groups, list):
             continue
@@ -219,7 +219,7 @@ def present(settings_path: Path | None = None, script_path: Path | None = None) 
                 continue
             entries = group.get("hooks")
             if isinstance(entries, list) and any(
-                isinstance(entry, dict) and entry.get("command") == command for entry in entries
+                _is_ours(entry, script, event) for entry in entries
             ):
                 found.append(event if matcher is None else f"{event}({matcher})")
                 break
@@ -245,7 +245,17 @@ def spool_size(path: Path | None = None) -> int:
 
 
 def _command(script: Path, event: str) -> str:
-    return f"{script} {event}"
+    """The shell line Claude Code runs. Quoted, because the data directory on macOS is
+    `~/Library/Application Support/...` and an unquoted space splits the path."""
+    return f"{shlex.quote(str(script))} {event}"
+
+
+def _is_ours(entry: object, script: Path, event: str) -> bool:
+    """Recognise our entry whether it was written quoted or, by an older version, bare."""
+    if not isinstance(entry, dict):
+        return False
+    command = entry.get("command")
+    return command in (_command(script, event), f"{script} {event}")
 
 
 def _entry(script: Path, event: str) -> dict:
@@ -281,8 +291,7 @@ def _add_entries(settings: dict, script: Path) -> tuple[list[str], list[str]]:
         entries = target.setdefault("hooks", [])
         if not isinstance(entries, list):
             raise SettingsProblem(f"`hooks.{event}[].hooks` is not a list; nothing was written.")
-        command = _command(script, event)
-        if any(isinstance(entry, dict) and entry.get("command") == command for entry in entries):
+        if any(_is_ours(entry, script, event) for entry in entries):
             already.append(label)
             continue
         entries.append(_entry(script, event))
@@ -300,7 +309,7 @@ def _remove_entries(settings: dict, script: Path) -> list[str]:
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return []
-    prefix = str(script)
+    prefixes = (str(script), shlex.quote(str(script)))
     removed: list[str] = []
     for event in list(hooks):
         groups = hooks.get(event)
@@ -316,7 +325,7 @@ def _remove_entries(settings: dict, script: Path) -> list[str]:
             dropped = 0
             for entry in group["hooks"]:
                 command = entry.get("command") if isinstance(entry, dict) else None
-                if isinstance(command, str) and command.startswith(prefix):
+                if isinstance(command, str) and command.startswith(prefixes):
                     matcher = group.get("matcher")
                     removed.append(event if not matcher else f"{event}({matcher})")
                     dropped += 1
