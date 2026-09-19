@@ -29,6 +29,8 @@ src/prudence/
     pipeline.py   the order the five steps run in, so ingest and rebuild agree
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
+  menubar/        the macOS menu-bar prototype: summary.py (pure, no rumps) and
+                   app.py (the rumps shell, imported only from cli/menubar.py)
 plugin/           (next) the Claude Code plugin: skills, hooks, .mcp.json
 tests/            pytest; fixtures are synthetic, one file per observed format version
 docs/reference/store-schema.md   every table and column, with its trust level
@@ -80,6 +82,8 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
+  `menubar/summary.py` is the pattern: one pure function per number shown, so a surface's
+  own numbers are tested without its GUI toolkit.
 
 ## Privacy rules for contributors
 

@@ -79,3 +79,8 @@ def line_hash_key_file() -> Path:
 def lock_file() -> Path:
     """Advisory lock taken for the duration of an ingest, so two never overlap."""
     return data_dir() / "ingest.lock"
+
+
+def reports_dir() -> Path:
+    """Where a surface writes a Markdown report for the user to open, e.g. the menu bar."""
+    return data_dir() / "reports"
