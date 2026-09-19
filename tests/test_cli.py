@@ -3,9 +3,13 @@ from click.testing import CliRunner
 from prudence.cli import main
 
 
-def test_status_exits_ok_and_prints_prudence() -> None:
-    runner = CliRunner()
-    result = runner.invoke(main, ["status"])
-
+def test_status_runs() -> None:
+    result = CliRunner().invoke(main, ["status"])
     assert result.exit_code == 0
     assert "prudence" in result.output
+
+
+def test_init_without_scan_explains() -> None:
+    result = CliRunner().invoke(main, ["init"])
+    assert result.exit_code != 0
+    assert "--scan" in result.output
