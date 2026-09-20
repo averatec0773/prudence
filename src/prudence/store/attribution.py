@@ -23,7 +23,9 @@ Two things arrived in M2. Every row carries a `confidence` label (see `confidenc
 below), so a surface can count what is known separately from what is guessed. And a
 commit whose printed hash a rebase destroyed can be found again by `store/rewritten.py`,
 which adds an `in_session` row with `method_note = 'rewritten'`; that module's docstring
-carries the rule and says why the plan's patch-id idea could not be implemented.
+carries the rule and says why the plan's patch-id idea could not be implemented. The
+same rule, applied to a `git commit` that printed no hash at all, adds an `in_session`
+row with `method_note = 'silent'`.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from datetime import datetime, timedelta
 from prudence.store import rewritten
 from prudence.store.repos import Repository
 
-FACT_VERSION = 2
+FACT_VERSION = 3
 
 METHODS = ("in_session", "git_ai_note", "line_match")
 TOLERANCE = timedelta(seconds=120)
@@ -118,6 +120,7 @@ class AttributionStats:
     commits_attributed: int = 0
     unresolved_hashes: int = 0
     reidentified: int = 0
+    silent_matched: int = 0
     unreadable_notes: int = 0
     elapsed: float = 0.0
     per_repo: dict[str, int] = field(default_factory=dict)
@@ -173,7 +176,12 @@ def build(connection: sqlite3.Connection, repositories: list[Repository]) -> Att
             in_session.add(commit_hash)
 
         aliases = rewritten.reidentify(
-            connection, repository.repo_key, unresolved, matched, in_session
+            connection,
+            repository.repo_key,
+            unresolved,
+            matched,
+            in_session,
+            silent=_silent_calls(connection, repository),
         )
         rewritten.save(connection, aliases)
         for alias in aliases:
@@ -185,10 +193,13 @@ def build(connection: sqlite3.Connection, repositories: list[Repository]) -> Att
                     1,
                     alias.lines_matched,
                     added.get(alias.commit_hash),
-                    method_note="rewritten",
+                    method_note=alias.method_note,
                 )
             )
-            stats.reidentified += 1
+            if alias.method_note == rewritten.SILENT:
+                stats.silent_matched += 1
+            else:
+                stats.reidentified += 1
             attributed.add(alias.commit_hash)
 
         for commit_hash, session_id in _notes(connection, repository, stats):
@@ -390,6 +401,29 @@ def _in_session(
     return sorted(set(pairs)), sorted(
         unresolved, key=lambda call: (call.called_at or "", call.printed_hash, call.session_id)
     )
+
+
+def _silent_calls(connection: sqlite3.Connection, repository: Repository) -> list[rewritten.Call]:
+    """In-session `git commit` calls that printed no hash at all.
+
+    Quiet mode, or a hook whose own output followed git's, leaves a commit call with
+    nothing to resolve. A call that failed is left out: it made no commit, and the one
+    that follows it seconds later should not be matched to the failure.
+    """
+    calls = [
+        rewritten.Call(None, row["session_id"], row["started_at"], call_id=row["call_id"])
+        for row in connection.execute(
+            "SELECT c.tool_use_id AS call_id, c.session_id AS session_id,"
+            " t.started_at AS started_at FROM command c"
+            " JOIN session s ON s.session_id = c.session_id"
+            " LEFT JOIN tool_call t ON t.tool_use_id = c.tool_use_id"
+            " WHERE c.command_class = 'git_commit' AND c.commit_hash IS NULL"
+            " AND (c.exit_code IS NULL OR c.exit_code = 0) AND s.repo_key = ?",
+            (repository.repo_key,),
+        )
+        if row["started_at"]
+    ]
+    return sorted(calls, key=lambda call: (call.called_at or "", call.key))
 
 
 def _notes(

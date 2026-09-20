@@ -1,14 +1,15 @@
 """The order the store is built in, in one place, so `ingest` and `rebuild` agree.
 
-Six steps, and the order between them is the only thing this module knows. The
+Seven steps, and the order between them is the only thing this module knows. The
 repositories come first because every later step needs to know which directories
 belong to what, including directories that no longer exist. The archive comes next
 because raw bytes are the truth, and Prudence's own hook spool is archived in the same
 pass for the same reason. The parser reads the archive alone, and so does the spool
 fold. Commits are harvested from the repositories, not from the agent. Attribution
-joins the last two and is therefore last.
+joins the last two. Outcomes come last of all, because they ask what became of the
+lines of the commits attribution has just decided to count.
 
-`ingest` runs all six; `rebuild` runs all but the archive, which is what makes a
+`ingest` runs all seven; `rebuild` runs all but the archive, which is what makes a
 parser change a rebuild rather than a migration.
 """
 
@@ -18,7 +19,16 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from prudence import config as config_module
-from prudence.store import archive, attribution, commits, derived, lines, repos, spool
+from prudence.store import (
+    archive,
+    attribution,
+    commits,
+    derived,
+    lines,
+    outcomes,
+    repos,
+    spool,
+)
 
 
 @dataclass
@@ -28,6 +38,7 @@ class Result:
     hooks: spool.SpoolStats = field(default_factory=spool.SpoolStats)
     harvested: commits.HarvestStats = field(default_factory=commits.HarvestStats)
     attributed: attribution.AttributionStats = field(default_factory=attribution.AttributionStats)
+    outcomes: outcomes.OutcomeStats = field(default_factory=outcomes.OutcomeStats)
     repositories: int = 0
 
 
@@ -49,4 +60,5 @@ def run(connection: sqlite3.Connection, config: config_module.Config, with_archi
     key = lines.load_key()
     result.harvested = commits.harvest(connection, repositories, key, config.levels)
     result.attributed = attribution.build(connection, repositories)
+    result.outcomes = outcomes.build(connection, repositories, key)
     return result

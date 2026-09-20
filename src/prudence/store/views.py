@@ -241,6 +241,210 @@ def credited(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
     )
 
 
+# --- what became of the lines, aggregated from `line_fate` ----------------------------
+
+# Every counter one aggregate holds. The `measured_*` counters are the denominators:
+# a mark that has not happened yet is NULL in `line_fate`, so the share of lines alive
+# at 90 days is over the lines whose 90-day mark exists, not over all of them.
+FATE_KEYS = (
+    "lines",
+    "measured_7d",
+    "alive_7d",
+    "measured_30d",
+    "alive_30d",
+    "measured_90d",
+    "alive_90d",
+    "alive_head",
+    "alive_head_anywhere",
+    "blame_head",
+    "reworked",
+)
+
+
+def empty_fate() -> dict[str, int]:
+    return dict.fromkeys(FATE_KEYS, 0)
+
+
+def fate_by_commit(connection: sqlite3.Connection, hashes: list[str]) -> dict[str, dict[str, int]]:
+    """One aggregate per commit, so a session and a repository can both be summed from it."""
+    result: dict[str, dict[str, int]] = {}
+    marks = ", ".join(
+        f"SUM(CASE WHEN alive_{days}d IS NOT NULL THEN 1 ELSE 0 END) AS measured_{days}d,"
+        f" SUM(COALESCE(alive_{days}d, 0)) AS alive_{days}d"
+        for days in (7, 30, 90)
+    )
+    for start in range(0, len(hashes), 400):
+        batch = hashes[start : start + 400]
+        placeholders = ", ".join("?" * len(batch))
+        try:
+            rows = connection.execute(
+                f"SELECT commit_hash, COUNT(*) AS lines, {marks},"
+                " SUM(COALESCE(alive_head, 0)) AS alive_head,"
+                " SUM(COALESCE(alive_head_anywhere, 0)) AS alive_head_anywhere,"
+                " SUM(COALESCE(blame_head, 0)) AS blame_head,"
+                " SUM(CASE WHEN reworked_by IS NOT NULL THEN 1 ELSE 0 END) AS reworked"
+                f" FROM line_fate WHERE commit_hash IN ({placeholders}) GROUP BY commit_hash",
+                batch,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        for row in rows:
+            result[row["commit_hash"]] = {key: row[key] or 0 for key in FATE_KEYS}
+    return result
+
+
+def counted_pairs(connection: sqlite3.Connection, ids: list[str]) -> list[tuple[str, str]]:
+    """The (session, commit) pairs a statistic may be built from: `fact` and `inferred`.
+
+    One commit can carry two rows for one session, so the pairs are distinct: a session
+    that both ran `git commit` and wrote the lines is credited with one commit, not two.
+    """
+    return sorted(
+        {
+            (row["session_id"], row["commit_hash"])
+            for row in _batched(
+                connection,
+                "SELECT DISTINCT session_id, commit_hash FROM attribution"
+                f" WHERE confidence IN ('{attribution_module.FACT}',"
+                f" '{attribution_module.INFERRED}')",
+                ids,
+                "",
+            )
+        }
+    )
+
+
+def outcomes_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, dict[str, int]]:
+    """What became of each session's counted lines, summed over its counted commits."""
+    pairs = counted_pairs(connection, ids)
+    if not pairs:
+        return {}
+    fates = fate_by_commit(connection, sorted({commit for _, commit in pairs}))
+    result: dict[str, dict[str, int]] = {}
+    for session_id, commit_hash in pairs:
+        fate = fates.get(commit_hash)
+        if fate is None:
+            continue
+        totals = result.setdefault(session_id, empty_fate())
+        for name in FATE_KEYS:
+            totals[name] += fate[name]
+    return result
+
+
+def outcomes_by_repository(
+    connection: sqlite3.Connection, ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """The same totals per repository, over each commit once however many sessions share it.
+
+    The credit columns are counted the same way: one commit is one commit, at its best
+    label, whether one session or three are credited with it.
+    """
+    pairs = counted_pairs(connection, ids)
+    hashes = sorted({commit for _, commit in pairs})
+    if not hashes:
+        return {}
+    fates = fate_by_commit(connection, hashes)
+    labelled = credited_by_commit(connection, hashes)
+    repos: dict[str, str] = {}
+    for start in range(0, len(hashes), 400):
+        batch = hashes[start : start + 400]
+        placeholders = ", ".join("?" * len(batch))
+        for row in connection.execute(
+            f'SELECT commit_hash, repo_key FROM "commit" WHERE commit_hash IN ({placeholders})',
+            batch,
+        ):
+            repos[row["commit_hash"]] = row["repo_key"]
+    result: dict[str, dict[str, Any]] = {}
+    coverages: dict[str, list[float]] = defaultdict(list)
+    for commit_hash, fate in fates.items():
+        repo_key = repos.get(commit_hash) or "unassigned"
+        totals = result.setdefault(
+            repo_key, {**empty_fate(), "fact": 0, "inferred": 0, "coverage": None}
+        )
+        for name in FATE_KEYS:
+            totals[name] += fate[name]
+        label, coverage = labelled.get(commit_hash, (None, None))
+        if label is not None:
+            totals[label] += 1
+        if coverage is not None:
+            coverages[repo_key].append(coverage)
+    for repo_key, values in coverages.items():
+        result[repo_key]["coverage"] = sum(values) / len(values)
+    return result
+
+
+def credited_by_commit(
+    connection: sqlite3.Connection, hashes: list[str]
+) -> dict[str, tuple[str, float | None]]:
+    """The best confidence label and its coverage for each commit, whoever is credited."""
+    order = {label: index for index, label in enumerate(attribution_module.CONFIDENCES)}
+    best: dict[str, tuple[str, float | None]] = {}
+    for start in range(0, len(hashes), 400):
+        batch = hashes[start : start + 400]
+        placeholders = ", ".join("?" * len(batch))
+        for row in connection.execute(
+            "SELECT commit_hash, confidence, coverage FROM attribution"
+            f" WHERE commit_hash IN ({placeholders})",
+            batch,
+        ):
+            held = best.get(row["commit_hash"])
+            if held is None or order[row["confidence"]] < order[held[0]]:
+                best[row["commit_hash"]] = (row["confidence"], row["coverage"])
+    return {
+        commit: value for commit, value in best.items() if value[0] in attribution_module.COUNTED
+    }
+
+
+def outcomes_of(connection: sqlite3.Connection, session_id: str) -> dict[str, int] | None:
+    """One session's outcome totals, or None when it is credited with no counted line."""
+    return outcomes_map(connection, [session_id]).get(session_id)
+
+
+def outcome_shares(totals: dict[str, int] | None) -> dict[str, Any] | None:
+    """The counts plus the shares a surface prints, each with the denominator it is over.
+
+    None all the way through when nothing was measured, never zero: a commit whose
+    ninety-day mark is still in the future has not lost its lines.
+    """
+    if not totals or not totals["lines"]:
+        return None
+    return {
+        **totals,
+        "survival_7d": share(totals["alive_7d"], totals["measured_7d"]),
+        "survival_30d": share(totals["alive_30d"], totals["measured_30d"]),
+        "survival_90d": share(totals["alive_90d"], totals["measured_90d"]),
+        "survival_head": share(totals["alive_head"], totals["lines"]),
+        "survival_head_anywhere": share(totals["alive_head_anywhere"], totals["lines"]),
+        "blame_head": share(totals["blame_head"], totals["lines"]),
+        "reworked_share": share(totals["reworked"], totals["lines"]),
+        "fact_version": _outcome_fact_version(),
+    }
+
+
+def _outcome_fact_version() -> int:
+    from prudence.store import outcomes as outcomes_module
+
+    return outcomes_module.FACT_VERSION
+
+
+def share(alive: int, measured: int) -> float | None:
+    """A survival share, or None when nothing was measured. Never zero by default."""
+    return (alive / measured) if measured else None
+
+
+def suppressed_repositories(connection: sqlite3.Connection) -> set[str]:
+    """Repositories whose outcome facts are withheld because other authors dominate."""
+    try:
+        return {
+            row["repo_key"]
+            for row in connection.execute(
+                "SELECT repo_key FROM repository WHERE outcomes_suppressed = 1"
+            )
+        }
+    except sqlite3.OperationalError:
+        return set()
+
+
 def hook_timeline(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
     """Empty before `hook_event` exists (`prudence hooks install` was never run)."""
     try:
@@ -344,6 +548,8 @@ def session_summary(
         "commits_inferred": counted["inferred"],
         "commits_uncertain": counted["uncertain"],
         "coverage": counted["coverage"],
+        "outcomes": outcome_shares(outcomes_of(connection, session_id)),
+        "outcomes_suppressed": row["repo_key"] in suppressed_repositories(connection),
         "hooks": _hook_turns(hook_timeline(connection, session_id)),
         "archive": {
             "files": len(archive_rows),
@@ -460,6 +666,8 @@ def search_sessions(
     counted = credited_map(connection, ids)
     tokens = usage_map(connection, ids)
     sat = _sittings_map(connection, ids)
+    fates = outcomes_map(connection, ids)
+    suppressed = suppressed_repositories(connection)
     empty = {"fact": 0, "inferred": 0, "uncertain": 0, "commits": 0, "coverage": None}
     results = [
         {
@@ -475,6 +683,8 @@ def search_sessions(
             "commits_inferred": counted.get(row["session_id"], empty)["inferred"],
             "commits_uncertain": counted.get(row["session_id"], empty)["uncertain"],
             "coverage": counted.get(row["session_id"], empty)["coverage"],
+            "outcomes": outcome_shares(fates.get(row["session_id"])),
+            "outcomes_suppressed": row["repo_key"] in suppressed,
             "capture_notes": row["notes"],
         }
         for row in page
@@ -533,7 +743,7 @@ def _scalar(connection: sqlite3.Connection, query: str, session_id: str) -> int:
 def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     """What `prudence status` prints, as JSON. Ids, counts and versions only."""
     from prudence import config as config_module
-    from prudence.store import archive, attribution, commits, derived, rewritten, spool
+    from prudence.store import archive, attribution, commits, derived, outcomes, rewritten, spool
 
     config = config_module.load()
     repositories = []
@@ -591,8 +801,14 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         "by_method": attribution.counts(connection),
         "by_confidence": attribution.confidence_counts(connection),
         "printed_hashes": rewritten.resolution(connection),
+        "silent_matched": rewritten.silent_matches(connection),
         "attribution_fact_version": attribution.FACT_VERSION,
         "commit_alias_fact_version": rewritten.FACT_VERSION,
+    }
+    result["outcomes"] = {
+        **outcomes.counts(connection),
+        "suppressed": outcomes.suppressed_repositories(connection),
+        "fact_version": outcomes.FACT_VERSION,
     }
     events, hook_sessions = spool.counts(connection)
     result["hook_events"] = {

@@ -114,6 +114,12 @@ def forget_project(connection: sqlite3.Connection, repo_key: str) -> Removal:
         " WHERE repo_key = ?)",
         key,
     )
+    removal.rows["line_fate"] += _execute(
+        connection,
+        'DELETE FROM line_fate WHERE commit_hash IN (SELECT commit_hash FROM "commit"'
+        " WHERE repo_key = ?)",
+        key,
+    )
     removal.commits = _execute(connection, 'DELETE FROM "commit" WHERE repo_key = ?', key)
     removal.rows["commit"] += removal.commits
     removal.rows["hook_event"] += _execute(

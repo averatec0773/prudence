@@ -15,7 +15,17 @@ from prudence import __version__
 from prudence import config as config_module
 from prudence.cli.render import size, thousands
 from prudence.paths import database_file
-from prudence.store import archive, attribution, commits, db, derived, rewritten, spool, views
+from prudence.store import (
+    archive,
+    attribution,
+    commits,
+    db,
+    derived,
+    outcomes,
+    rewritten,
+    spool,
+    views,
+)
 
 
 @click.command()
@@ -99,6 +109,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     lines.extend(_command_lines(connection))
     lines.extend(_hook_lines(connection))
     lines.extend(_commit_lines(connection))
+    lines.extend(_outcome_lines(connection))
     lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
         "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
@@ -166,7 +177,32 @@ def _commit_lines(connection: sqlite3.Connection) -> list[str]:
         f"{printed['resolved']} still resolve, {printed['reidentified']} were re-identified "
         f"after a rewrite, {printed['unresolved']} are gone "
         f"(commit_alias fact version {rewritten.FACT_VERSION})",
+        f"silent commits matched: {rewritten.silent_matches(connection)} "
+        "(a `git commit` that printed no hash, matched by timing plus overlapping lines)",
     ]
+
+
+def _outcome_lines(connection: sqlite3.Connection) -> list[str]:
+    """What became of the attributed lines, and which repositories were withheld."""
+    counted = outcomes.counts(connection)
+    if counted["lines"]:
+        lines = [
+            f"outcomes: {counted['lines']} attributed lines over {counted['commits']} commits, "
+            f"{counted['reworked']} reworked by a later commit of the same author "
+            f"(line_fate fact version {outcomes.FACT_VERSION})"
+        ]
+    else:
+        lines = ["outcomes: none computed yet (no attributed line has a fate row)"]
+    withheld = outcomes.suppressed_repositories(connection)
+    if withheld:
+        names = views.repository_names(connection)
+        listed = ", ".join(names.get(key, key) for key in withheld)
+        lines.append(
+            f"outcomes suppressed for {listed}: more than "
+            f"{outcomes.OTHER_AUTHOR_SHARE * 100:.0f}% of the commits in the window are by "
+            "another author, so survival there would not be about you"
+        )
+    return lines
 
 
 def _mapping_lines(connection: sqlite3.Connection) -> list[str]:

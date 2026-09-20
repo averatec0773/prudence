@@ -32,6 +32,20 @@ The mapping is one to one in both directions. A dead hash named exactly one comm
 it was printed, so when two surviving commits both fit one printed hash, the one that
 overlaps the session's lines most keeps it and the other is left to line matching. On
 the founder's store that happened once in nine.
+
+The same rule answers a second question, added in M2 batch 2. Round two of the spike
+measured that 8.6% of in-session `git commit` calls print no hash at all: the command
+was quiet, or a hook's output followed git's and the `[branch hash]` line never
+appeared. There is then no hash to be dead, but the two facts the rule really rests on
+are both still there. So a reachable commit dated inside the five minutes after such a
+call, whose added lines overlap that session's, is recorded as `in_session` with
+`method_note = 'silent'` and no alias row, because no hash was printed to alias.
+
+The two kinds differ in one place only, the tiebreak. A printed hash is evidence of a
+particular commit, so when a call printed two dead hashes the last one wins (the amend
+rule above). A silent call is evidence of a moment, so the commit nearest that moment
+wins, and one call claims at most one commit. A printed hash is preferred over a silent
+call whenever both fit the same commit: a hash git actually printed is the better fact.
 """
 
 from __future__ import annotations
@@ -65,23 +79,44 @@ CREATE INDEX IF NOT EXISTS commit_alias_session ON commit_alias(session_id);
 """
 
 
+REWRITTEN = "rewritten"
+SILENT = "silent"
+
+
 @dataclass(frozen=True)
 class Call:
-    """One in-session `git commit` whose printed short hash no longer resolves."""
+    """One in-session `git commit` that left no usable hash behind.
 
-    printed_hash: str
+    Either it printed a short hash that no longer resolves (`printed_hash`), or it
+    printed none at all and only the tool call itself names it (`call_id`). Exactly one
+    of the two is set, and `key` is whichever it is.
+    """
+
+    printed_hash: str | None
     session_id: str
     called_at: str | None
+    call_id: str | None = None
+
+    @property
+    def key(self) -> str:
+        return self.printed_hash or self.call_id or ""
+
+    @property
+    def note(self) -> str:
+        return REWRITTEN if self.printed_hash else SILENT
 
 
 @dataclass(frozen=True)
 class Alias:
-    """One rewritten commit, found again: the dead hash, the live commit, the session."""
+    """One commit found again: the call that made it, the live commit, the session."""
 
-    printed_hash: str
+    printed_hash: str | None
     commit_hash: str
     session_id: str
     lines_matched: int
+    method_note: str = REWRITTEN
+    key: str = ""
+    gap: int = 0
 
 
 def reidentify(
@@ -90,13 +125,15 @@ def reidentify(
     calls: list[Call],
     matched: dict[str, list[tuple[str, int]]],
     already: set[str],
+    silent: list[Call] | None = None,
 ) -> list[Alias]:
-    """Rewritten commits of one repository, at most one call per commit.
+    """Commits of one repository found again, at most one call per commit.
 
     `matched` is the line-match tally attribution has already computed, so this costs
     one pass over the repository's commits and no git call at all.
     """
-    if not calls:
+    silent = silent or []
+    if not calls and not silent:
         return []
     found: list[Alias] = []
     for row in connection.execute(
@@ -109,45 +146,100 @@ def reidentify(
         counts = dict(matched.get(row["commit_hash"], []))
         if not counts:
             continue
-        best: tuple[Call, int] | None = None
-        for call in calls:
-            overlap = counts.get(call.session_id, 0)
-            if not _overlaps(overlap, row["added_lines"]):
-                continue
-            if not _in_window(call.called_at, row["committer_at"]):
-                continue
-            if best is None or (call.called_at or "") > (best[0].called_at or ""):
-                best = (call, overlap)
-        if best is not None:
+        # A printed hash is evidence of this commit; a silent call only of the moment.
+        claim = _claim(calls, counts, row, nearest=False) or _claim(
+            silent, counts, row, nearest=True
+        )
+        if claim is not None:
+            call, overlap, gap = claim
             found.append(
                 Alias(
-                    printed_hash=best[0].printed_hash,
+                    printed_hash=call.printed_hash,
                     commit_hash=row["commit_hash"],
-                    session_id=best[0].session_id,
-                    lines_matched=best[1],
+                    session_id=call.session_id,
+                    lines_matched=overlap,
+                    method_note=call.note,
+                    key=call.key,
+                    gap=gap,
                 )
             )
-    return _one_per_printed_hash(found)
+    return _one_per_call(found)
 
 
-def _one_per_printed_hash(found: list[Alias]) -> list[Alias]:
-    """A dead hash named one commit, so it may claim only one here: the best overlap."""
+def _claim(
+    calls: list[Call], counts: dict[str, int], row: sqlite3.Row, nearest: bool
+) -> tuple[Call, int, int] | None:
+    """The call that best fits one commit, with its overlap and its gap in seconds.
+
+    `nearest` picks the call closest in time, which is what a silent call needs; the
+    printed case keeps the last call, because that is what an amend leaves behind.
+    """
+    best: tuple[Call, int, int] | None = None
+    for call in calls:
+        overlap = counts.get(call.session_id, 0)
+        if not _overlaps(overlap, row["added_lines"]):
+            continue
+        gap = _gap(call.called_at, row["committer_at"])
+        if gap is None:
+            continue
+        if best is None:
+            best = (call, overlap, gap)
+        elif nearest and (gap, call.key) < (best[2], best[0].key):
+            best = (call, overlap, gap)
+        elif not nearest and (call.called_at or "", call.key) > (
+            best[0].called_at or "",
+            best[0].key,
+        ):
+            best = (call, overlap, gap)
+    return best
+
+
+def _one_per_call(found: list[Alias]) -> list[Alias]:
+    """One commit per call: a dead hash named one, and a silent call made one.
+
+    Both tiebreaks end in the commit hash, so a rebuild makes the same choice every time.
+    """
     kept: dict[str, Alias] = {}
     for alias in found:
-        held = kept.get(alias.printed_hash)
-        better = held is None or alias.lines_matched > held.lines_matched
-        # A tie is settled by the hash, so a rebuild makes the same choice every time.
-        tied = held is not None and alias.lines_matched == held.lines_matched
-        if better or (tied and alias.commit_hash < held.commit_hash):
-            kept[alias.printed_hash] = alias
-    return sorted(kept.values(), key=lambda alias: (alias.commit_hash, alias.printed_hash))
+        held = kept.get(alias.key)
+        if held is None or _better(alias, held):
+            kept[alias.key] = alias
+    return sorted(kept.values(), key=lambda alias: (alias.commit_hash, alias.key))
+
+
+def _better(alias: Alias, held: Alias) -> bool:
+    """Whether this claim beats the one already held for the same call."""
+    if alias.method_note == SILENT:
+        return (alias.gap, -alias.lines_matched, alias.commit_hash) < (
+            held.gap,
+            -held.lines_matched,
+            held.commit_hash,
+        )
+    return (-alias.lines_matched, alias.commit_hash) < (-held.lines_matched, held.commit_hash)
 
 
 def save(connection: sqlite3.Connection, aliases: list[Alias]) -> None:
+    """Store the printed hashes. A silent call printed none, so it has nothing to alias."""
     connection.executemany(
         "INSERT OR REPLACE INTO commit_alias VALUES (?, ?, ?, ?)",
-        [(a.printed_hash, a.commit_hash, a.session_id, FACT_VERSION) for a in aliases],
+        [
+            (a.printed_hash, a.commit_hash, a.session_id, FACT_VERSION)
+            for a in aliases
+            if a.printed_hash
+        ],
     )
+
+
+def silent_matches(connection: sqlite3.Connection) -> int:
+    """Commits matched to a `git commit` that printed no hash, read back from the store."""
+    try:
+        return connection.execute(
+            "SELECT COUNT(DISTINCT commit_hash) FROM attribution"
+            " WHERE method = 'in_session' AND method_note = ?",
+            (SILENT,),
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
 
 
 def resolution(connection: sqlite3.Connection) -> dict[str, int]:
@@ -189,14 +281,20 @@ def _overlaps(matched: int, added_lines: int | None) -> bool:
     return matched >= max(1, required)
 
 
-def _in_window(called_at: str | None, committer_at: str | None) -> bool:
-    """The commit was made while the call was running, or within the five minutes after."""
+def _gap(called_at: str | None, committer_at: str | None) -> int | None:
+    """Seconds from the call to the commit, or None when the commit is outside the window.
+
+    The commit was made while the call was running, or within the five minutes after.
+    """
     call = utc(called_at)
     made = utc(committer_at)
     if call is None or made is None:
-        return False
+        return None
     start = datetime.fromisoformat(call)
-    return start <= datetime.fromisoformat(made) <= start + WINDOW
+    delta = datetime.fromisoformat(made) - start
+    if delta < timedelta(0) or delta > WINDOW:
+        return None
+    return int(delta.total_seconds())
 
 
 def _has_prefix(known: list[str], short: str) -> bool:

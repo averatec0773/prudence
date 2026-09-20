@@ -29,13 +29,16 @@ src/prudence/
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
     attribution.py  which session produced which commit, and how sure we are
-    rewritten.py  commits a rebase renamed, found again by timing and overlapping lines
+    rewritten.py  commits a rebase renamed, or a quiet `git commit` never named, found
+                   again by timing and overlapping lines
+    outcomes.py   what became of each attributed line: presence at 7, 30, 90 days and at
+                   HEAD, blame as the check, and rework by the author's own later commit
     spool.py      what the hooks saw, folded from the archived spool into hook_event
     erase.py      taking a session or a repository back out, archive included
     transfer.py   the whole store as one .tar.gz, and back into an empty one
     sampling.py   the precision sample: the hard quarter, drawn, and every method's score
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
-    pipeline.py   the order the six steps run in, so ingest and rebuild agree
+    pipeline.py   the order the seven steps run in, so ingest and rebuild agree
     views.py      the read queries `cli/show.py` and the MCP server share; no formatting
   facts/          (next) one function per derived fact, each versioned
   cli/            one file per command; thin, calls the engine
@@ -84,7 +87,15 @@ docs/reference/store-schema.md   every table and column, with its trust level
    whose constants cite the labelled data behind them). A surface counts `fact` and
    `inferred`, shows `uncertain` beside them, and never folds one into the other. An
    absent measurement is NULL and printed as a dash: a session whose Claude Code version
-   wrote no token usage has no usage rows, which is not zero tokens.
+   wrote no token usage has no usage rows, which is not zero tokens. The same holds for
+   an outcome whose moment has not arrived: `line_fate.alive_90d` is NULL, never 0, for
+   a commit made three weeks ago.
+11. **A fact that would be about someone else is not computed at all.** Outcome facts are
+   suppressed for a repository where more than `outcomes.OTHER_AUTHOR_SHARE` of the
+   window's commits carry an author email hash other than the majority's; the flag lives
+   on the `repository` row and every surface prints the reason in place of the number.
+   Suppression is preferred to a caveat, because a survival percentage that silently
+   includes a colleague's work is wrong rather than imprecise.
 
 ## Adding things
 
@@ -94,7 +105,11 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new table harvested from git rather than from the archive: its own module under
   `store/`, a `FACT_VERSION`, a step in `store/pipeline.py`, and a section in the
   schema document. Read-only git commands only: `log`, `show`, `rev-parse`,
-  `rev-list`, `notes`, `cat-file`, `blame`, `worktree list`, `patch-id`.
+  `rev-list`, `notes`, `cat-file`, `blame`, `ls-tree`, `worktree list`, `patch-id`.
+  A step that runs a command per commit caches by its argument and reads trees rather
+  than diffs; if a repository is still too large, it samples deterministically by commit
+  hash (`store/outcomes.MAX_COMMITS`) so that a rebuild reproduces the same sample, and
+  every surface says how much was left out.
 - A new derived fact computed from those tables: one function in `facts/` with a version
   and its test cases as data. `derived.py` builds the tables; `facts/` reads them.
 - A new archive column: `store/db.py`, with `ARCHIVE_SCHEMA_VERSION` bumped and a step in

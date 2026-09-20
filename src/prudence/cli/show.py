@@ -20,7 +20,7 @@ import click
 
 from prudence.cli.render import size
 from prudence.paths import database_file
-from prudence.store import attribution, commits, db, derived, edits, spool, views
+from prudence.store import attribution, commits, db, derived, edits, outcomes, spool, views
 
 WITHHELD = "file paths withheld at metadata-only"
 
@@ -73,6 +73,7 @@ def render(connection: sqlite3.Connection, session_id: str, list_files: bool = F
     lines += _usage(connection, session_id)
     lines += _files(connection, session_id, full)
     lines += _commits(connection, session_id)
+    lines += _outcomes(connection, session_id, row["repo_key"])
     lines += _hooks(connection, session_id)
     lines += _archive(connection, session_id, list_files)
     lines.append("")
@@ -234,6 +235,45 @@ def _commits(connection: sqlite3.Connection, session_id: str) -> list[str]:
     )
     lines.append("  coverage is NULL, printed as -, when there is no line evidence at all.")
     return lines
+
+
+def _outcomes(connection: sqlite3.Connection, session_id: str, repo_key: str | None) -> list[str]:
+    """What became of the lines of the commits this session is credited with."""
+    lines = _heading(
+        "what became of the lines",
+        "line_fate",
+        f"fact version {outcomes.FACT_VERSION}",
+        "high for presence (a tree read at a date), medium for rework (a later commit of "
+        "the same author email hash removed the line)",
+    )
+    if repo_key in views.suppressed_repositories(connection):
+        lines.append(
+            "  suppressed: more than "
+            f"{outcomes.OTHER_AUTHOR_SHARE * 100:.0f}% of this repository's commits in the "
+            "window are by another author, so survival here would not be about you"
+        )
+        return lines
+    shares = views.outcome_shares(views.outcomes_of(connection, session_id))
+    if shares is None:
+        lines.append("  none: this session is credited with no line a fate could be read for")
+        return lines
+    pairs = [
+        ("attributed lines", str(shares["lines"])),
+        ("alive at 7 days", _share(shares["survival_7d"], shares["measured_7d"])),
+        ("alive at 30 days", _share(shares["survival_30d"], shares["measured_30d"])),
+        ("alive at 90 days", _share(shares["survival_90d"], shares["measured_90d"])),
+        ("alive at head", _share(shares["survival_head"], shares["lines"])),
+        ("alive anywhere at head", _share(shares["survival_head_anywhere"], shares["lines"])),
+        ("blamed to the commit", _share(shares["blame_head"], shares["lines"])),
+        ("reworked by you later", _share(shares["reworked_share"], shares["lines"])),
+    ]
+    lines += [f"  {label:<24} {value}" for label, value in pairs]
+    lines.append("  a mark still in the future is a dash, not a death.")
+    return lines
+
+
+def _share(value: float | None, measured: int) -> str:
+    return "-" if value is None else f"{value * 100:.0f}% of {measured}"
 
 
 def _hooks(connection: sqlite3.Connection, session_id: str) -> list[str]:

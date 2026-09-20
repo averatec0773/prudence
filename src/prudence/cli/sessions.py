@@ -86,10 +86,12 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
     commands = _count(connection, "SELECT session_id, COUNT(*) FROM command", ids)
     credited = views.credited_map(connection, ids)
     tokens = views.usage_map(connection, ids)
+    fates = views.outcomes_map(connection, ids)
 
     lines = [
         f"{'session':<10} {'repository':<20} {'started':<16} {'sit':>4} {'prompts':>8} "
-        f"{'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} {'coverage':>9}  notes"
+        f"{'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} {'coverage':>9} "
+        f"{'alive 30d':>10}  notes"
     ]
     for row in rows:
         session_id = row["session_id"]
@@ -100,16 +102,27 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
             f"{sittings.get(session_id, 1):>4} {turns.get(session_id, 0):>8} "
             f"{edits.get(session_id, 0):>6} {commands.get(session_id, 0):>5} "
             f"{thousands(tokens.get(session_id)):>7} {_commits(counted):>13} "
-            f"{_percent(counted['coverage']):>9}  {_notes(row)}"
+            f"{_percent(counted['coverage']):>9} {_survival(fates.get(session_id)):>10}  "
+            f"{_notes(row)}"
         )
     lines.append("")
     lines.append(
         f"{len(rows)} sessions in the last {window}. Commits are counted as "
         "fact (+inferred), with (?N) uncertain attributions beside them, which enter no "
         "statistic; coverage is the mean share of a counted commit's added lines that "
-        "session wrote. Tokens are input, output and cache tokens together, in thousands."
+        "session wrote. Tokens are input, output and cache tokens together, in thousands. "
+        "Alive 30d is the share of the session's counted lines still in the same file "
+        "thirty days after the commit; a dash means that mark has not happened yet. "
+        "`prudence outcomes` prints the rest."
     )
     return "\n".join(lines)
+
+
+def _survival(totals: dict[str, int] | None) -> str:
+    """The 30-day survival share, or a dash when that mark has not been reached."""
+    if not totals:
+        return "-"
+    return _percent(views.share(totals["alive_30d"], totals["measured_30d"]))
 
 
 def _since(window: str) -> str:

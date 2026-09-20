@@ -115,6 +115,11 @@ def report(result: pipeline.Result) -> list[str]:
             f"{attributed.reidentified} rewritten commits were re-identified from the session "
             "that made them (timing plus overlapping lines; the printed hash is gone)."
         )
+    if attributed.silent_matched:
+        lines.append(
+            f"{attributed.silent_matched} commits were matched to a `git commit` that printed "
+            "no hash at all (the same timing and overlap rule)."
+        )
     if attributed.unresolved_hashes or attributed.unreadable_notes:
         lines.append(
             f"{attributed.unresolved_hashes} commit hashes named in a session no longer "
@@ -126,4 +131,21 @@ def report(result: pipeline.Result) -> list[str]:
         f"Confidence: {labels.get('fact', 0)} fact, {labels.get('inferred', 0)} inferred, "
         f"{labels.get('uncertain', 0)} uncertain attribution rows."
     )
+    fates = result.outcomes
+    lines.append(
+        f"Outcomes: {fates.lines} attributed lines of {fates.commits} commits followed to "
+        f"7, 30 and 90 days and to HEAD ({fates.blamed_paths} files blamed, "
+        f"{fates.reworked} lines reworked), {fates.elapsed:.1f} s."
+    )
+    if fates.sampled_repositories:
+        lines.append(
+            f"{fates.sampled_commits} commits were left out of the outcome sample in "
+            f"{fates.sampled_repositories} repositories (deterministic by commit hash, so a "
+            "rebuild draws the same sample)."
+        )
+    for repo_key, ratio in sorted(fates.suppressed.items()):
+        lines.append(
+            f"Outcomes suppressed for {repo_key}: {ratio * 100:.0f}% of the commits in the "
+            "window are by another author."
+        )
     return lines

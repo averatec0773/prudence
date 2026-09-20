@@ -34,10 +34,13 @@ from pathlib import Path
 from prudence import config as config_module
 from prudence.store.identity import identify
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 DESKTOP_WORKTREE_PARENTS = (".claude/worktrees", "worktrees")
 
+# `outcomes_suppressed` is written by `store/outcomes.py`, not here: a repository where
+# other people commit gets no survival facts, and the flag lives beside the repository
+# it is about so that every surface reads one row rather than joining a second table.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS repository(
     repo_key TEXT PRIMARY KEY,
@@ -47,6 +50,7 @@ CREATE TABLE IF NOT EXISTS repository(
     common_dir TEXT,
     toplevel TEXT,
     worktrees TEXT,
+    outcomes_suppressed INTEGER NOT NULL DEFAULT 0,
     fact_version INTEGER NOT NULL
 )
 """
@@ -105,7 +109,18 @@ def build(connection: sqlite3.Connection, config: config_module.Config) -> list[
                 worktrees=worktrees,
             )
         )
-    write(connection, repositories)
+    # Dropped rather than altered: every column here is derived from the config, from
+    # git and from the worktree roots just read back into memory, so a schema change is
+    # a rebuild and never a migration (architecture rule 1). One transaction, so a crash
+    # between the two statements cannot lose the learned worktree roots.
+    connection.execute("BEGIN")
+    try:
+        connection.execute("DROP TABLE IF EXISTS repository")
+        write(connection, repositories)
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
     return repositories
 
 
@@ -130,10 +145,16 @@ def read(connection: sqlite3.Connection) -> list[Repository]:
 
 
 def write(connection: sqlite3.Connection, repositories: list[Repository]) -> None:
-    """Store the repositories, keeping every worktree path either side already knew."""
+    """Store the repositories, keeping every worktree path either side already knew.
+
+    `outcomes_suppressed` is named rather than passed, so that rewriting a repository
+    row never silently clears a flag `store/outcomes.py` set.
+    """
     connection.execute(SCHEMA)
     connection.executemany(
-        "INSERT OR REPLACE INTO repository VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO repository"
+        " (repo_key, name, root_commits, remote_url, common_dir, toplevel, worktrees,"
+        " fact_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 repository.repo_key,
