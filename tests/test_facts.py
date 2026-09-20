@@ -12,7 +12,7 @@ from conftest import SAMPLE_SESSION, Workspace, record_one_session
 from prudence.cli import main
 from prudence.facts import registry
 from prudence.facts.base import Case, Fact, Label
-from prudence.store import attribution, db, derived
+from prudence.store import attribution, db, derived, hand_edits, spool
 
 
 def _facts_db() -> sqlite3.Connection:
@@ -22,6 +22,9 @@ def _facts_db() -> sqlite3.Connection:
     for table in derived.TABLES:
         connection.execute(derived.SCHEMA[table].format(name=table))
     connection.executescript(attribution.SCHEMA)
+    connection.execute(spool.SCHEMA.format(name=spool.TABLE))
+    connection.execute(hand_edits.TURN_TREE_SCHEMA.format(name=hand_edits.TURN_TREE_TABLE))
+    connection.execute(hand_edits.HAND_EDIT_SCHEMA.format(name=hand_edits.HAND_EDIT_TABLE))
     return connection
 
 

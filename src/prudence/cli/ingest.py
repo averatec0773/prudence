@@ -86,6 +86,13 @@ def report(result: pipeline.Result) -> list[str]:
             f"({hooks.duplicates} already recorded, {hooks.unreadable} unreadable), "
             f"{hooks.elapsed:.1f} s."
         )
+    turn_trees = result.turn_trees
+    if turn_trees.sessions:
+        lines.append(
+            f"Turn trees: {turn_trees.turns} turns over {turn_trees.sessions} sessions with "
+            f"hook data; {turn_trees.hand_edits} hand edits between turns found, "
+            f"{turn_trees.elapsed:.1f} s."
+        )
     recovered = {
         method: count
         for method, count in parsed.mapping_methods.items()

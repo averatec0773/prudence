@@ -140,6 +140,12 @@ SPLITS: tuple[Split, ...] = (
         None,
         "that prompted more often per active hour than your median here",
     ),
+    Split(
+        "hand_edits_between_turns",
+        "above",
+        0,
+        "that changed the tree by hand between two turns the hooks saw",
+    ),
 )
 
 _BY_FACT = {split.fact: split for split in SPLITS}

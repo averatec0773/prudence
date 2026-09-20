@@ -38,6 +38,7 @@ _HEADERS = {
     "compactions": "compact",
     "context_resets": "ctxrst",
     "prompts_per_active_hour": "p/hr",
+    "hand_edits_between_turns": "handedit",
 }
 _PERCENT = {"tests_before_commit"}
 _ONE_DECIMAL = {"commit_attempts_per_commit", "prompts_per_active_hour"}
