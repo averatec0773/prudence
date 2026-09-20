@@ -445,6 +445,28 @@ def suppressed_repositories(connection: sqlite3.Connection) -> set[str]:
         return set()
 
 
+def session_facts(connection: sqlite3.Connection, session_id: str) -> dict[str, dict[str, Any]]:
+    """This session's behaviour facts, keyed by name. Empty before `session_fact` exists
+    (`prudence rebuild` was never run) and for a fact that did not apply to this session.
+    """
+    try:
+        rows = connection.execute(
+            "SELECT fact, value, trust, fact_version FROM session_fact WHERE session_id = ?"
+            " ORDER BY fact",
+            (session_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {
+        row["fact"]: {
+            "value": row["value"],
+            "trust": row["trust"],
+            "fact_version": row["fact_version"],
+        }
+        for row in rows
+    }
+
+
 def hook_timeline(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
     """Empty before `hook_event` exists (`prudence hooks install` was never run)."""
     try:
@@ -550,6 +572,7 @@ def session_summary(
         "coverage": counted["coverage"],
         "outcomes": outcome_shares(outcomes_of(connection, session_id)),
         "outcomes_suppressed": row["repo_key"] in suppressed_repositories(connection),
+        "behaviour_facts": session_facts(connection, session_id),
         "hooks": _hook_turns(hook_timeline(connection, session_id)),
         "archive": {
             "files": len(archive_rows),

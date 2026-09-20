@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from prudence import __version__
+from prudence.facts import registry as facts_registry
 from prudence.store import (
     attribution,
     commits,
@@ -49,7 +50,7 @@ TABLE_DIR = "tables"
 FORMAT_VERSION = 1
 
 # Derived and harvested tables, in an order an import can follow without care.
-DERIVED_TABLES = derived.TABLES + ("hook_event",)
+DERIVED_TABLES = derived.TABLES + ("hook_event", facts_registry.TABLE)
 HARVESTED_TABLES = (
     "repository",
     "commit",
@@ -206,6 +207,11 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
         statement = derived.SCHEMA[table].format(name=table)
         connection.execute(statement.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
     connection.execute(spool.SCHEMA.format(name=spool.TABLE))
+    connection.execute(
+        facts_registry.SCHEMA.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1).format(
+            name=facts_registry.TABLE
+        )
+    )
     connection.execute(repos.SCHEMA)
     connection.executescript(commits.SCHEMA)
     connection.executescript(attribution.SCHEMA)

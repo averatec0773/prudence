@@ -15,11 +15,19 @@ What is deliberately not stored: message text, in any table, at any capture leve
 text and no line hashes, so an employer's repository leaves nothing but shape and
 counts. A keyed line hash is not readable, but it is still a fingerprint of their code,
 and the promise made for that level is shape only.
+
+Parser version 4 (M2) added two columns a behaviour fact needed and the archive did not
+yet expose: `tool_call.error_hash`, a keyed digest of a failed tool result's content, at
+`full` capture only, for `facts.repeated_errors` to count identical failures without
+reading the text itself; and `session.replayed_records`, promoting a count `_flush_session`
+already computed out of the free-text `notes` column and into one `facts.context_resets`
+can query directly.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import sqlite3
 import time
@@ -32,7 +40,7 @@ from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
 
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 # Record types this version understands. Anything else is counted and kept as a record.
 KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
@@ -65,7 +73,8 @@ SCHEMA = {
             record_count INTEGER NOT NULL DEFAULT 0,
             capture_level TEXT,
             parser_version INTEGER NOT NULL,
-            notes TEXT
+            notes TEXT,
+            replayed_records INTEGER NOT NULL DEFAULT 0
         )""",
     "record": """
         CREATE TABLE {name}(
@@ -101,7 +110,8 @@ SCHEMA = {
             input_bytes INTEGER NOT NULL DEFAULT 0,
             result_bytes INTEGER,
             is_error INTEGER,
-            parser_version INTEGER NOT NULL
+            parser_version INTEGER NOT NULL,
+            error_hash TEXT
         )""",
     "edit": """
         CREATE TABLE {name}(
@@ -165,6 +175,7 @@ INDEXES = (
     "CREATE INDEX IF NOT EXISTS turn_session ON turn(session_id)",
     "CREATE INDEX IF NOT EXISTS tool_call_session ON tool_call(session_id)",
     "CREATE INDEX IF NOT EXISTS tool_call_name ON tool_call(tool_name)",
+    "CREATE INDEX IF NOT EXISTS tool_call_error ON tool_call(session_id, error_hash)",
     "CREATE INDEX IF NOT EXISTS edit_session ON edit(session_id)",
     "CREATE INDEX IF NOT EXISTS edit_repo_path ON edit(repo_key, rel_path)",
     "CREATE INDEX IF NOT EXISTS edit_line_hash ON edit_line(line_hash)",
@@ -207,6 +218,7 @@ class _ToolCall:
     input_bytes: int = 0
     result_bytes: int | None = None
     is_error: int | None = None
+    error_hash: str | None = None
     edit: edits_module.EditFacts | None = None
     command: edits_module.CommandFacts | None = None
 
@@ -270,7 +282,7 @@ def build(
             )
         ]
         for path, agent_id in files:
-            _read_file(connection, path, session, agent_id, seen_records, unknown)
+            _read_file(connection, path, session, agent_id, seen_records, unknown, key)
         _flush_session(connection, session, stats, resolver, key)
 
     _flush_unknown(connection, unknown, stats)
@@ -338,6 +350,7 @@ def _read_file(
     agent_id: str | None,
     seen_records: set[str],
     unknown: dict[tuple[str, str | None], list],
+    key: bytes,
 ) -> None:
     full = session.capture_level == "full"
     for offset, line in archive.iter_lines(connection, path):
@@ -392,7 +405,9 @@ def _read_file(
         )
         _note_turn(session, turn_id, stamp, record)
         _note_usage(session, turn_id, record_id, record)
-        _note_tools(session, turn_id, record_id, turn_stamp=stamp, record=record, full=full)
+        _note_tools(
+            session, turn_id, record_id, turn_stamp=stamp, record=record, full=full, key=key
+        )
 
 
 def _turn_id(record: dict, session: _Session) -> str:
@@ -468,6 +483,7 @@ def _note_tools(
     turn_stamp: str | None,
     record: dict,
     full: bool,
+    key: bytes,
 ) -> None:
     """Fold a tool use, and later its result, into one call, an edit and a command.
 
@@ -504,7 +520,17 @@ def _note_tools(
             call.result_bytes = (
                 len(json.dumps(content, ensure_ascii=False).encode()) if content else 0
             )
+            if full and call.is_error and content is not None:
+                call.error_hash = _hash_error(key, content)
             _fold_result(call, outcome)
+
+
+def _hash_error(key: bytes, content: object) -> str:
+    """A keyed digest of a failed tool result, so `facts.repeated_errors` can count
+    identical failures without a fact ever reading the error text itself."""
+    text = json.dumps(content, ensure_ascii=False, sort_keys=True)
+    digest = hmac.new(key, text.encode("utf-8", "surrogatepass"), hashlib.sha256)
+    return digest.hexdigest()[:16]
 
 
 def _fold_result(call: _ToolCall, outcome: object) -> None:
@@ -554,7 +580,7 @@ def _flush_session(
     )
     stats.turns += len(session.turns)
     connection.executemany(
-        "INSERT OR REPLACE INTO tool_call__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO tool_call__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 tool_use_id,
@@ -568,6 +594,7 @@ def _flush_session(
                 call.result_bytes,
                 call.is_error,
                 PARSER_VERSION,
+                call.error_hash,
             )
             for tool_use_id, call in sorted(session.tool_calls.items())
         ],
@@ -581,7 +608,7 @@ def _flush_session(
     _flush_edits(connection, session, stats, resolver, key)
     _flush_commands(connection, session, stats)
     connection.execute(
-        "INSERT OR REPLACE INTO session__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO session__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session.session_id,
             session.repo_key,
@@ -594,6 +621,7 @@ def _flush_session(
             session.capture_level,
             PARSER_VERSION,
             "; ".join(notes) or None,
+            session.replayed,
         ),
     )
     stats.sessions += 1

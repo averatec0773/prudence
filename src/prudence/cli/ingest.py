@@ -12,6 +12,7 @@ import click
 from prudence import config as config_module
 from prudence import hooks as hooks_module
 from prudence.cli.render import size
+from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
 from prudence.store import db, pipeline
 
@@ -148,4 +149,9 @@ def report(result: pipeline.Result) -> list[str]:
             f"Outcomes suppressed for {repo_key}: {ratio * 100:.0f}% of the commits in the "
             "window are by another author."
         )
+    facts = result.facts
+    lines.append(
+        f"Behaviour facts: {facts.rows} rows over {facts.sessions} sessions "
+        f"({len(facts_registry.FACTS)} facts), {facts.elapsed:.1f} s."
+    )
     return lines

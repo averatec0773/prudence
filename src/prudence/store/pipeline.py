@@ -6,8 +6,10 @@ belong to what, including directories that no longer exist. The archive comes ne
 because raw bytes are the truth, and Prudence's own hook spool is archived in the same
 pass for the same reason. The parser reads the archive alone, and so does the spool
 fold. Commits are harvested from the repositories, not from the agent. Attribution
-joins the last two. Outcomes come last of all, because they ask what became of the
-lines of the commits attribution has just decided to count.
+joins the last two. Outcomes come next, because they ask what became of the lines of
+the commits attribution has just decided to count. Behaviour facts (`facts/registry.py`)
+come last of all, because several of them read across `command`, `attribution` and
+`session` together and none of the earlier steps need anything a fact produces.
 
 `ingest` runs all seven; `rebuild` runs all but the archive, which is what makes a
 parser change a rebuild rather than a migration.
@@ -19,6 +21,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from prudence import config as config_module
+from prudence.facts import registry as facts_registry
 from prudence.store import (
     archive,
     attribution,
@@ -39,6 +42,7 @@ class Result:
     harvested: commits.HarvestStats = field(default_factory=commits.HarvestStats)
     attributed: attribution.AttributionStats = field(default_factory=attribution.AttributionStats)
     outcomes: outcomes.OutcomeStats = field(default_factory=outcomes.OutcomeStats)
+    facts: facts_registry.BuildStats = field(default_factory=facts_registry.BuildStats)
     repositories: int = 0
 
 
@@ -61,4 +65,5 @@ def run(connection: sqlite3.Connection, config: config_module.Config, with_archi
     result.harvested = commits.harvest(connection, repositories, key, config.levels)
     result.attributed = attribution.build(connection, repositories)
     result.outcomes = outcomes.build(connection, repositories, key)
+    result.facts = facts_registry.build(connection)
     return result

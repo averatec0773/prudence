@@ -29,6 +29,7 @@ SESSION_TABLES = (
     ("hook_event", "session_id"),
     ("record", "session_id"),
     ("session", "session_id"),
+    ("session_fact", "session_id"),
     ("tool_call", "session_id"),
     ("turn", "session_id"),
 )

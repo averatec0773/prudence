@@ -40,7 +40,10 @@ src/prudence/
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the seven steps run in, so ingest and rebuild agree
     views.py      the read queries `cli/show.py` and the MCP server share; no formatting
-  facts/          (next) one function per derived fact, each versioned
+  facts/          one behaviour fact per module, each versioned, trusted and self-tested:
+                  base.py (the `Fact`/`Case` dataclasses), registry.py (the explicit list
+                  and the `session_fact` build step, last in the pipeline), one module per
+                  fact reading only the derived tables and carrying its own `CASES`
   cli/            one file per command; thin, calls the engine
   menubar/        the macOS menu-bar prototype: summary.py (pure, no rumps) and
                    app.py (the rumps shell, imported only from cli/menubar.py)
@@ -112,6 +115,17 @@ docs/reference/store-schema.md   every table and column, with its trust level
   every surface says how much was left out.
 - A new derived fact computed from those tables: one function in `facts/` with a version
   and its test cases as data. `derived.py` builds the tables; `facts/` reads them.
+  `rev-list`, `notes`, `cat-file`, `blame`, `worktree list`, `patch-id`.
+- A new derived fact computed from those tables: one module in `facts/`, a `Fact` naming
+  its version and trust level (high, medium or low, as in the coaching reference), a
+  `compute(connection, session_id)` reading only `record`, `turn`, `tool_call`,
+  `command`, `edit`, `attribution` and `session`, and its own `CASES`: synthetic session
+  shapes with the value expected back, run by the one parametrised test in
+  `tests/test_facts.py`. A missing field belongs in `derived.py` behind a
+  `PARSER_VERSION` bump, never read from the archive inside a fact. Add the module's
+  `FACT` to the list in `facts/registry.py`, which builds `session_fact` last in the
+  pipeline; a fact returning `None` for a session leaves no row, not a fabricated zero.
+  `derived.py` builds the tables; `facts/` reads them.
 - A new archive column: `store/db.py`, with `ARCHIVE_SCHEMA_VERSION` bumped and a step in
   `migrate`. Archive tables are the only ones that are migrated rather than rebuilt.
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
