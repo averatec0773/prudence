@@ -50,7 +50,11 @@ TABLE_DIR = "tables"
 FORMAT_VERSION = 1
 
 # Derived and harvested tables, in an order an import can follow without care.
-DERIVED_TABLES = derived.TABLES + ("hook_event", facts_registry.TABLE)
+DERIVED_TABLES = derived.TABLES + (
+    "hook_event",
+    facts_registry.TABLE,
+    facts_registry.LABEL_TABLE,
+)
 HARVESTED_TABLES = (
     "repository",
     "commit",
@@ -207,11 +211,13 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
         statement = derived.SCHEMA[table].format(name=table)
         connection.execute(statement.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
     connection.execute(spool.SCHEMA.format(name=spool.TABLE))
-    connection.execute(
-        facts_registry.SCHEMA.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1).format(
-            name=facts_registry.TABLE
+    for schema, name in (
+        (facts_registry.SCHEMA, facts_registry.TABLE),
+        (facts_registry.LABEL_SCHEMA, facts_registry.LABEL_TABLE),
+    ):
+        connection.execute(
+            schema.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1).format(name=name)
         )
-    )
     connection.execute(repos.SCHEMA)
     connection.executescript(commits.SCHEMA)
     connection.executescript(attribution.SCHEMA)

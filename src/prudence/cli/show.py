@@ -19,6 +19,7 @@ from collections import Counter
 import click
 
 from prudence.cli.render import size
+from prudence.facts import purpose
 from prudence.paths import database_file
 from prudence.store import attribution, commits, db, derived, edits, outcomes, spool, views
 
@@ -74,6 +75,7 @@ def render(connection: sqlite3.Connection, session_id: str, list_files: bool = F
     lines += _files(connection, session_id, full)
     lines += _commits(connection, session_id)
     lines += _outcomes(connection, session_id, row["repo_key"])
+    lines += _purpose(connection, session_id)
     lines += _behaviour_facts(connection, session_id)
     lines += _hooks(connection, session_id)
     lines += _archive(connection, session_id, list_files)
@@ -247,12 +249,10 @@ def _outcomes(connection: sqlite3.Connection, session_id: str, repo_key: str | N
         "high for presence (a tree read at a date), medium for rework (a later commit of "
         "the same author email hash removed the line)",
     )
-    if repo_key in views.suppressed_repositories(connection):
-        lines.append(
-            "  suppressed: more than "
-            f"{outcomes.OTHER_AUTHOR_SHARE * 100:.0f}% of this repository's commits in the "
-            "window are by another author, so survival here would not be about you"
-        )
+    notes = views.suppression_notes(connection)
+    if repo_key in notes:
+        lines.append(f"  suppressed: {notes[repo_key]}")
+        lines.append("  survival here would be about somebody else's code as much as yours")
         return lines
     shares = views.outcome_shares(views.outcomes_of(connection, session_id))
     if shares is None:
@@ -275,6 +275,27 @@ def _outcomes(connection: sqlite3.Connection, session_id: str, repo_key: str | N
 
 def _share(value: float | None, measured: int) -> str:
     return "-" if value is None else f"{value * 100:.0f}% of {measured}"
+
+
+def _purpose(connection: sqlite3.Connection, session_id: str) -> list[str]:
+    """What this session was for, as the rules over its tool mix read it."""
+    label = views.purpose_of(connection, session_id)
+    version = views.purpose_rule_version(connection) or purpose.RULE_VERSION
+    lines = _heading(
+        "session purpose",
+        "session_label",
+        f"rule version {version}",
+        "medium: a label from counts, not a measurement",
+    )
+    if label is None:
+        lines.append("  none (run `prudence rebuild` to compute it)")
+        return lines
+    lines.append(f"  {label}")
+    lines.append(
+        "  chosen by rules over the tool mix (reads, searches, edits, test runs, repeated "
+        "errors, commits); no message text is read to produce it."
+    )
+    return lines
 
 
 def _behaviour_facts(connection: sqlite3.Connection, session_id: str) -> list[str]:

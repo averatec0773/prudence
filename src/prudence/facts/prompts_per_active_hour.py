@@ -6,6 +6,12 @@ sitting only across its actual bursts of activity, each bounded by the same 60-m
 gap rule as the `sittings` fact, and a burst of one record contributes no duration. A
 session with no measurable active time (every burst a single instant, or no records at
 all) has no rate to report: NULL, not a division by zero.
+
+Fact version 2 added a floor. Under `MIN_ACTIVE` of measured activity the rate is not a
+slow measurement but no measurement: four prompts inside two minutes divides out to 120
+an hour, a number that says nothing about how anybody works and everything about the
+denominator. Such a session is left unmeasured (NULL), exactly as a session with no
+active time at all is, rather than reported as an absurd rate.
 """
 
 from __future__ import annotations
@@ -15,8 +21,11 @@ from datetime import datetime, timedelta
 
 from prudence.facts.base import Case, Fact
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 GAP = timedelta(minutes=60)
+
+# Below this much active time the rate is not measured at all, rather than absurd.
+MIN_ACTIVE = timedelta(minutes=10)
 
 
 def compute(connection: sqlite3.Connection, session_id: str) -> float | None:
@@ -45,10 +54,9 @@ def compute(connection: sqlite3.Connection, session_id: str) -> float | None:
         previous = moment
     if previous is not None and segment_start is not None:
         active_seconds += (previous - segment_start).total_seconds()
-    active_hours = active_seconds / 3600
-    if active_hours <= 0:
+    if active_seconds < MIN_ACTIVE.total_seconds():
         return None
-    return prompts / active_hours
+    return prompts / (active_seconds / 3600)
 
 
 def _record(session_id: str, record_id: str, timestamp: str) -> dict:
@@ -84,6 +92,30 @@ CASES = (
                 _record("s2", "r4", "2026-09-15T11:15:00Z"),
             ],
             "turn": [_turn("s2", "t1"), _turn("s2", "t2"), _turn("s2", "t3"), _turn("s2", "t4")],
+        },
+    ),
+    Case(
+        name="four prompts in four minutes: under the floor, unmeasured rather than 60 an hour",
+        session_id="s5",
+        expected=None,
+        rows={
+            "record": [
+                _record("s5", "r1", "2026-09-15T09:00:00Z"),
+                _record("s5", "r2", "2026-09-15T09:04:00Z"),
+            ],
+            "turn": [_turn("s5", "t1"), _turn("s5", "t2"), _turn("s5", "t3"), _turn("s5", "t4")],
+        },
+    ),
+    Case(
+        name="exactly ten minutes active: measured, the floor is not exclusive",
+        session_id="s6",
+        expected=12.0,
+        rows={
+            "record": [
+                _record("s6", "r1", "2026-09-15T09:00:00Z"),
+                _record("s6", "r2", "2026-09-15T09:10:00Z"),
+            ],
+            "turn": [_turn("s6", "t1"), _turn("s6", "t2")],
         },
     ),
     Case(

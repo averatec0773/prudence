@@ -34,13 +34,15 @@ from pathlib import Path
 from prudence import config as config_module
 from prudence.store.identity import identify
 
-FACT_VERSION = 2
+FACT_VERSION = 3
 
 DESKTOP_WORKTREE_PARENTS = (".claude/worktrees", "worktrees")
 
-# `outcomes_suppressed` is written by `store/outcomes.py`, not here: a repository where
-# other people commit gets no survival facts, and the flag lives beside the repository
-# it is about so that every surface reads one row rather than joining a second table.
+# `outcomes_suppressed` and its note are written by `store/outcomes.py`, not here: a
+# repository where other people commit gets no survival facts, and the flag lives beside
+# the repository it is about so that every surface reads one row rather than joining a
+# second table. The note carries the counts behind the decision, so a surface can say
+# how many commits of how many were by somebody else instead of only that some were.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS repository(
     repo_key TEXT PRIMARY KEY,
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS repository(
     toplevel TEXT,
     worktrees TEXT,
     outcomes_suppressed INTEGER NOT NULL DEFAULT 0,
+    outcomes_suppressed_note TEXT,
     fact_version INTEGER NOT NULL
 )
 """
@@ -147,8 +150,9 @@ def read(connection: sqlite3.Connection) -> list[Repository]:
 def write(connection: sqlite3.Connection, repositories: list[Repository]) -> None:
     """Store the repositories, keeping every worktree path either side already knew.
 
-    `outcomes_suppressed` is named rather than passed, so that rewriting a repository
-    row never silently clears a flag `store/outcomes.py` set.
+    Every column is named rather than passed positionally, so that rewriting a
+    repository row never silently clears the suppression flag or its note, both of
+    which `store/outcomes.py` writes.
     """
     connection.execute(SCHEMA)
     connection.executemany(

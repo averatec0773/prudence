@@ -110,6 +110,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     lines.extend(_hook_lines(connection))
     lines.extend(_commit_lines(connection))
     lines.extend(_outcome_lines(connection))
+    lines.extend(_purpose_lines(connection))
     lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
         "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
@@ -188,21 +189,33 @@ def _outcome_lines(connection: sqlite3.Connection) -> list[str]:
     if counted["lines"]:
         lines = [
             f"outcomes: {counted['lines']} attributed lines over {counted['commits']} commits, "
-            f"{counted['reworked']} reworked by a later commit of the same author "
+            f"{counted['reworked']} reworked by a later commit of your own "
             f"(line_fate fact version {outcomes.FACT_VERSION})"
         ]
     else:
         lines = ["outcomes: none computed yet (no attributed line has a fate row)"]
-    withheld = outcomes.suppressed_repositories(connection)
-    if withheld:
-        names = views.repository_names(connection)
-        listed = ", ".join(names.get(key, key) for key in withheld)
-        lines.append(
-            f"outcomes suppressed for {listed}: more than "
-            f"{outcomes.OTHER_AUTHOR_SHARE * 100:.0f}% of the commits in the window are by "
-            "another author, so survival there would not be about you"
-        )
+    bots = connection.execute('SELECT COUNT(*) FROM "commit" WHERE is_bot = 1').fetchone()[0]
+    lines.append(
+        f"bot commits excluded from the multi-author guard: {bots} "
+        f"(author name or email carrying {', '.join(commits.BOT_MARKERS)})"
+    )
+    names = views.repository_names(connection)
+    for key, note in sorted(outcomes.suppression_notes(connection).items()):
+        lines.append(f"outcomes suppressed for {names.get(key, key)}: {note}")
     return lines
+
+
+def _purpose_lines(connection: sqlite3.Connection) -> list[str]:
+    """What the sessions were for, as the tool-mix rules read them. Labels, not numbers."""
+    counted = views.purpose_counts(connection)
+    if not counted:
+        return ["purpose: no labels yet (run `prudence rebuild`)"]
+    detail = ", ".join(f"{count} {label}" for label, count in counted.items())
+    version = views.purpose_rule_version(connection)
+    return [
+        f"purpose: {detail} (rule version {version}; a label from the tool mix, not from "
+        "reading the conversation)"
+    ]
 
 
 def _mapping_lines(connection: sqlite3.Connection) -> list[str]:

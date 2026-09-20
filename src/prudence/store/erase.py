@@ -30,6 +30,7 @@ SESSION_TABLES = (
     ("record", "session_id"),
     ("session", "session_id"),
     ("session_fact", "session_id"),
+    ("session_label", "session_id"),
     ("tool_call", "session_id"),
     ("turn", "session_id"),
 )

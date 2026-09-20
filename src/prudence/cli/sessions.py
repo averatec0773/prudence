@@ -15,6 +15,10 @@ what a Claude Code version older than the usage fields leaves behind; it is not 
 
 Sittings, not sessions, are how long someone actually sat there: a Desktop session can
 stay open for days, so a gap of more than an hour is counted as a new sitting.
+
+The purpose column is a label, not a measurement: rules over the session's tool mix
+(`facts/purpose.py`), never a reading of the conversation. It is printed as one word
+with no share and no rank beside it, because that is all it is.
 """
 
 from __future__ import annotations
@@ -87,11 +91,12 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
     credited = views.credited_map(connection, ids)
     tokens = views.usage_map(connection, ids)
     fates = views.outcomes_map(connection, ids)
+    purposes = views.purpose_map(connection, ids)
 
     lines = [
-        f"{'session':<10} {'repository':<20} {'started':<16} {'sit':>4} {'prompts':>8} "
-        f"{'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} {'coverage':>9} "
-        f"{'alive 30d':>10}  notes"
+        f"{'session':<10} {'repository':<20} {'started':<16} {'purpose':<13} {'sit':>4} "
+        f"{'prompts':>8} {'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} "
+        f"{'coverage':>9} {'alive 30d':>10}  notes"
     ]
     for row in rows:
         session_id = row["session_id"]
@@ -99,6 +104,7 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
         name = names.get(row["repo_key"], row["repo_key"] or "unassigned")
         lines.append(
             f"{session_id[:8]:<10} {name[:20]:<20} {(row['first_at'] or '')[:16]:<16} "
+            f"{purposes.get(session_id, '-'):<13} "
             f"{sittings.get(session_id, 1):>4} {turns.get(session_id, 0):>8} "
             f"{edits.get(session_id, 0):>6} {commands.get(session_id, 0):>5} "
             f"{thousands(tokens.get(session_id)):>7} {_commits(counted):>13} "
@@ -114,6 +120,10 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
         "Alive 30d is the share of the session's counted lines still in the same file "
         "thirty days after the commit; a dash means that mark has not happened yet. "
         "`prudence outcomes` prints the rest."
+    )
+    lines.append(
+        "Purpose is a label from rules over the session's tool mix, not from reading the "
+        "conversation; `prudence usage` groups the tokens and the hours by it."
     )
     return "\n".join(lines)
 

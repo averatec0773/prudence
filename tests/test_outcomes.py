@@ -132,10 +132,86 @@ def test_an_uncertain_attribution_contributes_no_line_at_all(lab: Workspace) -> 
     assert "credited with a line that could be followed" in outcomes.output
 
 
+def _by(lab: Workspace, path: str, content: str, email: str, name: str, at: str) -> str:
+    """One commit by a named author, so the guard has identities to sort out."""
+    _write(lab, path, content)
+    git(lab.repo, "add", "-A")
+    git(
+        lab.repo,
+        "-c",
+        f"user.email={email}",
+        "-c",
+        f"user.name={name}",
+        "commit",
+        "-q",
+        "-m",
+        "theirs",
+        at=at,
+    )
+    return git(lab.repo, "rev-parse", "HEAD")
+
+
+def test_bot_commits_and_a_second_identity_of_the_users_do_not_suppress(lab: Workspace) -> None:
+    """The fix: dependabot leaves the denominator, and an alternate address is the user.
+
+    The session commits as `other@example.com`, which is therefore one of the user's
+    identities everywhere; the majority author `t@example.com` is the other. Three bot
+    commits and nothing else means nobody else committed at all, so outcomes stand.
+    """
+    _by(lab, "docs/notes.md", "a note\n", "t@example.com", "t", "2026-09-01T09:00:00+00:00")
+    made = _by(
+        lab, "src/app.py", SEVEN, "other@example.com", "founder", "2026-09-01T12:00:02+00:00"
+    )
+    for index in range(3):
+        _by(
+            lab,
+            f"deps/lock{index}.txt",
+            f"bumped-{index}\n",
+            "49699333+dependabot[bot]@users.noreply.github.com",
+            "dependabot[bot]",
+            "2026-09-02T09:00:00+00:00",
+        )
+    _session(lab, "src/app.py", SEVEN, made)
+    _ingest()
+
+    assert _rows("SELECT outcomes_suppressed FROM repository") == [(0,)], "not suppressed"
+    assert _rows('SELECT COUNT(*) FROM "commit" WHERE is_bot = 1') == [(3,)]
+    assert _rows(f"SELECT COUNT(*) FROM line_fate WHERE commit_hash = '{made}'") == [(7,)]
+
+    status = CliRunner().invoke(main, ["status"])
+    assert status.exit_code == 0, status.output
+    assert "bot commits excluded from the multi-author guard: 3" in status.output
+    assert "outcomes suppressed" not in status.output
+
+
+def test_a_line_removed_under_the_users_other_address_still_counts_as_rework(
+    lab: Workspace,
+) -> None:
+    """Rework is any later commit of the user's, not only of the same email address."""
+    made = _by(
+        lab, "src/app.py", SEVEN, "other@example.com", "founder", "2026-09-01T12:00:02+00:00"
+    )
+    undone = _by(lab, "src/app.py", REPLACEMENT, "t@example.com", "t", "2026-09-05T09:00:00+00:00")
+    _session(lab, "src/app.py", SEVEN, made)
+    _ingest()
+
+    assert _rows(f"SELECT DISTINCT reworked_by FROM line_fate WHERE commit_hash = '{made}'") == [
+        (undone,)
+    ]
+
+
 def test_the_multi_author_guard_suppresses_a_repository_and_says_why(lab: Workspace) -> None:
-    """More than a fifth of the window's commits by somebody else, so no outcome facts."""
+    """More than a fifth of the window's commits by somebody else, so no outcome facts.
+
+    The user stays the majority author (four commits of the seven), so the colleague is
+    nobody Prudence has any reason to call the user: three commits of seven, 43%, over
+    the fifth the guard allows.
+    """
     _write(lab, "src/app.py", SEVEN)
     made = commit(lab.repo, "2026-09-01T12:00:02+00:00", "the work")
+    for index in range(2):
+        _write(lab, f"docs/note{index}.md", f"note {index}\n")
+        commit(lab.repo, "2026-09-01T13:00:00+00:00", "mine")
     for index in range(3):
         _write(lab, f"src/other{index}.py", f"colleague_{index} = other_{index}({index})\n")
         git(lab.repo, "add", "-A")
@@ -160,7 +236,8 @@ def test_the_multi_author_guard_suppresses_a_repository_and_says_why(lab: Worksp
     status = CliRunner().invoke(main, ["status"])
     assert status.exit_code == 0, status.output
     assert "outcomes suppressed for alpha" in status.output
-    assert "by another author" in status.output
+    assert "3 of 7 commits" in status.output, "the reason carries its counts"
+    assert "is not yours" in status.output
 
 
 def test_a_silent_commit_is_matched_by_timing_and_overlap(lab: Workspace) -> None:

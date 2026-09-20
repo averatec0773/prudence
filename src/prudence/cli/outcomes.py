@@ -70,16 +70,15 @@ def render(connection: sqlite3.Connection, window: str, repo_key: str | None) ->
     fates = views.outcomes_map(connection, ids)
     credited = views.credited_map(connection, ids)
     names = views.repository_names(connection)
-    suppressed = views.suppressed_repositories(connection)
+    notes = views.suppression_notes(connection)
 
-    withheld = sorted(suppressed & {row["repo_key"] for row in rows})
+    withheld = sorted(set(notes) & {row["repo_key"] for row in rows})
     lines = []
     for key in withheld:
         lines.append(
-            f"{names.get(key, key)}: no outcome facts, because more than "
-            f"{outcomes_module.OTHER_AUTHOR_SHARE * 100:.0f}% of that repository's commits in "
-            "the window carry an author email hash other than the majority's. Survival there "
-            "would be about somebody else's code as much as yours."
+            f"{names.get(key, key)}: no outcome facts, because {notes[key]}. Survival there "
+            "would be about somebody else's code as much as yours. An identity is yours when "
+            "it committed inside one of your sessions, or is a repository's majority author."
         )
     if withheld:
         lines.append("")
@@ -163,8 +162,9 @@ def _footer(shown: int, total: int, window: str) -> list[str]:
         "Alive at head means the line is still in the same file now; the store also holds "
         "whether it is anywhere at head, which is how a line that moved to another file reads "
         "as moved rather than dead.",
-        "Rework means a later commit within ninety days, carrying the same author email hash "
-        "as the original, removed that line from that path.",
+        "Rework means a later commit within ninety days, by one of your own identities, "
+        "removed that line from that path (line_fate fact version "
+        f"{outcomes_module.FACT_VERSION}).",
         "Coverage is the mean share of a counted commit's added lines that the session itself "
         "wrote, and the method column says how many of those commits are known rather than "
         "inferred.",

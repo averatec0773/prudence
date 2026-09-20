@@ -26,18 +26,40 @@ Five measurements per line, and they are deliberately not one number:
   recommended.
 
 Rework is the sixth column and a different kind of fact: `reworked_by` holds the first
-later commit, inside the ninety-day window and carrying the same `author_email_hash` as
-the original, whose diff removed that line from that path. Removals are read in one
-streaming `git log -p -U0` pass, filtered to the lines this table already holds, so the
-memory is bounded by the table and not by the repository.
+later commit, inside the ninety-day window and carrying one of the user's own identities
+(see `user_identities`), whose diff removed that line from that path. Removals are read
+in one streaming `git log -p -U0` pass, filtered to the lines this table already holds,
+so the memory is bounded by the table and not by the repository.
 
-Two guards. A repository where other people commit gets no outcome facts at all: if
-more than a fifth of its commits in the window carry an author email hash other than
-the majority's, `repository.outcomes_suppressed` is set and every surface says why,
-because "your lines died" is a false statement when somebody else wrote them. And a
-repository with more attributed commits than `MAX_COMMITS` is sampled deterministically
-by commit hash, so a rebuild produces exactly the same sample and the surfaces can say
-which share of the work they speak for.
+Two guards. A repository where other people commit gets no outcome facts at all, and
+fact version 2 changed how "other people" is decided, because version 1 suppressed the
+founder's own repository over `dependabot` and a second email address of his own. The
+rule now has three parts:
+
+- The user's identities are the author email hashes of every commit attributed
+  `in_session` anywhere in the store (a commit the agent made inside a session was made
+  by the user, whatever email was configured at the time), plus the majority identity of
+  each repository. One set, shared by every repository, so an email used mainly in one
+  project is still recognised in another.
+- Robots are not people. Commits whose raw author fields carry `dependabot`, `[bot]`,
+  `github-actions` or `renovate` are flagged `commit.is_bot` during the harvest and leave
+  the denominator entirely.
+- Suppression fires when more than `OTHER_AUTHOR_SHARE` of what remains is by an
+  identity that is not the user's. `repository.outcomes_suppressed` is set, the counts
+  behind the decision are written to `repository.outcomes_suppressed_note`, and every
+  surface prints them, because "your lines died" is a false statement when somebody else
+  wrote them.
+
+The known limit of taking a repository's majority author to be the user: in a
+repository where one colleague commits more than the user does, that colleague is the
+majority and therefore counts as the user, and the guard cannot fire on them alone. A
+third identity above the share still suppresses. The assumption is that these are the
+user's own repositories, enabled one at a time; when it stops holding, this is the line
+to revisit.
+
+And a repository with more attributed commits than `MAX_COMMITS` is sampled
+deterministically by commit hash, so a rebuild produces exactly the same sample and the
+surfaces can say which share of the work they speak for.
 
 Read-only git only: `ls-tree`, `cat-file`, `rev-list`, `blame`, `log`.
 """
@@ -56,7 +78,7 @@ from prudence.store import lines as line_module
 from prudence.store.commits import GENERATED, utc
 from prudence.store.repos import Repository
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 # The marks, in days after the commit. A mark in the future is NULL, never zero.
 MARKS = (7, 30, 90)
@@ -64,8 +86,8 @@ MARKS = (7, 30, 90)
 # How far after a commit a later commit still counts as rework of it.
 WINDOW = timedelta(days=90)
 
-# The multi-author guard: the share of a repository's commits in the window that may
-# carry an author email hash other than the majority's before outcomes are suppressed.
+# The multi-author guard: the share of a repository's non-bot commits in the window
+# that may be by an identity which is not the user's before outcomes are suppressed.
 OTHER_AUTHOR_SHARE = 0.20
 
 # Attributed commits per repository before the set is sampled. Deterministic by hash,
@@ -96,6 +118,35 @@ CREATE INDEX IF NOT EXISTS line_fate_path ON line_fate(path);
 
 
 @dataclass
+class Guard:
+    """The multi-author guard's own counts for one repository, in the window.
+
+    `commits` is the denominator: the window's non-merge commits with the robots taken
+    out. `others` is how many of those are by an identity that is not the user's.
+    """
+
+    commits: int = 0
+    bots: int = 0
+    others: int = 0
+
+    @property
+    def share(self) -> float:
+        return (self.others / self.commits) if self.commits else 0.0
+
+    @property
+    def suppressed(self) -> bool:
+        return self.share > OTHER_AUTHOR_SHARE
+
+    def note(self) -> str:
+        """The reason, with the counts, as every surface prints it."""
+        return (
+            f"{self.others} of {self.commits} commits in the last {WINDOW.days} days are by "
+            f"an identity that is not yours ({self.share * 100:.0f}%, over the "
+            f"{OTHER_AUTHOR_SHARE * 100:.0f}% limit); {self.bots} bot commits were excluded"
+        )
+
+
+@dataclass
 class OutcomeStats:
     repositories: int = 0
     commits: int = 0
@@ -103,8 +154,10 @@ class OutcomeStats:
     sampled_commits: int = 0
     lines: int = 0
     reworked: int = 0
-    # Repository name to the share of the window's commits by another author identity.
-    suppressed: dict[str, float] = field(default_factory=dict)
+    identities: int = 0
+    bot_commits: int = 0
+    # Repository name to the guard's counts, for the repositories it suppressed.
+    suppressed: dict[str, Guard] = field(default_factory=dict)
     blamed_paths: int = 0
     elapsed: float = 0.0
 
@@ -129,23 +182,58 @@ def build(
     moment = now or datetime.now(UTC).replace(tzinfo=None)
     connection.execute("DROP TABLE IF EXISTS line_fate")
     connection.executescript(SCHEMA)
-    connection.execute("UPDATE repository SET outcomes_suppressed = 0")
+    connection.execute(
+        "UPDATE repository SET outcomes_suppressed = 0, outcomes_suppressed_note = NULL"
+    )
+
+    identities = user_identities(connection)
+    stats.identities = len(identities)
+    stats.bot_commits = _bot_commits(connection)
 
     for repository in repositories:
         if not repository.toplevel:
             continue
-        share = _other_author_share(connection, repository.repo_key, moment)
-        if share > OTHER_AUTHOR_SHARE:
+        guard = _guard(connection, repository.repo_key, moment, identities)
+        if guard.suppressed:
             connection.execute(
-                "UPDATE repository SET outcomes_suppressed = 1 WHERE repo_key = ?",
-                (repository.repo_key,),
+                "UPDATE repository SET outcomes_suppressed = 1, outcomes_suppressed_note = ?"
+                " WHERE repo_key = ?",
+                (guard.note(), repository.repo_key),
             )
-            stats.suppressed[repository.name or repository.repo_key] = share
+            stats.suppressed[repository.name or repository.repo_key] = guard
             continue
-        _one_repository(connection, repository, key, moment, stats)
+        _one_repository(connection, repository, key, moment, identities, stats)
 
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+def user_identities(connection: sqlite3.Connection) -> set[str]:
+    """Every author email hash that is the user's own, over the whole store.
+
+    Two sources, both facts rather than guesses. A commit the agent made inside one of
+    the user's sessions was made by the user, whatever `user.email` git was configured
+    with at the time, which is how a second address is recognised at all. And the
+    majority identity of each repository is the user's, because these are the user's own
+    repositories, enabled one by one; bots and merges are left out of that count so a
+    dependency robot can never become the majority.
+    """
+    found: set[str] = set()
+    for statement in (
+        'SELECT DISTINCT c.author_email_hash AS who FROM "commit" c'
+        " JOIN attribution a ON a.commit_hash = c.commit_hash"
+        " WHERE a.method = 'in_session' AND c.author_email_hash IS NOT NULL",
+        # SQLite's documented bare-column rule: with MAX(), the other columns come from
+        # the row that holds the maximum, which is the repository's majority identity.
+        "SELECT who, MAX(n) FROM (SELECT repo_key, author_email_hash AS who,"
+        ' COUNT(*) AS n FROM "commit" WHERE is_merge = 0 AND is_bot = 0'
+        " AND author_email_hash IS NOT NULL GROUP BY repo_key, who) GROUP BY repo_key",
+    ):
+        try:
+            found.update(row["who"] for row in connection.execute(statement))
+        except sqlite3.OperationalError:
+            continue
+    return found
 
 
 def counts(connection: sqlite3.Connection) -> dict[str, int]:
@@ -186,6 +274,7 @@ def _one_repository(
     repository: Repository,
     key: bytes,
     now: datetime,
+    identities: set[str],
     stats: OutcomeStats,
 ) -> None:
     directory = repository.toplevel
@@ -212,7 +301,7 @@ def _one_repository(
         marks = _marks(directory, commits, now)
         at_mark = _mark_lines(blobs, fates, commits, marks)
         blamed = _blame(directory, key, paths & set(by_path), stats)
-        reworked = _rework(directory, key, fates, commits)
+        reworked = _rework(directory, key, fates, commits, identities)
         aliases = _alias_groups(connection)
 
         rows = []
@@ -288,19 +377,46 @@ def _fate_keys(
     return dict(found)
 
 
-def _other_author_share(connection: sqlite3.Connection, repo_key: str, now: datetime) -> float:
-    """The share of the window's commits not made by the majority author identity."""
+def _guard(
+    connection: sqlite3.Connection, repo_key: str, now: datetime, identities: set[str]
+) -> Guard:
+    """How much of the window's human work in this repository is somebody else's."""
     since = (now - WINDOW).strftime("%Y-%m-%dT%H:%M:%S")
     rows = connection.execute(
-        'SELECT author_email_hash AS who, COUNT(*) AS n FROM "commit"'
-        " WHERE repo_key = ? AND is_merge = 0 AND committer_at >= ? GROUP BY who",
+        'SELECT author_email_hash AS who, is_bot, COUNT(*) AS n FROM "commit"'
+        " WHERE repo_key = ? AND is_merge = 0 AND committer_at >= ? GROUP BY who, is_bot",
         (repo_key, since),
     ).fetchall()
-    total = sum(row["n"] for row in rows)
-    if not total:
-        return 0.0
-    majority = max(row["n"] for row in rows)
-    return (total - majority) / total
+    guard = Guard()
+    for row in rows:
+        if row["is_bot"]:
+            guard.bots += row["n"]
+            continue
+        guard.commits += row["n"]
+        if row["who"] not in identities:
+            guard.others += row["n"]
+    return guard
+
+
+def _bot_commits(connection: sqlite3.Connection) -> int:
+    try:
+        return connection.execute('SELECT COUNT(*) FROM "commit" WHERE is_bot = 1').fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
+
+
+def suppression_notes(connection: sqlite3.Connection) -> dict[str, str]:
+    """The reason, with its counts, for each repository whose outcomes were withheld."""
+    try:
+        return {
+            row["repo_key"]: row["outcomes_suppressed_note"] or ""
+            for row in connection.execute(
+                "SELECT repo_key, outcomes_suppressed_note FROM repository"
+                " WHERE outcomes_suppressed = 1 ORDER BY repo_key"
+            )
+        }
+    except sqlite3.OperationalError:
+        return {}
 
 
 # --- reading trees ----------------------------------------------------------------------
@@ -509,8 +625,14 @@ def _rework(
     key: bytes,
     fates: dict[str, list[tuple[str, str]]],
     commits: list[_Commit],
+    identities: set[str],
 ) -> dict[tuple[str, str, str], str]:
-    """The first later commit of the same author that removed each line from its path.
+    """The first later commit of the user's own that removed each line from its path.
+
+    Fact version 2 widened "the user's own" from the original commit's exact author
+    email hash to any of `user_identities`, because the founder commits under more than
+    one address and a line he took back out under the other one was reading as somebody
+    else's work rather than as his rework.
 
     One streaming `git log -p -U0` pass, filtered to the lines this table already holds,
     so nothing is remembered about a line nobody asked about.
@@ -522,14 +644,17 @@ def _rework(
     result: dict[tuple[str, str, str], str] = {}
     for commit in commits:
         made = utc(commit.committer_at)
-        if made is None or commit.author_email_hash is None:
+        if made is None:
             continue
+        # The commit's own author counts as the user too: it is a commit a session of
+        # the user's is credited with, so whoever authored it is the user by definition.
+        own = identities | ({commit.author_email_hash} if commit.author_email_hash else set())
         deadline = (datetime.fromisoformat(made) + WINDOW).strftime("%Y-%m-%dT%H:%M:%S")
         for path, line_hash in fates.get(commit.commit_hash, ()):
             for when, later, author in removals.get((path, line_hash), ()):
                 if when <= made or when > deadline or later == commit.commit_hash:
                     continue
-                if author == commit.author_email_hash:
+                if author in own:
                     result[(commit.commit_hash, path, line_hash)] = later
                     break
     return result

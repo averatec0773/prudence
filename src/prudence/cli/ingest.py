@@ -144,14 +144,18 @@ def report(result: pipeline.Result) -> list[str]:
             f"{fates.sampled_repositories} repositories (deterministic by commit hash, so a "
             "rebuild draws the same sample)."
         )
-    for repo_key, ratio in sorted(fates.suppressed.items()):
+    if fates.bot_commits:
         lines.append(
-            f"Outcomes suppressed for {repo_key}: {ratio * 100:.0f}% of the commits in the "
-            "window are by another author."
+            f"{fates.bot_commits} commits are by a robot (dependabot and the like) and were "
+            f"left out of the multi-author guard; {fates.identities} author identities are "
+            "yours (they committed inside a session, or are a repository's majority author)."
         )
+    for repo_key, guard in sorted(fates.suppressed.items()):
+        lines.append(f"Outcomes suppressed for {repo_key}: {guard.note()}.")
     facts = result.facts
     lines.append(
         f"Behaviour facts: {facts.rows} rows over {facts.sessions} sessions "
-        f"({len(facts_registry.FACTS)} facts), {facts.elapsed:.1f} s."
+        f"({len(facts_registry.FACTS)} facts), {facts.labels} purpose labels "
+        f"({len(facts_registry.LABELS)} label rules), {facts.elapsed:.1f} s."
     )
     return lines

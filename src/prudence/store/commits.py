@@ -15,6 +15,13 @@ the patch id is what lets a rewritten commit be recognised as the same work.
 
 Nothing of the diff is stored. A line becomes a keyed hash through `store.lines`, the
 same function the edits went through, or the two sides would never meet.
+
+Fact version 2 added `is_bot`. A robot's commits are not somebody else's work in the
+sense the multi-author guard cares about: `dependabot` bumping a dependency says nothing
+about who writes this repository's code, and on the founder's own repository it was
+enough to suppress every outcome fact. The decision is made here, during the harvest,
+on the raw author name and email, because those are the only place the words
+`dependabot` or `[bot]` exist; only the hash of the email is stored, as before.
 """
 
 from __future__ import annotations
@@ -30,11 +37,15 @@ from datetime import UTC, datetime
 from prudence.store import lines as line_module
 from prudence.store.repos import Repository
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 RECORD = "\x01"
 FIELD = "\x1f"
-LOG_FORMAT = f"{RECORD}%H{FIELD}%cI{FIELD}%aI{FIELD}%T{FIELD}%ae{FIELD}%P"
+LOG_FORMAT = f"{RECORD}%H{FIELD}%cI{FIELD}%aI{FIELD}%T{FIELD}%ae{FIELD}%an{FIELD}%P"
+
+# An author name or email carrying one of these is a robot, not a colleague. Matched
+# against the raw fields at harvest time, lowercased; the store keeps only the hash.
+BOT_MARKERS = ("dependabot", "[bot]", "github-actions", "renovate")
 
 # Paths whose content is produced rather than written. Approximate in both directions,
 # as the spike said, but leaving them in makes every coverage number meaningless.
@@ -61,6 +72,7 @@ CREATE TABLE IF NOT EXISTS "commit"(
     files_changed INTEGER NOT NULL DEFAULT 0,
     is_merge INTEGER NOT NULL DEFAULT 0,
     author_email_hash TEXT,
+    is_bot INTEGER NOT NULL DEFAULT 0,
     fact_version INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS commit_repo ON "commit"(repo_key, committer_at);
@@ -93,6 +105,7 @@ class _Commit:
     author_at: str | None
     tree: str | None
     author_email_hash: str | None
+    is_bot: int = 0
     is_merge: int = 0
     paths: set[str] | None = None
 
@@ -113,7 +126,7 @@ def harvest(
     started = time.monotonic()
     stats = HarvestStats()
     levels = levels or {}
-    connection.executescript(SCHEMA)
+    _ensure_schema(connection)
     for repository in repositories:
         directory = repository.toplevel
         if not directory:
@@ -150,6 +163,34 @@ def utc(stamp: str | None) -> str | None:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    """Create the tables, dropping first when an older fact version wrote them.
+
+    Architecture rule 1: a harvested table is rebuilt, never migrated. Every row here
+    comes from `git log`, so a column this version writes and the stored table lacks is
+    answered by harvesting again, which this run is about to do anyway.
+    """
+    wanted = {
+        "commit_hash",
+        "repo_key",
+        "committer_at",
+        "author_at",
+        "patch_id",
+        "tree",
+        "added_lines",
+        "files_changed",
+        "is_merge",
+        "author_email_hash",
+        "is_bot",
+        "fact_version",
+    }
+    found = {row[1] for row in connection.execute('PRAGMA table_info("commit")')}
+    if found and found != wanted:
+        connection.execute("DROP TABLE IF EXISTS commit_line")
+        connection.execute('DROP TABLE IF EXISTS "commit"')
+    connection.executescript(SCHEMA)
 
 
 def _forget(connection: sqlite3.Connection, repo_key: str) -> None:
@@ -230,7 +271,7 @@ def _read_merges(
     process.stdout.close()
     process.wait()
     connection.executemany(
-        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', rows
+        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', rows
     )
     stats.merges += len(rows)
 
@@ -247,7 +288,7 @@ def _flush(
         return
     paths = {path for path, _ in seen}
     connection.execute(
-        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT OR REPLACE INTO "commit" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         _row(commit, patch_ids.get(commit.commit_hash), len(seen), len(paths)),
     )
     if pending:
@@ -269,13 +310,20 @@ def _row(commit: _Commit, patch_id: str | None, added: int, files: int) -> tuple
         files,
         commit.is_merge,
         commit.author_email_hash,
+        commit.is_bot,
         FACT_VERSION,
     )
 
 
+def is_bot(name: str | None, email: str | None) -> bool:
+    """Whether the raw author fields name a robot rather than a person."""
+    text = f"{name or ''} {email or ''}".lower()
+    return any(marker in text for marker in BOT_MARKERS)
+
+
 def _parse_header(line: str, repo_key: str) -> _Commit | None:
     fields = line[len(RECORD) :].split(FIELD)
-    if len(fields) < 5 or len(fields[0]) < 7:
+    if len(fields) < 6 or len(fields[0]) < 7:
         return None
     email = fields[4].strip().lower()
     return _Commit(
@@ -285,6 +333,7 @@ def _parse_header(line: str, repo_key: str) -> _Commit | None:
         author_at=utc(fields[2]),
         tree=fields[3] or None,
         author_email_hash=hashlib.sha256(email.encode()).hexdigest() if email else None,
+        is_bot=int(is_bot(fields[5], email)),
     )
 
 

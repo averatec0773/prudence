@@ -41,9 +41,11 @@ src/prudence/
     pipeline.py   the order the seven steps run in, so ingest and rebuild agree
     views.py      the read queries `cli/show.py` and the MCP server share; no formatting
   facts/          one behaviour fact per module, each versioned, trusted and self-tested:
-                  base.py (the `Fact`/`Case` dataclasses), registry.py (the explicit list
-                  and the `session_fact` build step, last in the pipeline), one module per
-                  fact reading only the derived tables and carrying its own `CASES`
+                  base.py (the `Fact`/`Label`/`Case` dataclasses), registry.py (the
+                  explicit lists and the `session_fact` plus `session_label` build step,
+                  last in the pipeline), one module per fact reading only the derived
+                  tables and carrying its own `CASES`; purpose.py is the one label,
+                  a word per session from its tool mix, never a number
   cli/            one file per command; thin, calls the engine
   menubar/        the macOS menu-bar prototype: summary.py (pure, no rumps) and
                    app.py (the rumps shell, imported only from cli/menubar.py)
@@ -95,10 +97,20 @@ docs/reference/store-schema.md   every table and column, with its trust level
    a commit made three weeks ago.
 11. **A fact that would be about someone else is not computed at all.** Outcome facts are
    suppressed for a repository where more than `outcomes.OTHER_AUTHOR_SHARE` of the
-   window's commits carry an author email hash other than the majority's; the flag lives
-   on the `repository` row and every surface prints the reason in place of the number.
-   Suppression is preferred to a caveat, because a survival percentage that silently
-   includes a colleague's work is wrong rather than imprecise.
+   window's commits are by an identity that is not the user's; the flag and the counts
+   behind it live on the `repository` row and every surface prints the reason in place
+   of the number. Suppression is preferred to a caveat, because a survival percentage
+   that silently includes a colleague's work is wrong rather than imprecise. Who counts
+   as the user is decided once, in `outcomes.user_identities`: every author email hash
+   that committed inside one of the user's sessions, anywhere in the store, plus the
+   majority identity of each repository. A person commits under more than one address,
+   and a robot is not a person at all: `commit.is_bot` is decided during the harvest on
+   the raw author fields (`commits.BOT_MARKERS`) and leaves the denominator entirely.
+12. **A label is not a number.** A classification (so far only a session's purpose) goes
+   to `session_label` with the version of the rule that chose it, never to
+   `session_fact`, whose `value` is REAL and is summed and averaged. Labels are grouped
+   by and printed; they are never ranked, scored or averaged, and every surface that
+   prints one says that it comes from counts rather than from reading the conversation.
 
 ## Adding things
 
@@ -126,6 +138,10 @@ docs/reference/store-schema.md   every table and column, with its trust level
   `FACT` to the list in `facts/registry.py`, which builds `session_fact` last in the
   pipeline; a fact returning `None` for a session leaves no row, not a fabricated zero.
   `derived.py` builds the tables; `facts/` reads them.
+- A new label (a word per session rather than a number): the same module shape with a
+  `Label` instead of a `Fact`, a closed tuple of the words it may answer with, a rule
+  version, and its `CASES`; added to `LABELS` in `facts/registry.py`, which writes it to
+  `session_label`. `facts/purpose.py` is the pattern.
 - A new archive column: `store/db.py`, with `ARCHIVE_SCHEMA_VERSION` bumped and a step in
   `migrate`. Archive tables are the only ones that are migrated rather than rebuilt.
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.

@@ -434,15 +434,21 @@ def share(alive: int, measured: int) -> float | None:
 
 def suppressed_repositories(connection: sqlite3.Connection) -> set[str]:
     """Repositories whose outcome facts are withheld because other authors dominate."""
+    return set(suppression_notes(connection))
+
+
+def suppression_notes(connection: sqlite3.Connection) -> dict[str, str]:
+    """Why each withheld repository was withheld, with the counts behind the decision."""
     try:
         return {
-            row["repo_key"]
+            row["repo_key"]: row["outcomes_suppressed_note"] or ""
             for row in connection.execute(
-                "SELECT repo_key FROM repository WHERE outcomes_suppressed = 1"
+                "SELECT repo_key, outcomes_suppressed_note FROM repository"
+                " WHERE outcomes_suppressed = 1"
             )
         }
     except sqlite3.OperationalError:
-        return set()
+        return {}
 
 
 def session_facts(connection: sqlite3.Connection, session_id: str) -> dict[str, dict[str, Any]]:
@@ -465,6 +471,92 @@ def session_facts(connection: sqlite3.Connection, session_id: str) -> dict[str, 
         }
         for row in rows
     }
+
+
+# --- labels: what a session was for, and the active time a usage table divides by -----
+
+
+def purpose_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, str]:
+    """The purpose label of each session asked about. Absent before `session_label` exists."""
+    try:
+        return {
+            row["session_id"]: row["label"]
+            for row in _batched(
+                connection,
+                "SELECT session_id, label FROM session_label WHERE name = 'purpose'",
+                ids,
+                "",
+            )
+        }
+    except sqlite3.OperationalError:
+        return {}
+
+
+def purpose_of(connection: sqlite3.Connection, session_id: str) -> str | None:
+    """One session's purpose, or None when the labels have not been built yet."""
+    return purpose_map(connection, [session_id]).get(session_id)
+
+
+def purpose_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """How many sessions carry each purpose, over the whole store."""
+    try:
+        return {
+            row["label"]: row["n"]
+            for row in connection.execute(
+                "SELECT label, COUNT(*) AS n FROM session_label WHERE name = 'purpose'"
+                " GROUP BY label ORDER BY n DESC, label"
+            )
+        }
+    except sqlite3.OperationalError:
+        return {}
+
+
+def purpose_rule_version(connection: sqlite3.Connection) -> int | None:
+    """The rule version the stored labels were produced by, or None when there are none."""
+    try:
+        row = connection.execute(
+            "SELECT MAX(rule_version) AS version FROM session_label WHERE name = 'purpose'"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row["version"] if row is not None else None
+
+
+def active_seconds_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, float]:
+    """Active time per session: the sum of its sittings, not the wall clock between them.
+
+    The same 60-minute gap rule `sittings` uses, so a session left open overnight
+    contributes the bursts somebody actually sat through and not the night between them.
+    A single-record burst has no duration and adds nothing.
+    """
+    totals: dict[str, float] = {}
+    starts: dict[str, datetime] = {}
+    previous: dict[str, datetime] = {}
+    for row in _batched(
+        connection,
+        "SELECT session_id, timestamp FROM record WHERE timestamp IS NOT NULL",
+        ids,
+        " ORDER BY session_id, timestamp",
+    ):
+        session_id = row["session_id"]
+        try:
+            moment = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            continue
+        last = previous.get(session_id)
+        if last is None:
+            starts[session_id] = moment
+        elif moment - last > SITTING_GAP:
+            totals[session_id] = (
+                totals.get(session_id, 0.0) + (last - starts[session_id]).total_seconds()
+            )
+            starts[session_id] = moment
+        previous[session_id] = moment
+    for session_id, last in previous.items():
+        totals[session_id] = (
+            totals.get(session_id, 0.0) + (last - starts[session_id]).total_seconds()
+        )
+    return totals
 
 
 def hook_timeline(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
@@ -527,6 +619,8 @@ def session_summary(
             "notes": row["notes"],
             "parser_version": row["parser_version"],
         },
+        "purpose": purpose_of(connection, session_id),
+        "purpose_rule_version": purpose_rule_version(connection),
         "counts": {
             **record_turn_toolcall_counts(connection, session_id),
             "tool_calls_by_name": {
@@ -572,6 +666,7 @@ def session_summary(
         "coverage": counted["coverage"],
         "outcomes": outcome_shares(outcomes_of(connection, session_id)),
         "outcomes_suppressed": row["repo_key"] in suppressed_repositories(connection),
+        "outcomes_suppressed_reason": suppression_notes(connection).get(row["repo_key"]),
         "behaviour_facts": session_facts(connection, session_id),
         "hooks": _hook_turns(hook_timeline(connection, session_id)),
         "archive": {
@@ -691,12 +786,14 @@ def search_sessions(
     sat = _sittings_map(connection, ids)
     fates = outcomes_map(connection, ids)
     suppressed = suppressed_repositories(connection)
+    purposes = purpose_map(connection, ids)
     empty = {"fact": 0, "inferred": 0, "uncertain": 0, "commits": 0, "coverage": None}
     results = [
         {
             "session_id": row["session_id"],
             "repository": names.get(row["repo_key"], row["repo_key"]),
             "started_at": row["first_at"],
+            "purpose": purposes.get(row["session_id"]),
             "sittings": sat.get(row["session_id"], 1),
             "prompts": turns.get(row["session_id"], 0),
             "edits": edits.get(row["session_id"], 0),
@@ -815,6 +912,10 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         return result
     result["derived"] = {**counts, "parser_version": derived.PARSER_VERSION}
     result["usage"] = usage_totals(connection)
+    result["purposes"] = {
+        "by_label": purpose_counts(connection),
+        "rule_version": purpose_rule_version(connection),
+    }
 
     harvested, commit_lines = commits.counts(connection)
     result["commits"] = {
@@ -831,6 +932,10 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     result["outcomes"] = {
         **outcomes.counts(connection),
         "suppressed": outcomes.suppressed_repositories(connection),
+        "suppressed_reasons": outcomes.suppression_notes(connection),
+        "bot_commits": connection.execute(
+            'SELECT COUNT(*) FROM "commit" WHERE is_bot = 1'
+        ).fetchone()[0],
         "fact_version": outcomes.FACT_VERSION,
     }
     events, hook_sessions = spool.counts(connection)

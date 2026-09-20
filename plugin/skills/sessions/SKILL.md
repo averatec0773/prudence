@@ -24,11 +24,16 @@ command and printing its table.
    ```
    or, with no arguments given, simply `prudence sessions`.
 3. Show the table exactly as printed. Do not reformat it, summarize it away, or add
-   numbers of your own; the command's own output is the whole answer. Two columns read
+   numbers of your own; the command's own output is the whole answer. Three columns read
    oddly out of context and should be explained if the user asks: `tokens` is input,
    output and cache tokens together in thousands, with a dash where the Claude Code
    version recorded none; `commits` is `N (+M) (?K)`, that is N known for certain, M
-   inferred from line matching, and K uncertain attributions that enter no count.
+   inferred from line matching, and K uncertain attributions that enter no count; and
+   `purpose` is one of `development`, `debugging`, `research`, `conversation`, `mixed`
+   or `unknown`, chosen by rules over the session's tool mix (reads, searches, edits,
+   test runs, repeated errors, commits) and never by reading the conversation, so treat
+   it as a label rather than a fact about intent. `prudence usage --last 30d` groups the
+   tokens and the active hours by that label.
 4. Offer to look at any one session in more depth: "Run `prudence show --session
    <id>` for the full record of any of these." Use the `session` column (an 8-character
    id prefix) from the table for `<id>`.
