@@ -13,6 +13,15 @@ def date(value: datetime | str | None) -> str:
     return value.strftime("%Y-%m-%d")
 
 
+def thousands(num: int | None) -> str:
+    """A token count in thousands (`412k`). A dash means unmeasured, never zero."""
+    if num is None:
+        return "-"
+    if num < 1000:
+        return str(num)
+    return f"{num / 1000:.0f}k"
+
+
 def size(num: int) -> str:
     amount = float(num)
     for unit in ("B", "KB", "MB", "GB"):

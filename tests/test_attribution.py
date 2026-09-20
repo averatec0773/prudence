@@ -6,7 +6,7 @@ from click.testing import CliRunner
 from conftest import Workspace, commit, prompt, tool_call, write_transcript
 
 from prudence.cli import main
-from prudence.store import db
+from prudence.store import attribution, db, views
 
 WRITER = "eeeeeeee-5555-4555-8555-555555555555"
 ECHO = "ffffffff-6666-4666-8666-666666666666"
@@ -196,6 +196,85 @@ def test_metadata_only_keeps_no_paths_no_lines_and_no_command_text(lab: Workspac
     assert _rows("SELECT COUNT(*) FROM attribution WHERE method = 'line_match'") == [(0,)]
     in_session = _rows("SELECT session_id FROM attribution WHERE method = 'in_session'")
     assert in_session == [(COMMITTER,)], "the commit hash is a fact about the repository"
+
+
+# --- the confidence rule, as data, with the labelled numbers behind it ----------------
+
+# Each case names the situation in the precision labels document
+# (docs/research/2026-09-19-precision-labels.md) it stands for.
+CONFIDENCE_CASES = (
+    ("in_session", 1, None, 0, None, "fact", "git printed the hash: nothing is inferred"),
+    ("git_ai_note", 1, 0.9, 9, None, "fact", "another tool wrote the answer down"),
+    ("line_match", 1, 1.0, 44, None, "inferred", "the 44 decisive line matches of the sample"),
+    ("line_match", 1, 0.86, 18, 2, "inferred", "a clear winner over a weak second"),
+    ("line_match", 1, 0.33, 11, None, "inferred", "exactly at the floor still counts"),
+    ("line_match", 1, 0.32, 10, None, "uncertain", "just under the floor does not"),
+    ("line_match", 1, 0.10, 3, None, "uncertain", "the one miss: short generic lines"),
+    ("line_match", 1, 0.80, 8, 5, "uncertain", "a thin margin over rank 2 is not enough"),
+    ("line_match", 1, 0.80, 10, 5, "inferred", "twice rank 2 is the margin"),
+    ("line_match", 1, None, 0, None, "uncertain", "metadata-only: no lines, so no inference"),
+    ("line_match", 2, 0.90, 40, None, "uncertain", "a losing candidate is never counted"),
+)
+
+
+def test_the_confidence_rule_is_the_labels_document_as_data() -> None:
+    assert attribution.COVERAGE_FLOOR == 0.33, "a third of the commit's added lines"
+    assert attribution.MARGIN == 2, "rank 1 at least twice rank 2"
+    for method, rank, coverage, matched, runner_up, expected, why in CONFIDENCE_CASES:
+        assert attribution.confidence(method, rank, coverage, matched, runner_up) == expected, why
+
+
+def test_every_stored_attribution_carries_a_confidence(lab: Workspace) -> None:
+    _scenario(lab)
+    _ingest(lab)
+    labels = dict(_rows("SELECT confidence, COUNT(*) FROM attribution GROUP BY confidence"))
+    assert set(labels) <= set(attribution.CONFIDENCES)
+    facts = _rows(
+        "SELECT confidence FROM attribution WHERE method = 'in_session'",
+    )
+    assert facts == [("fact",)], "an in-session commit is a fact, whatever the lines say"
+    losing = _rows(
+        "SELECT confidence FROM attribution WHERE method = 'line_match' AND rank = 2",
+    )
+    assert losing and all(row == ("uncertain",) for row in losing)
+
+
+def test_sessions_show_and_views_count_fact_inferred_and_uncertain_apart(
+    lab: Workspace,
+) -> None:
+    _scenario(lab)
+    _ingest(lab)
+    connection = db.connect()
+    try:
+        found = views.search_sessions(connection)
+        by_id = {row["session_id"]: row for row in found["results"]}
+        summary = views.session_summary(connection, ECHO)
+    finally:
+        connection.close()
+
+    assert by_id[WRITER]["commits_fact"] == 0
+    assert by_id[WRITER]["commits_inferred"] == 1, "it wrote every line of that commit"
+    assert by_id[WRITER]["commits_uncertain"] == 0
+    assert by_id[WRITER]["commits_attributed"] == 1, "fact plus inferred, and nothing else"
+    assert by_id[ECHO]["commits_inferred"] == 0
+    assert by_id[ECHO]["commits_uncertain"] == 1, "one line of four is a candidate, not a claim"
+    assert by_id[ECHO]["commits_attributed"] == 0
+    assert by_id[COMMITTER]["commits_fact"] == 1
+
+    assert summary["commits_uncertain"] == 1
+    assert summary["commits_fact"] == 0 and summary["commits_inferred"] == 0
+    assert {c["confidence"] for c in summary["commits"]} == {"uncertain"}
+
+    result = CliRunner().invoke(main, ["sessions", "--last", "90d"])
+    assert result.exit_code == 0, result.output
+    rows = {line[:8]: line for line in result.output.splitlines()}
+    assert "0 (+1)" in rows[WRITER[:8]], "one inferred commit, none known for certain"
+    assert "(?1)" in rows[ECHO[:8]], "and an uncertain one is shown beside, never inside"
+
+    shown = CliRunner().invoke(main, ["show", "--session", ECHO])
+    assert shown.exit_code == 0, shown.output
+    assert "uncertain" in shown.output
+    assert "0 fact, 0 inferred; 1 uncertain" in shown.output
 
 
 def test_sessions_lists_what_each_session_did(lab: Workspace) -> None:

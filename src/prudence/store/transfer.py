@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from prudence import __version__
-from prudence.store import attribution, commits, db, derived, edits, repos, spool
+from prudence.store import attribution, commits, db, derived, edits, repos, rewritten, spool
 
 MANIFEST = "manifest.json"
 CONFIG_MEMBER = "config.toml"
@@ -40,7 +40,7 @@ FORMAT_VERSION = 1
 
 # Derived and harvested tables, in an order an import can follow without care.
 DERIVED_TABLES = derived.TABLES + ("hook_event",)
-HARVESTED_TABLES = ("repository", "commit", "commit_line", "attribution")
+HARVESTED_TABLES = ("repository", "commit", "commit_line", "attribution", "commit_alias")
 ARCHIVE_TABLES = ("archive_file", "archive_chunk")
 
 BLOB_COLUMNS = {("archive_chunk", "data")}
@@ -74,6 +74,7 @@ def versions() -> dict[str, int]:
         "repository_fact": repos.FACT_VERSION,
         "commit_fact": commits.FACT_VERSION,
         "attribution_fact": attribution.FACT_VERSION,
+        "commit_alias_fact": rewritten.FACT_VERSION,
         "hook_event_fact": spool.FACT_VERSION,
     }
 
@@ -190,6 +191,7 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
     connection.execute(repos.SCHEMA)
     connection.executescript(commits.SCHEMA)
     connection.executescript(attribution.SCHEMA)
+    connection.executescript(rewritten.SCHEMA)
 
 
 def _occupied(connection: sqlite3.Connection) -> dict[str, int]:

@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 SESSION_TABLES = (
     ("attribution", "session_id"),
     ("command", "session_id"),
+    ("commit_alias", "session_id"),
+    ("usage", "session_id"),
     ("edit", "session_id"),
     ("hook_event", "session_id"),
     ("record", "session_id"),
@@ -103,6 +105,12 @@ def forget_project(connection: sqlite3.Connection, repo_key: str) -> Removal:
     removal.rows["attribution"] += _execute(
         connection,
         'DELETE FROM attribution WHERE commit_hash IN (SELECT commit_hash FROM "commit"'
+        " WHERE repo_key = ?)",
+        key,
+    )
+    removal.rows["commit_alias"] += _execute(
+        connection,
+        'DELETE FROM commit_alias WHERE commit_hash IN (SELECT commit_hash FROM "commit"'
         " WHERE repo_key = ?)",
         key,
     )

@@ -32,7 +32,7 @@ from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
 
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 # Record types this version understands. Anything else is counted and kept as a record.
 KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
@@ -48,6 +48,7 @@ TABLES = (
     "edit",
     "edit_line",
     "command",
+    "usage",
     "unknown_record_type",
 )
 
@@ -135,6 +136,19 @@ SCHEMA = {
             command_text TEXT,
             parser_version INTEGER NOT NULL
         )""",
+    "usage": """
+        CREATE TABLE {name}(
+            record_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            turn_id TEXT,
+            request_id TEXT,
+            model TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            cache_creation_tokens INTEGER,
+            parser_version INTEGER NOT NULL
+        )""",
     "unknown_record_type": """
         CREATE TABLE {name}(
             type TEXT NOT NULL,
@@ -156,6 +170,8 @@ INDEXES = (
     "CREATE INDEX IF NOT EXISTS edit_line_hash ON edit_line(line_hash)",
     "CREATE INDEX IF NOT EXISTS command_session ON command(session_id, command_class)",
     "CREATE INDEX IF NOT EXISTS command_commit ON command(commit_hash)",
+    "CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)",
+    "CREATE INDEX IF NOT EXISTS usage_model ON usage(model)",
 )
 
 
@@ -168,6 +184,8 @@ class BuildStats:
     edits: int = 0
     edit_lines: int = 0
     commands: int = 0
+    usage_rows: int = 0
+    usage_tokens: int = 0
     unknown_types: int = 0
     replayed_records: int = 0
     unassigned_sessions: int = 0
@@ -212,6 +230,8 @@ class _Session:
     records: list[tuple] = field(default_factory=list)
     turns: dict[str, list] = field(default_factory=dict)
     tool_calls: dict[str, _ToolCall] = field(default_factory=dict)
+    usage: list[tuple] = field(default_factory=list)
+    request_ids: set[str] = field(default_factory=set)
 
 
 def build(
@@ -371,6 +391,7 @@ def _read_file(
             )
         )
         _note_turn(session, turn_id, stamp, record)
+        _note_usage(session, turn_id, record_id, record)
         _note_tools(session, turn_id, record_id, turn_stamp=stamp, record=record, full=full)
 
 
@@ -392,6 +413,52 @@ def _note_turn(session: _Session, turn_id: str, stamp: str | None, record: dict)
             turn[1] = stamp
     if _is_user_prompt(record):
         turn[2] += _prompt_chars(record)
+
+
+def _note_usage(session: _Session, turn_id: str, record_id: str, record: dict) -> None:
+    """What one API response cost, from the assistant record that carries `message.usage`.
+
+    Two things make this less obvious than it looks. Claude Code writes several records
+    for one response (a text block and a tool call each get their own) and repeats the
+    same usage on all of them under one `requestId`, so the first record of a request is
+    counted and the rest are skipped; on the founder's store that is 157,868 records for
+    71,763 responses, so counting records would inflate the total by more than half.
+    And a version that writes no usage at all is not an error: it simply produces no row,
+    and every surface shows the absence rather than a zero.
+    """
+    if record.get("type") != "assistant":
+        return
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return
+    request_id = _text_or_none(record.get("requestId"))
+    if request_id is not None:
+        if request_id in session.request_ids:
+            return
+        session.request_ids.add(request_id)
+    session.usage.append(
+        (
+            record_id,
+            session.session_id,
+            turn_id,
+            request_id,
+            _text_or_none(message.get("model")),
+            _token_count(usage, "input_tokens"),
+            _token_count(usage, "output_tokens"),
+            _token_count(usage, "cache_read_input_tokens"),
+            _token_count(usage, "cache_creation_input_tokens"),
+            PARSER_VERSION,
+        )
+    )
+
+
+def _token_count(usage: dict, key: str) -> int | None:
+    """A token count, or NULL when this version of the format does not carry that key."""
+    value = usage.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _note_tools(
@@ -506,6 +573,11 @@ def _flush_session(
         ],
     )
     stats.tool_calls += len(session.tool_calls)
+    connection.executemany(
+        "INSERT OR REPLACE INTO usage__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", session.usage
+    )
+    stats.usage_rows += len(session.usage)
+    stats.usage_tokens += sum(sum(value or 0 for value in row[5:9]) for row in session.usage)
     _flush_edits(connection, session, stats, resolver, key)
     _flush_commands(connection, session, stats)
     connection.execute(

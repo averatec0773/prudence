@@ -73,8 +73,10 @@ def search_sessions(
 
     Returns `{"results": [...], "total": N, "truncated": bool}`, or `{"message": "..."}`
     when nothing has been ingested yet. Each result carries only: session_id,
-    repository, started_at, sittings, prompts, edits, commits_attributed, coverage and
-    capture_notes. No message text is ever included.
+    repository, started_at, sittings, prompts, edits, tokens (input, output and cache
+    tokens together, null when the Claude Code version recorded none), commits_fact,
+    commits_inferred, commits_uncertain, commits_attributed (fact plus inferred, never
+    uncertain), coverage and capture_notes. No message text is ever included.
     """
     connection = _connect()
     if connection is None:
@@ -98,9 +100,11 @@ def show_session(session_id: str) -> dict[str, Any]:
 
     `session_id` may be a full id or an unambiguous prefix. Returns identity (repository,
     capture level, timestamps, sittings), counts (records, turns, tool calls, edits,
-    commands), edited files at full capture only (withheld at `metadata-only`), and
-    attributed commits with their method, rank and coverage. Returns `{"message": "..."}`
-    when nothing has been ingested yet or when the id does not match exactly one session.
+    commands), token usage per model (null when the Claude Code version recorded none),
+    edited files at full capture only (withheld at `metadata-only`), attributed commits
+    with their method, confidence, rank and coverage, and the commits_fact,
+    commits_inferred and commits_uncertain counts. Returns `{"message": "..."}` when
+    nothing has been ingested yet or when the id does not match exactly one session.
     No message text at any capture level, because none is stored.
     """
     connection = _connect()
@@ -122,8 +126,9 @@ def status() -> dict[str, Any]:
     """What `prudence status` prints, as JSON.
 
     Per-repository counts (files, archived bytes, sessions, edits, commits) and
-    store-wide totals (archive size, derived table counts, commits by attribution
-    method, hook events, unassigned sessions, unknown record types). No message text.
+    store-wide totals (archive size, derived table counts, token usage, commits by
+    attribution method and by confidence, what became of every commit hash a session
+    printed, hook events, unassigned sessions, unknown record types). No message text.
     """
     connection = _connect()
     try:

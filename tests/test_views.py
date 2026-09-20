@@ -49,6 +49,61 @@ def test_session_summary_has_the_shape_show_session_promises(lab: Workspace) -> 
     assert "commit it" not in blob
 
 
+def test_session_summary_reports_usage_and_the_three_confidence_counts(lab: Workspace) -> None:
+    """The sample session's own transcript carries no usage fields, so usage is None."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        summary = views.session_summary(connection, SAMPLE_SESSION)
+        found = views.search_sessions(connection)
+    finally:
+        connection.close()
+
+    assert summary["usage"] is None, "absent usage is None, never zero"
+    assert summary["commits_fact"] == 1, "it ran git commit and git printed the hash"
+    assert summary["commits_inferred"] == 0
+    assert summary["commits_uncertain"] == 0
+    # Two rows, one commit: it ran `git commit` and it wrote the lines. The rows keep
+    # their own labels; the counts above take the commit at its best one, once.
+    assert {commit["confidence"] for commit in summary["commits"]} == {"fact", "inferred"}
+
+    result = found["results"][0]
+    assert result["tokens"] is None
+    assert (result["commits_fact"], result["commits_inferred"], result["commits_uncertain"]) == (
+        1,
+        0,
+        0,
+    )
+    assert result["commits_attributed"] == 1, "fact and inferred together, never uncertain"
+
+
+def test_status_summary_carries_the_token_and_hash_counts(lab: Workspace) -> None:
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        summary = views.status_summary(connection)
+    finally:
+        connection.close()
+
+    assert summary["usage"] == {
+        "requests": 0,
+        "sessions": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "total_tokens": 0,
+        "by_model": {},
+    }
+    assert summary["commits"]["by_confidence"] == {"fact": 1, "inferred": 0, "uncertain": 0}
+    assert summary["commits"]["printed_hashes"] == {
+        "printed": 1,
+        "resolved": 1,
+        "reidentified": 0,
+        "unresolved": 0,
+    }
+
+
 def test_session_summary_withholds_paths_at_metadata_only(lab: Workspace) -> None:
     record_one_session(lab, level="metadata-only")
     connection = db.connect()

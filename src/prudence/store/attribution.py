@@ -18,6 +18,12 @@ only the winner, because ambiguity the user cannot see is ambiguity nobody can c
 Coverage is stored beside every row, because a session that explains four lines of a
 four-hundred-line commit has not explained the commit, and a number without its
 coverage is the kind of claim this project exists not to make.
+
+Two things arrived in M2. Every row carries a `confidence` label (see `confidence`
+below), so a surface can count what is known separately from what is guessed. And a
+commit whose printed hash a rebase destroyed can be found again by `store/rewritten.py`,
+which adds an `in_session` row with `method_note = 'rewritten'`; that module's docstring
+carries the rule and says why the plan's patch-id idea could not be implemented.
 """
 
 from __future__ import annotations
@@ -30,13 +36,33 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from prudence.store import rewritten
 from prudence.store.repos import Repository
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 METHODS = ("in_session", "git_ai_note", "line_match")
 TOLERANCE = timedelta(seconds=120)
 NOTES_REF = "refs/notes/ai"
+
+# The confidence rule, in one place. Both numbers come from the precision labels
+# (docs/research/2026-09-19-precision-labels.md), where line matching's rank 1 was right
+# 35 times out of 36 when it fired, and its one miss was a confident wrong answer built
+# on a handful of short generic lines coincidentally matching: low coverage, no real
+# margin over the alternatives, and a commit that had no session author at all. That
+# document's own starting rule is what these are: cover at least a third of the commit's
+# added lines, and beat the runner-up by a factor of two, or say uncertain instead.
+COVERAGE_FLOOR = 0.33
+MARGIN = 2
+
+FACT = "fact"
+INFERRED = "inferred"
+UNCERTAIN = "uncertain"
+CONFIDENCES = (FACT, INFERRED, UNCERTAIN)
+
+# The confidences a number may be built from. `uncertain` rows are stored and shown,
+# and enter no statistic (principle 3).
+COUNTED = (FACT, INFERRED)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS attribution(
@@ -46,11 +72,41 @@ CREATE TABLE IF NOT EXISTS attribution(
     rank INTEGER NOT NULL,
     lines_matched INTEGER NOT NULL DEFAULT 0,
     coverage REAL,
+    confidence TEXT NOT NULL,
+    method_note TEXT,
     fact_version INTEGER NOT NULL,
     PRIMARY KEY (commit_hash, session_id, method)
 );
 CREATE INDEX IF NOT EXISTS attribution_session ON attribution(session_id, method, rank);
+CREATE INDEX IF NOT EXISTS attribution_confidence ON attribution(confidence);
 """
+
+
+def confidence(
+    method: str,
+    rank: int,
+    coverage: float | None,
+    lines_matched: int,
+    runner_up: int | None,
+) -> str:
+    """Which of the three labels one attribution row carries.
+
+    `fact`: the session ran `git commit` and git printed the hash, or another tool
+    wrote the answer into a git-ai note. Nothing was inferred.
+    `inferred`: line matching's winner, covering at least `COVERAGE_FLOOR` of the
+    commit's added lines and beating rank 2 by `MARGIN`, or with no rank 2 at all.
+    `uncertain`: everything else, including every losing candidate. Shown, never counted.
+
+    `runner_up` is rank 2's `lines_matched`, or None when this commit had no second
+    candidate.
+    """
+    if method in ("in_session", "git_ai_note"):
+        return FACT
+    if rank != 1 or coverage is None or coverage < COVERAGE_FLOOR:
+        return UNCERTAIN
+    if runner_up is not None and lines_matched < MARGIN * runner_up:
+        return UNCERTAIN
+    return INFERRED
 
 
 @dataclass
@@ -61,17 +117,24 @@ class AttributionStats:
     line_match_candidates: int = 0
     commits_attributed: int = 0
     unresolved_hashes: int = 0
+    reidentified: int = 0
     unreadable_notes: int = 0
     elapsed: float = 0.0
     per_repo: dict[str, int] = field(default_factory=dict)
+    by_confidence: Counter[str] = field(default_factory=Counter)
 
 
 def build(connection: sqlite3.Connection, repositories: list[Repository]) -> AttributionStats:
     """Rebuild every attribution row. Reads the derived tables and the repositories only."""
     started = time.monotonic()
     stats = AttributionStats()
+    # Dropped rather than emptied, so that adding a column is a rebuild and never a
+    # migration (architecture rule 1). Every row here is rebuilt from the derived tables
+    # and the repositories; nothing in either table was written by a person.
+    connection.execute("DROP TABLE IF EXISTS attribution")
+    connection.execute("DROP TABLE IF EXISTS commit_alias")
     connection.executescript(SCHEMA)
-    connection.execute("DELETE FROM attribution")
+    connection.executescript(rewritten.SCHEMA)
     added = _added_lines(connection)
     rows: list[tuple] = []
     attributed: set[str] = set()
@@ -79,22 +142,55 @@ def build(connection: sqlite3.Connection, repositories: list[Repository]) -> Att
     for repository in repositories:
         matched = _line_match(connection, repository.repo_key)
         for commit_hash, ranked in matched.items():
+            runner_up = ranked[1][1] if len(ranked) > 1 else None
             for rank, (session_id, count) in enumerate(ranked, start=1):
                 rows.append(
-                    _row(commit_hash, session_id, "line_match", rank, count, added.get(commit_hash))
+                    _row(
+                        commit_hash,
+                        session_id,
+                        "line_match",
+                        rank,
+                        count,
+                        added.get(commit_hash),
+                        runner_up=runner_up if rank == 1 else None,
+                    )
                 )
                 stats.line_match_candidates += 1
                 if rank == 1:
                     stats.line_match_winners += 1
                     attributed.add(commit_hash)
         stats.per_repo[repository.repo_key] = len(matched)
-        for commit_hash, session_id in _in_session(connection, repository, stats):
+
+        pairs, unresolved = _in_session(connection, repository, stats)
+        in_session: set[str] = set()
+        for commit_hash, session_id in pairs:
             count = _count_for(matched, commit_hash, session_id)
             rows.append(
                 _row(commit_hash, session_id, "in_session", 1, count, added.get(commit_hash))
             )
             stats.in_session += 1
             attributed.add(commit_hash)
+            in_session.add(commit_hash)
+
+        aliases = rewritten.reidentify(
+            connection, repository.repo_key, unresolved, matched, in_session
+        )
+        rewritten.save(connection, aliases)
+        for alias in aliases:
+            rows.append(
+                _row(
+                    alias.commit_hash,
+                    alias.session_id,
+                    "in_session",
+                    1,
+                    alias.lines_matched,
+                    added.get(alias.commit_hash),
+                    method_note="rewritten",
+                )
+            )
+            stats.reidentified += 1
+            attributed.add(alias.commit_hash)
+
         for commit_hash, session_id in _notes(connection, repository, stats):
             count = _count_for(matched, commit_hash, session_id)
             rows.append(
@@ -103,7 +199,11 @@ def build(connection: sqlite3.Connection, repositories: list[Repository]) -> Att
             stats.git_ai_note += 1
             attributed.add(commit_hash)
 
-    connection.executemany("INSERT OR REPLACE INTO attribution VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    connection.executemany(
+        "INSERT OR REPLACE INTO attribution VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+    )
+    for row in rows:
+        stats.by_confidence[row[6]] += 1
     stats.commits_attributed = len(attributed)
     stats.elapsed = time.monotonic() - started
     return stats
@@ -120,8 +220,38 @@ def counts(connection: sqlite3.Connection) -> dict[str, int]:
     return {row[0]: row[1] for row in rows}
 
 
+def confidence_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """Distinct commits per confidence label, each commit counted at its best label.
+
+    A commit can carry an `in_session` row and a losing `line_match` row at once, so
+    counting rows would put the same commit in two columns. The best label wins, which
+    is the same rule every surface applies when it counts a session's commits.
+    """
+    best: dict[str, str] = {}
+    order = {FACT: 0, INFERRED: 1, UNCERTAIN: 2}
+    try:
+        rows = connection.execute("SELECT commit_hash, confidence FROM attribution").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    for row in rows:
+        current = best.get(row[0])
+        if current is None or order[row[1]] < order[current]:
+            best[row[0]] = row[1]
+    counted = dict.fromkeys(CONFIDENCES, 0)
+    for label in best.values():
+        counted[label] += 1
+    return counted
+
+
 def _row(
-    commit_hash: str, session_id: str, method: str, rank: int, matched: int, added: int | None
+    commit_hash: str,
+    session_id: str,
+    method: str,
+    rank: int,
+    matched: int,
+    added: int | None,
+    runner_up: int | None = None,
+    method_note: str | None = None,
 ) -> tuple:
     """Coverage is NULL, not zero, when no line evidence exists: it is unmeasured, not nil.
 
@@ -130,7 +260,17 @@ def _row(
     coverage with, which is a different statement from "that session explains none of it".
     """
     coverage = (matched / added) if (added and matched) else None
-    return (commit_hash, session_id, method, rank, matched, coverage, FACT_VERSION)
+    return (
+        commit_hash,
+        session_id,
+        method,
+        rank,
+        matched,
+        coverage,
+        confidence(method, rank, coverage, matched, runner_up),
+        method_note,
+        FACT_VERSION,
+    )
 
 
 def _added_lines(connection: sqlite3.Connection) -> dict[str, int]:
@@ -213,10 +353,14 @@ def _deadline(committer_at: str | None) -> str:
 
 def _in_session(
     connection: sqlite3.Connection, repository: Repository, stats: AttributionStats
-) -> list[tuple[str, str]]:
-    """Commits whose hash git printed inside a session, resolved to a full hash."""
+) -> tuple[list[tuple[str, str]], list[rewritten.Call]]:
+    """Commits whose hash git printed inside a session, resolved to a full hash.
+
+    Returns the pairs that resolved and, separately, the calls whose printed hash no
+    longer names a reachable commit, which is what `store/rewritten.py` works from.
+    """
     if not repository.toplevel:
-        return []
+        return [], []
     known = {
         row[0]
         for row in connection.execute(
@@ -225,9 +369,11 @@ def _in_session(
     }
     resolved: dict[str, str | None] = {}
     pairs: list[tuple[str, str]] = []
+    unresolved: set[rewritten.Call] = set()
     for row in connection.execute(
-        "SELECT c.commit_hash AS short, c.session_id AS session_id FROM command c"
-        " JOIN session s ON s.session_id = c.session_id"
+        "SELECT c.commit_hash AS short, c.session_id AS session_id, t.started_at AS started_at"
+        " FROM command c JOIN session s ON s.session_id = c.session_id"
+        " LEFT JOIN tool_call t ON t.tool_use_id = c.tool_use_id"
         " WHERE c.command_class = 'git_commit' AND c.commit_hash IS NOT NULL"
         " AND s.repo_key = ?",
         (repository.repo_key,),
@@ -238,9 +384,12 @@ def _in_session(
         full = resolved[short]
         if full is None or full not in known:
             stats.unresolved_hashes += 1
+            unresolved.add(rewritten.Call(short, row["session_id"], row["started_at"]))
             continue
         pairs.append((full, row["session_id"]))
-    return sorted(set(pairs))
+    return sorted(set(pairs)), sorted(
+        unresolved, key=lambda call: (call.called_at or "", call.printed_hash, call.session_id)
+    )
 
 
 def _notes(

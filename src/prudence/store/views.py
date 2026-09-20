@@ -10,13 +10,17 @@ read from (architecture rule: no code leaves the archive).
 from __future__ import annotations
 
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from prudence.store import attribution as attribution_module
 
 SITTING_GAP = timedelta(minutes=60)
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
+
+TOKEN_COLUMNS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
 
 # --- one session, the data `prudence show --session` and `show_session` both need -----
@@ -100,11 +104,141 @@ def edited_files(connection: sqlite3.Connection, session_id: str) -> list[sqlite
 
 def attributed_commits(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
     return connection.execute(
-        "SELECT a.commit_hash, a.method, a.rank, a.lines_matched, a.coverage, c.added_lines,"
-        ' c.committer_at FROM attribution a LEFT JOIN "commit" c ON c.commit_hash = a.commit_hash'
+        "SELECT a.commit_hash, a.method, a.method_note, a.confidence, a.rank, a.lines_matched,"
+        " a.coverage, c.added_lines, c.committer_at FROM attribution a"
+        ' LEFT JOIN "commit" c ON c.commit_hash = a.commit_hash'
         " WHERE a.session_id = ? ORDER BY c.committer_at, a.method, a.rank",
         (session_id,),
     ).fetchall()
+
+
+# --- token usage, as the archive reported it per API response -------------------------
+
+
+def session_usage(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
+    """One row per model this session used, with its requests and its four token counts."""
+    return connection.execute(
+        "SELECT COALESCE(model, '?') AS model, COUNT(*) AS requests,"
+        " SUM(COALESCE(input_tokens, 0)) AS input_tokens,"
+        " SUM(COALESCE(output_tokens, 0)) AS output_tokens,"
+        " SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,"
+        " SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens"
+        " FROM usage WHERE session_id = ? GROUP BY model ORDER BY model",
+        (session_id,),
+    ).fetchall()
+
+
+def usage_of_session(connection: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
+    """This session's usage, per model and in total, or None when no record carried any.
+
+    None is the honest answer for a Claude Code version that wrote no usage fields, and
+    for a session that made no API call at all. It is not zero.
+    """
+    rows = session_usage(connection, session_id)
+    if not rows:
+        return None
+    totals = {column: sum(row[column] for row in rows) for column in TOKEN_COLUMNS}
+    return {
+        "requests": sum(row["requests"] for row in rows),
+        **totals,
+        "total_tokens": sum(totals.values()),
+        "by_model": {
+            row["model"]: {
+                "requests": row["requests"],
+                **{column: row[column] for column in TOKEN_COLUMNS},
+                "total_tokens": sum(row[column] for column in TOKEN_COLUMNS),
+            }
+            for row in rows
+        },
+    }
+
+
+def usage_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, int]:
+    """Total tokens per session, for the sessions asked about. Absent means no usage row."""
+    return {
+        row["session_id"]: row["total"]
+        for row in _batched(
+            connection,
+            "SELECT session_id, SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)"
+            " + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) AS total"
+            " FROM usage",
+            ids,
+            " GROUP BY session_id",
+        )
+    }
+
+
+def usage_totals(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Every token the store recorded, in total and per model. Empty before parser 3."""
+    try:
+        row = connection.execute(
+            "SELECT COUNT(*) AS requests, COUNT(DISTINCT session_id) AS sessions,"
+            " SUM(COALESCE(input_tokens, 0)) AS input_tokens,"
+            " SUM(COALESCE(output_tokens, 0)) AS output_tokens,"
+            " SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,"
+            " SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens FROM usage"
+        ).fetchone()
+        models = connection.execute(
+            "SELECT COALESCE(model, '?') AS model, COUNT(*) AS requests FROM usage"
+            " GROUP BY model ORDER BY requests DESC, model"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"requests": 0, "sessions": 0, "total_tokens": 0, "by_model": {}}
+    totals = {column: row[column] or 0 for column in TOKEN_COLUMNS}
+    return {
+        "requests": row["requests"],
+        "sessions": row["sessions"],
+        **totals,
+        "total_tokens": sum(totals.values()),
+        "by_model": {model["model"]: model["requests"] for model in models},
+    }
+
+
+# --- commits per session, counted by the confidence rule ------------------------------
+
+
+def credited_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Commits per session split by confidence, and the mean coverage over the counted ones.
+
+    One commit can carry two rows for the same session (it ran `git commit` and it wrote
+    the lines), so each commit is counted once, at its best label. `uncertain` is
+    reported and never added to `commits`, which is what principle 3 asks for.
+    """
+    order = {label: index for index, label in enumerate(attribution_module.CONFIDENCES)}
+    best: dict[str, dict[str, tuple[str, float | None]]] = defaultdict(dict)
+    for row in _batched(
+        connection,
+        "SELECT session_id, commit_hash, confidence, coverage FROM attribution",
+        ids,
+        "",
+    ):
+        seen = best[row["session_id"]].get(row["commit_hash"])
+        if seen is None or order[row["confidence"]] < order[seen[0]]:
+            best[row["session_id"]][row["commit_hash"]] = (row["confidence"], row["coverage"])
+
+    result: dict[str, dict[str, Any]] = {}
+    for session_id, commits in best.items():
+        counted = Counter(label for label, _ in commits.values())
+        coverages = [
+            coverage
+            for label, coverage in commits.values()
+            if label in attribution_module.COUNTED and coverage is not None
+        ]
+        result[session_id] = {
+            "fact": counted[attribution_module.FACT],
+            "inferred": counted[attribution_module.INFERRED],
+            "uncertain": counted[attribution_module.UNCERTAIN],
+            "commits": counted[attribution_module.FACT] + counted[attribution_module.INFERRED],
+            "coverage": (sum(coverages) / len(coverages)) if coverages else None,
+        }
+    return result
+
+
+def credited(connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
+    """The same counts for one session, zeroed when it is credited with nothing."""
+    return credited_map(connection, [session_id]).get(
+        session_id, {"fact": 0, "inferred": 0, "uncertain": 0, "commits": 0, "coverage": None}
+    )
 
 
 def hook_timeline(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
@@ -144,6 +278,7 @@ def session_summary(
     edit = edit_totals(connection, session_id)
     file_rows = edited_files(connection, session_id) if full else []
     archive_rows = archived_files(connection, session_id)
+    counted = credited(connection, session_id)
 
     by_source: Counter[str] = Counter()
     archive_total = 0
@@ -190,11 +325,14 @@ def session_summary(
                 for r in file_rows
             ],
         },
+        "usage": usage_of_session(connection, session_id),
         "commits": [
             {
                 "commit_hash": r["commit_hash"],
                 "committer_at": r["committer_at"],
                 "method": r["method"],
+                "method_note": r["method_note"],
+                "confidence": r["confidence"],
                 "rank": r["rank"],
                 "lines_matched": r["lines_matched"],
                 "added_lines": r["added_lines"],
@@ -202,6 +340,10 @@ def session_summary(
             }
             for r in attributed_commits(connection, session_id)
         ],
+        "commits_fact": counted["fact"],
+        "commits_inferred": counted["inferred"],
+        "commits_uncertain": counted["uncertain"],
+        "coverage": counted["coverage"],
         "hooks": _hook_turns(hook_timeline(connection, session_id)),
         "archive": {
             "files": len(archive_rows),
@@ -315,8 +457,10 @@ def search_sessions(
     ids = [row["session_id"] for row in page]
     turns = _counted_map(connection, "SELECT session_id, COUNT(*) FROM turn", ids)
     edits = _counted_map(connection, "SELECT session_id, COUNT(*) FROM edit", ids)
-    credited = _credited_map(connection, ids)
+    counted = credited_map(connection, ids)
+    tokens = usage_map(connection, ids)
     sat = _sittings_map(connection, ids)
+    empty = {"fact": 0, "inferred": 0, "uncertain": 0, "commits": 0, "coverage": None}
     results = [
         {
             "session_id": row["session_id"],
@@ -325,8 +469,12 @@ def search_sessions(
             "sittings": sat.get(row["session_id"], 1),
             "prompts": turns.get(row["session_id"], 0),
             "edits": edits.get(row["session_id"], 0),
-            "commits_attributed": credited.get(row["session_id"], (0, None))[0],
-            "coverage": credited.get(row["session_id"], (0, None))[1],
+            "tokens": tokens.get(row["session_id"]),
+            "commits_attributed": counted.get(row["session_id"], empty)["commits"],
+            "commits_fact": counted.get(row["session_id"], empty)["fact"],
+            "commits_inferred": counted.get(row["session_id"], empty)["inferred"],
+            "commits_uncertain": counted.get(row["session_id"], empty)["uncertain"],
+            "coverage": counted.get(row["session_id"], empty)["coverage"],
             "capture_notes": row["notes"],
         }
         for row in page
@@ -353,21 +501,6 @@ def _sittings_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, i
         elif moment - last > SITTING_GAP:
             result[row["session_id"]] = result.get(row["session_id"], 1) + 1
         previous[row["session_id"]] = moment
-    return result
-
-
-def _credited_map(
-    connection: sqlite3.Connection, ids: list[str]
-) -> dict[str, tuple[int, float | None]]:
-    result: dict[str, tuple[int, float | None]] = {}
-    for row in _batched(
-        connection,
-        "SELECT session_id, COUNT(DISTINCT commit_hash) AS commits, AVG(coverage) AS coverage"
-        " FROM attribution WHERE rank = 1 AND method IN ('in_session', 'line_match')",
-        ids,
-        " GROUP BY session_id",
-    ):
-        result[row["session_id"]] = (row["commits"], row["coverage"])
     return result
 
 
@@ -400,7 +533,7 @@ def _scalar(connection: sqlite3.Connection, query: str, session_id: str) -> int:
 def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     """What `prudence status` prints, as JSON. Ids, counts and versions only."""
     from prudence import config as config_module
-    from prudence.store import archive, attribution, commits, derived, spool
+    from prudence.store import archive, attribution, commits, derived, rewritten, spool
 
     config = config_module.load()
     repositories = []
@@ -448,6 +581,7 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     if not result["built"]:
         return result
     result["derived"] = {**counts, "parser_version": derived.PARSER_VERSION}
+    result["usage"] = usage_totals(connection)
 
     harvested, commit_lines = commits.counts(connection)
     result["commits"] = {
@@ -455,7 +589,10 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         "added_lines_hashed": commit_lines,
         "fact_version": commits.FACT_VERSION,
         "by_method": attribution.counts(connection),
+        "by_confidence": attribution.confidence_counts(connection),
+        "printed_hashes": rewritten.resolution(connection),
         "attribution_fact_version": attribution.FACT_VERSION,
+        "commit_alias_fact_version": rewritten.FACT_VERSION,
     }
     events, hook_sessions = spool.counts(connection)
     result["hook_events"] = {

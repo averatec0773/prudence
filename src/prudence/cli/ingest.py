@@ -74,6 +74,10 @@ def report(result: pipeline.Result) -> list[str]:
         f"{parsed.commands} commands, {parsed.unknown_types} unknown record types, "
         f"{parsed.elapsed:.1f} s."
     )
+    lines.append(
+        f"Tokens: {parsed.usage_tokens} over {parsed.usage_rows} API responses "
+        "(input, output and cache together; a response is counted once)."
+    )
     hooks = result.hooks
     if hooks.files or hooks.events:
         lines.append(
@@ -106,10 +110,20 @@ def report(result: pipeline.Result) -> list[str]:
         f"{attributed.line_match_winners} by line match "
         f"from {attributed.line_match_candidates} candidates), {attributed.elapsed:.1f} s."
     )
+    if attributed.reidentified:
+        lines.append(
+            f"{attributed.reidentified} rewritten commits were re-identified from the session "
+            "that made them (timing plus overlapping lines; the printed hash is gone)."
+        )
     if attributed.unresolved_hashes or attributed.unreadable_notes:
         lines.append(
             f"{attributed.unresolved_hashes} commit hashes named in a session no longer "
             f"resolve; {attributed.unreadable_notes} git-ai notes were not in the expected "
             "format and were skipped."
         )
+    labels = attributed.by_confidence
+    lines.append(
+        f"Confidence: {labels.get('fact', 0)} fact, {labels.get('inferred', 0)} inferred, "
+        f"{labels.get('uncertain', 0)} uncertain attribution rows."
+    )
     return lines

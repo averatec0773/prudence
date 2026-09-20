@@ -70,6 +70,7 @@ def render(connection: sqlite3.Connection, session_id: str, list_files: bool = F
     lines = [f"session {session_id}"]
     lines += _identity(connection, row)
     lines += _counts(connection, session_id)
+    lines += _usage(connection, session_id)
     lines += _files(connection, session_id, full)
     lines += _commits(connection, session_id)
     lines += _hooks(connection, session_id)
@@ -137,6 +138,40 @@ def _counts(connection: sqlite3.Connection, session_id: str) -> list[str]:
     return lines
 
 
+def _usage(connection: sqlite3.Connection, session_id: str) -> list[str]:
+    """What the session spent, per model, counted once per API response."""
+    lines = _heading(
+        "token usage",
+        "usage",
+        f"parser version {derived.PARSER_VERSION}",
+        "high: these are the numbers the API itself reported",
+    )
+    summary = views.usage_of_session(connection, session_id)
+    if summary is None:
+        lines.append("  none recorded (this Claude Code version wrote no usage fields)")
+        return lines
+    lines.append(
+        f"  {'model':<30} {'requests':>9} {'input':>10} {'output':>10} {'cache read':>11} "
+        f"{'cache write':>12} {'total':>11}"
+    )
+    for model, counted in summary["by_model"].items():
+        lines.append(
+            f"  {model[:30]:<30} {counted['requests']:>9} {counted['input_tokens']:>10} "
+            f"{counted['output_tokens']:>10} {counted['cache_read_tokens']:>11} "
+            f"{counted['cache_creation_tokens']:>12} {counted['total_tokens']:>11}"
+        )
+    lines.append(
+        f"  {'all models':<30} {summary['requests']:>9} {summary['input_tokens']:>10} "
+        f"{summary['output_tokens']:>10} {summary['cache_read_tokens']:>11} "
+        f"{summary['cache_creation_tokens']:>12} {summary['total_tokens']:>11}"
+    )
+    lines.append(
+        "  one row per API response, not per record: Claude Code repeats the same usage "
+        "on every record of one response."
+    )
+    return lines
+
+
 def _files(connection: sqlite3.Connection, session_id: str, full: bool) -> list[str]:
     lines = _heading(
         "files edited",
@@ -170,23 +205,33 @@ def _commits(connection: sqlite3.Connection, session_id: str) -> list[str]:
         "commits attributed",
         "attribution, commit",
         f"fact version {attribution.FACT_VERSION} over commit fact version {commits.FACT_VERSION}",
-        "high for in_session and git_ai_note, medium for line_match",
+        "high for in_session and git_ai_note, medium for line_match and for a rewritten "
+        "commit found again by time and lines",
     )
     rows = views.attributed_commits(connection, session_id)
     if not rows:
         lines.append("  none")
         return lines
     lines.append(
-        f"  {'commit':<10} {'committed':<17} {'method':<13} {'rank':>4} {'matched':>8} "
-        f"{'of':>6} {'coverage':>9}"
+        f"  {'commit':<10} {'committed':<17} {'method':<13} {'confidence':<10} {'rank':>4} "
+        f"{'matched':>8} {'of':>6} {'coverage':>9}"
     )
     for row in rows:
         coverage = "-" if row["coverage"] is None else f"{row['coverage'] * 100:.0f}%"
+        method = row["method"] + (f" ({row['method_note']})" if row["method_note"] else "")
         lines.append(
             f"  {row['commit_hash'][:10]:<10} {(row['committer_at'] or '')[:17]:<17} "
-            f"{row['method']:<13} {row['rank']:>4} {row['lines_matched']:>8} "
+            f"{method[:13]:<13} {row['confidence']:<10} {row['rank']:>4} "
+            f"{row['lines_matched']:>8} "
             f"{row['added_lines'] if row['added_lines'] is not None else '?':>6} {coverage:>9}"
         )
+    counted = views.credited(connection, session_id)
+    lines.append(
+        f"  counted: {counted['fact']} fact, {counted['inferred']} inferred; "
+        f"{counted['uncertain']} uncertain, which enter no statistic "
+        f"(floor {attribution.COVERAGE_FLOOR:.2f} of a commit's added lines, "
+        f"margin {attribution.MARGIN}x over rank 2)."
+    )
     lines.append("  coverage is NULL, printed as -, when there is no line evidence at all.")
     return lines
 

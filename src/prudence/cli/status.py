@@ -13,9 +13,9 @@ import click
 
 from prudence import __version__
 from prudence import config as config_module
-from prudence.cli.render import size
+from prudence.cli.render import size, thousands
 from prudence.paths import database_file
-from prudence.store import archive, attribution, commits, db, derived, spool
+from prudence.store import archive, attribution, commits, db, derived, rewritten, spool, views
 
 
 @click.command()
@@ -95,6 +95,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
         f"{counts['turn']} turns, {counts['tool_call']} tool calls, {counts['edit']} edits, "
         f"{counts['command']} commands (parser version {derived.PARSER_VERSION})"
     )
+    lines.extend(_usage_lines(connection))
     lines.extend(_command_lines(connection))
     lines.extend(_hook_lines(connection))
     lines.extend(_commit_lines(connection))
@@ -105,6 +106,22 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     if resumed:
         lines.append(f"resumed sessions noted: {resumed}")
     return lines + _unknown_lines(connection)
+
+
+def _usage_lines(connection: sqlite3.Connection) -> list[str]:
+    """Tokens, counted once per API response. Nothing at all before parser version 3."""
+    totals = views.usage_totals(connection)
+    if not totals["requests"]:
+        return ["tokens: none recorded (no Claude Code version here wrote usage fields)"]
+    models = ", ".join(f"{count} {model}" for model, count in totals["by_model"].items())
+    return [
+        f"tokens: {thousands(totals['total_tokens'])} over {totals['requests']} API responses "
+        f"in {totals['sessions']} sessions "
+        f"({thousands(totals['input_tokens'])} input, {thousands(totals['output_tokens'])} output, "
+        f"{thousands(totals['cache_read_tokens'])} cache read, "
+        f"{thousands(totals['cache_creation_tokens'])} cache creation)",
+        f"responses by model: {models}",
+    ]
 
 
 def _command_lines(connection: sqlite3.Connection) -> list[str]:
@@ -135,11 +152,20 @@ def _commit_lines(connection: sqlite3.Connection) -> list[str]:
         "SELECT COUNT(DISTINCT commit_hash) FROM attribution WHERE rank = 1"
     ).fetchone()[0]
     detail = ", ".join(f"{count} {method}" for method, count in sorted(methods.items())) or "none"
+    labels = attribution.confidence_counts(connection)
+    printed = rewritten.resolution(connection)
     return [
         f"commits: {harvested} harvested, {commit_lines} added lines hashed "
         f"(fact version {commits.FACT_VERSION})",
         f"attributed: {attributed} commits, by method {detail} "
         f"(fact version {attribution.FACT_VERSION})",
+        f"confidence: {labels.get('fact', 0)} fact, {labels.get('inferred', 0)} inferred, "
+        f"{labels.get('uncertain', 0)} uncertain (floor {attribution.COVERAGE_FLOOR:.2f}, "
+        f"margin {attribution.MARGIN}x)",
+        f"commit hashes printed in a session: {printed['printed']}, of which "
+        f"{printed['resolved']} still resolve, {printed['reidentified']} were re-identified "
+        f"after a rewrite, {printed['unresolved']} are gone "
+        f"(commit_alias fact version {rewritten.FACT_VERSION})",
     ]
 
 

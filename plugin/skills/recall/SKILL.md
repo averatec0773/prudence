@@ -18,7 +18,7 @@ task, using the `prudence` MCP server's tools rather than the CLI.
    returns nothing.
 3. For the most relevant matches (by recency and by how well the edited files or command
    classes match the task), call `show_session` to get each one's full detail: files
-   edited, commits attributed, and coverage.
+   edited, token usage, commits attributed, and coverage.
 4. Present findings with their dates and repositories, for example: "You worked on
    `src/store/attribution.py` in the `prudence` repo on 2026-09-15 (session
    `9bc04769`), with a commit attributed at 92% coverage." Cite the session id so the
@@ -29,6 +29,10 @@ task, using the `prudence` MCP server's tools rather than the CLI.
 - Never invent content: these tools return only ids, dates, counts, repository names,
   full file paths, and commit hashes. No message text is ever returned, so do not guess
   at what was discussed or written; describe only what the structured result shows.
+- Each attributed commit carries a `confidence` of `fact`, `inferred` or `uncertain`,
+  and each session carries `commits_fact`, `commits_inferred` and `commits_uncertain`.
+  Count only fact and inferred; report an uncertain attribution as a possibility, in
+  those words, and never fold it into a total.
 - If `search_sessions` and `show_session` return no results, say so plainly. Do not
   fall back to guessing from general knowledge of the codebase and present it as
   session history.

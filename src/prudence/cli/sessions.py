@@ -3,9 +3,15 @@
 This is the table the whole record exists to print, so it shows its own weaknesses on
 the same line as its numbers. Coverage sits beside the commit count because a session
 credited with three commits it explains four lines of has not written three commits.
-The notes column carries the capture level and how the session found its repository,
-because a row derived through a fallback should not look like a row read straight off
-the working directory.
+The commits column separates what is known from what is inferred and prints the
+uncertain attributions beside both, because a count that quietly absorbs its own doubt
+is the kind of number this project exists not to print. The notes column carries the
+capture level and how the session found its repository, because a row derived through a
+fallback should not look like a row read straight off the working directory.
+
+Tokens are the four counts of an API response added together (input, output, cache read
+and cache creation), in thousands. A dash means no usage was recorded at all, which is
+what a Claude Code version older than the usage fields leaves behind; it is not a zero.
 
 Sittings, not sessions, are how long someone actually sat there: a Desktop session can
 stay open for days, so a gap of more than an hour is counted as a new sitting.
@@ -20,11 +26,13 @@ from datetime import UTC, datetime, timedelta
 import click
 
 from prudence import config as config_module
+from prudence.cli.render import thousands
 from prudence.paths import database_file
-from prudence.store import db
+from prudence.store import db, views
 
 SITTING_GAP = timedelta(minutes=60)
 DEFAULT_WINDOW = "7d"
+EMPTY = {"fact": 0, "inferred": 0, "uncertain": 0, "commits": 0, "coverage": None}
 _WINDOW = re.compile(r"^(\d+)([dhw])$")
 _UNITS = {"h": "hours", "d": "days", "w": "weeks"}
 
@@ -76,27 +84,30 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
     turns = _count(connection, "SELECT session_id, COUNT(*) FROM turn", ids)
     edits = _count(connection, "SELECT session_id, COUNT(*) FROM edit", ids)
     commands = _count(connection, "SELECT session_id, COUNT(*) FROM command", ids)
-    credited = _credited(connection, ids)
+    credited = views.credited_map(connection, ids)
+    tokens = views.usage_map(connection, ids)
 
     lines = [
         f"{'session':<10} {'repository':<20} {'started':<16} {'sit':>4} {'prompts':>8} "
-        f"{'edits':>6} {'bash':>5} {'commits':>8} {'coverage':>9}  notes"
+        f"{'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} {'coverage':>9}  notes"
     ]
     for row in rows:
         session_id = row["session_id"]
-        count, coverage = credited.get(session_id, (0, None))
+        counted = credited.get(session_id, EMPTY)
         name = names.get(row["repo_key"], row["repo_key"] or "unassigned")
         lines.append(
             f"{session_id[:8]:<10} {name[:20]:<20} {(row['first_at'] or '')[:16]:<16} "
             f"{sittings.get(session_id, 1):>4} {turns.get(session_id, 0):>8} "
             f"{edits.get(session_id, 0):>6} {commands.get(session_id, 0):>5} "
-            f"{count:>8} {_percent(coverage):>9}  {_notes(row)}"
+            f"{thousands(tokens.get(session_id)):>7} {_commits(counted):>13} "
+            f"{_percent(counted['coverage']):>9}  {_notes(row)}"
         )
     lines.append("")
     lines.append(
-        f"{len(rows)} sessions in the last {window}. Commits are those where the session "
-        "committed in the session or won the line match; coverage is the mean share of a "
-        "commit's added lines that session wrote."
+        f"{len(rows)} sessions in the last {window}. Commits are counted as "
+        "fact (+inferred), with (?N) uncertain attributions beside them, which enter no "
+        "statistic; coverage is the mean share of a counted commit's added lines that "
+        "session wrote. Tokens are input, output and cache tokens together, in thousands."
     )
     return "\n".join(lines)
 
@@ -144,20 +155,14 @@ def _sittings(connection: sqlite3.Connection, ids: list[str]) -> dict[str, int]:
     return result
 
 
-def _credited(
-    connection: sqlite3.Connection, ids: list[str]
-) -> dict[str, tuple[int, float | None]]:
-    """Commits a session won, and the mean coverage over exactly those commits."""
-    result: dict[str, tuple[int, float | None]] = {}
-    for row in _select(
-        connection,
-        "SELECT session_id, COUNT(DISTINCT commit_hash) AS commits, AVG(coverage) AS coverage"
-        " FROM attribution WHERE rank = 1 AND method IN ('in_session', 'line_match')",
-        ids,
-        " GROUP BY session_id",
-    ):
-        result[row["session_id"]] = (row["commits"], row["coverage"])
-    return result
+def _commits(counted: dict) -> str:
+    """`7 (+2) (?1)`: seven known, two inferred, one uncertain that is counted nowhere."""
+    text = str(counted["fact"])
+    if counted["inferred"]:
+        text += f" (+{counted['inferred']})"
+    if counted["uncertain"]:
+        text += f" (?{counted['uncertain']})"
+    return text
 
 
 def _count(connection: sqlite3.Connection, query: str, ids: list[str]) -> dict[str, int]:

@@ -29,6 +29,7 @@ src/prudence/
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
     attribution.py  which session produced which commit, and how sure we are
+    rewritten.py  commits a rebase renamed, found again by timing and overlapping lines
     spool.py      what the hooks saw, folded from the archived spool into hook_event
     erase.py      taking a session or a repository back out, archive included
     transfer.py   the whole store as one .tar.gz, and back into an empty one
@@ -76,8 +77,14 @@ docs/reference/store-schema.md   every table and column, with its trust level
    not shape.
 9. **A derived fact says how it was derived.** A session records which rule found its
    repository; an attribution records which of the three methods named it, its rank
-   among the candidates, and its coverage. A surface may present a guess, never as a
-   fact.
+   among the candidates, its coverage and, since M2, its confidence. A surface may
+   present a guess, never as a fact.
+10. **A number and its doubt travel together.** Every attribution carries `fact`,
+   `inferred` or `uncertain` by one rule in one place (`store/attribution.confidence`,
+   whose constants cite the labelled data behind them). A surface counts `fact` and
+   `inferred`, shows `uncertain` beside them, and never folds one into the other. An
+   absent measurement is NULL and printed as a dash: a session whose Claude Code version
+   wrote no token usage has no usage rows, which is not zero tokens.
 
 ## Adding things
 
