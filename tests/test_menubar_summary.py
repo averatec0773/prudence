@@ -7,13 +7,14 @@ uses, so the test passes regardless of the machine's own timezone.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, date, datetime, time
 
 from click.testing import CliRunner
 from conftest import Workspace, commit, prompt, tool_call, write_transcript
 
 from prudence.cli import main
-from prudence.menubar.summary import today_summary
+from prudence.menubar.summary import today_summary, week_summary
 from prudence.store import db
 
 TODAY = date(2026, 9, 19)
@@ -111,6 +112,98 @@ def test_a_day_with_nothing_is_all_zeroes(lab: Workspace) -> None:
     assert empty.edits == 0
     assert empty.commits == 0
     assert empty.last_ingest is not None, "an ingest happened, even if nothing happened today"
+
+
+def test_week_summary_before_any_token_or_observation_is_empty(lab: Workspace) -> None:
+    _write_and_commit(lab, TODAY_SESSION, TODAY, "src/today.py", "today = 1\n")
+    _ingest(lab)
+
+    connection = db.connect()
+    try:
+        week = week_summary(connection, TODAY)
+    finally:
+        connection.close()
+
+    assert week.top_purposes == (), "the recorded session carried no usage fields"
+    assert week.latest_observation is None, "five sessions on a side are needed for one"
+
+
+def test_week_summary_reports_the_top_two_purposes_and_the_latest_observation(
+    lab: Workspace,
+) -> None:
+    _write_and_commit(lab, TODAY_SESSION, TODAY, "src/today.py", "today = 1\n")
+    _ingest(lab)
+
+    connection = db.connect()
+    try:
+        repo_key = lab.repo_key()
+        _insert_usage_session(
+            connection, "synthetic-week-dev", repo_key, _at(TODAY, 8), "development", 300
+        )
+        _insert_usage_session(
+            connection, "synthetic-week-research", repo_key, _at(TODAY, 8), "research", 100
+        )
+        _insert_usage_session(
+            connection, "synthetic-week-conversation", repo_key, _at(TODAY, 8), "conversation", 10
+        )
+        connection.execute(
+            "INSERT INTO observation VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                repo_key,
+                "formatter_runs",
+                "formatter_runs > 0",
+                "rework",
+                6,
+                6,
+                0.05,
+                0.20,
+                "lower",
+                0.9,
+                10,
+                2,
+                1,
+            ),
+        )
+        week = week_summary(connection, TODAY)
+    finally:
+        connection.close()
+
+    assert [label for label, _share in week.top_purposes] == ["development", "research"]
+    shares = dict(week.top_purposes)
+    assert 0.7 < shares["development"] < 0.8, "300 of 410 tokens"
+    assert 0.2 < shares["research"] < 0.3, "100 of 410 tokens"
+
+    assert week.latest_observation is not None
+    assert "%" in week.latest_observation
+    assert "formatter_runs" not in week.latest_observation, "the wording, not the fact's own name"
+
+
+def _insert_usage_session(
+    connection: sqlite3.Connection,
+    session_id: str,
+    repo_key: str,
+    first_at: str,
+    purpose: str,
+    input_tokens: int,
+) -> None:
+    """A synthetic session with one usage row and one purpose label, nothing else."""
+    connection.execute(
+        "INSERT INTO session (session_id, repo_key, source, entrypoint, cwd, first_at,"
+        " last_at, record_count, capture_level, parser_version, notes)"
+        " VALUES (?, ?, 'claude_code', 'cli', NULL, ?, ?, 1, 'full', 2, NULL)",
+        (session_id, repo_key, first_at, first_at),
+    )
+    connection.execute(
+        "INSERT INTO usage (record_id, session_id, turn_id, request_id, model, input_tokens,"
+        " output_tokens, cache_read_tokens, cache_creation_tokens, parser_version)"
+        " VALUES (?, ?, NULL, ?, 'claude-x', ?, 0, 0, 0, 2)",
+        (f"{session_id}-u1", session_id, f"{session_id}-req1", input_tokens),
+    )
+    connection.execute(
+        "INSERT INTO session_label (session_id, name, label, rule_version)"
+        " VALUES (?, 'purpose', ?, 1)",
+        (session_id, purpose),
+    )
 
 
 def test_before_the_first_ingest_everything_is_zero_and_last_ingest_is_none(lab: Workspace) -> None:

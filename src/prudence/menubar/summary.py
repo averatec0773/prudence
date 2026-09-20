@@ -13,6 +13,9 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
+from prudence.store import observations as observations_module
+from prudence.store import views
+
 
 @dataclass(frozen=True)
 class Summary:
@@ -20,6 +23,14 @@ class Summary:
     edits: int
     commits: int
     last_ingest: str | None
+
+
+@dataclass(frozen=True)
+class WeekSummary:
+    """This ISO week's tokens by purpose, and the store's most current observation."""
+
+    top_purposes: tuple[tuple[str, float], ...]
+    latest_observation: str | None
 
 
 def today_summary(connection: sqlite3.Connection, day: date) -> Summary:
@@ -49,6 +60,55 @@ def today_summary(connection: sqlite3.Connection, day: date) -> Summary:
         ),
         last_ingest=_last_ingest(connection),
     )
+
+
+def week_summary(connection: sqlite3.Connection, today: date) -> WeekSummary:
+    """This ISO week's tokens by purpose (the top two, each with its share of the
+    week's total) and the latest observation's own sentence, or None when the store
+    holds none yet.
+    """
+    start, end = _week_bounds(today)
+    usage = views.usage_summary(connection, start, until=end)
+    return WeekSummary(
+        top_purposes=_top_purposes(usage["by_purpose"]),
+        latest_observation=_latest_observation(connection),
+    )
+
+
+def _week_bounds(today: date) -> tuple[str, str]:
+    """The current ISO week's local Monday and the following Monday, as UTC ISO strings."""
+    monday = today - timedelta(days=today.isoweekday() - 1)
+    sunday = monday + timedelta(days=6)
+    return _day_bounds(monday)[0], _day_bounds(sunday)[1]
+
+
+def _top_purposes(by_purpose: dict[str, dict]) -> tuple[tuple[str, float], ...]:
+    """The two purposes with the most tokens, each with its share of the week's total."""
+    totals = {
+        label: sum(cell[column] for column in views.TOKEN_COLUMNS)
+        for label, cell in by_purpose.items()
+    }
+    grand = sum(totals.values())
+    if not grand:
+        return ()
+    ranked = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    return tuple((label, value / grand) for label, value in ranked[:2])
+
+
+def _latest_observation(connection: sqlite3.Connection) -> str | None:
+    """One observation's own sentence, or None when the store holds none yet.
+
+    Observation rows carry no timestamp of their own (the whole set is recomputed at
+    every `prudence rebuild`, never appended to), so "latest" here is the first row in
+    `views.observations`'s own fixed order, which puts a project's own rows ahead of
+    the pooled ones that speak for every project at once.
+    """
+    rows = views.observations(connection)
+    if not rows:
+        return None
+    row = rows[0]
+    names = views.repository_names(connection)
+    return observations_module.sentence(row, names.get(row["repo_key"]))
 
 
 def _day_bounds(day: date) -> tuple[str, str]:

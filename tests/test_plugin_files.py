@@ -63,7 +63,7 @@ def test_the_two_hook_scripts_are_byte_identical() -> None:
 
 
 def test_skills_have_frontmatter_with_a_description() -> None:
-    for name in ("sessions", "recall"):
+    for name in ("sessions", "recall", "outcomes", "usage"):
         text = (PLUGIN / "skills" / name / "SKILL.md").read_text()
         match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
         assert match, f"{name}/SKILL.md has no --- frontmatter block"

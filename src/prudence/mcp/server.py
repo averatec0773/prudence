@@ -1,4 +1,4 @@
-"""The MCP server: three read-only tools over the store, for Claude Code and other agents.
+"""The MCP server: six read-only tools over the store, for Claude Code and other agents.
 
 Same promise as every other surface, stated once here because an agent reading this
 code is exactly the audience: no message text ever leaves the store, at any capture
@@ -136,6 +136,113 @@ def status() -> dict[str, Any]:
     finally:
         if connection is not None:
             connection.close()
+
+
+@mcp.tool()
+def session_outcomes(session_id: str) -> dict[str, Any]:
+    """One session's outcomes: survival, rework, coverage, purpose and behaviour facts.
+
+    `session_id` may be a full id or an unambiguous prefix. Returns `outcomes` (survival
+    share at 7, 30 and 90 days and at head, each next to the count of lines that mark
+    was measured over; `reworked_share`; None when nothing about this session's counted
+    lines was measured yet), `outcomes_suppressed` and `outcomes_suppressed_reason`
+    (true, with why, when this repository's other authors dominate and outcome facts
+    are withheld rather than shown wrong), `commits_fact`, `commits_inferred`,
+    `commits_uncertain` and `coverage` (the method mix behind the counted commits),
+    `purpose` (a label from tool mix, never from the conversation) and
+    `behaviour_facts` (each with its `value`, `trust` and `fact_version`). Returns
+    `{"message": "..."}` when nothing has been ingested yet or when the id does not
+    match exactly one session. No message text at any capture level, because none is
+    stored.
+    """
+    connection = _connect()
+    if connection is None:
+        return {"message": NOT_INGESTED}
+    try:
+        resolved = _resolve_session(connection, session_id)
+        if resolved is None:
+            return {"message": f"No single recorded session matches {session_id!r}."}
+        summary = views.session_outcomes(connection, resolved)
+        assert summary is not None  # resolved id came straight from the session table
+        return summary
+    finally:
+        connection.close()
+
+
+@mcp.tool()
+def usage_summary(since: str = "30d", repo: str | None = None) -> dict[str, Any]:
+    """Tokens by kind and active hours, summed by purpose and by project.
+
+    The same sessions and the same sums `prudence usage` prints: input, output, cache
+    read and cache creation tokens, and active hours (the sum of a session's own
+    sittings, not the wall clock between its first and last record), grouped by purpose
+    (`development`, `debugging`, `research`, `conversation`, `mixed`, `unknown`) and by
+    project. `since` accepts an ISO date (`2026-09-01`) or `7d`/`30d`/`90d` shorthand
+    and defaults to 30 days. `repo` filters by repository name or key. A purpose or
+    project cell's token counts are 0 with `measured` at 0 when no session in it
+    recorded any usage, which is not the same as recording zero tokens. Returns
+    `{"message": "..."}` when nothing has been ingested yet. No message text.
+    """
+    connection = _connect()
+    if connection is None:
+        return {"message": NOT_INGESTED}
+    try:
+        repo_key = None
+        if repo:
+            repo_key = views.repo_key_for(connection, repo)
+            if repo_key is None:
+                return {
+                    "sessions": 0,
+                    "by_purpose": {},
+                    "by_project": {},
+                    "purpose_rule_version": None,
+                }
+        return views.usage_summary(connection, views.resolve_date(since), repo_key=repo_key)
+    finally:
+        connection.close()
+
+
+@mcp.tool()
+def observations(repo: str | None = None) -> dict[str, Any]:
+    """The observations: how the user's own outcomes differ with and without a habit.
+
+    Each row carries `sentence` (the finding in plain words, exactly as `prudence
+    observations` prints it) and `caveat` (its coverage and method mix) alongside the
+    numbers behind them: `repo_key`, `fact`, `threshold_text`, `outcome`, `with_n`,
+    `without_n`, `with_value`, `without_value`, `direction`, `coverage`,
+    `fact_commits`, `inferred_commits` and `fact_version`. `repo` restricts the answer
+    to one project's own rows; left out, every row comes back, a project's own rows
+    before the pooled ones (`repo_key` `"*"`, "across your projects", computed only for
+    a behaviour no single project had enough sessions to answer). Returns
+    `{"observations": []}` when the store holds none yet, or `{"message": "..."}` when
+    nothing has been ingested at all. No message text: a sentence is built entirely
+    from counts, never from reading a conversation.
+    """
+    connection = _connect()
+    if connection is None:
+        return {"message": NOT_INGESTED}
+    try:
+        from prudence.store import observations as observations_module
+
+        repo_key = None
+        if repo:
+            repo_key = views.repo_key_for(connection, repo)
+            if repo_key is None:
+                return {"observations": []}
+        names = views.repository_names(connection)
+        rows = views.observations(connection, repo_key)
+        return {
+            "observations": [
+                {
+                    **row,
+                    "sentence": observations_module.sentence(row, names.get(row["repo_key"])),
+                    "caveat": observations_module.caveat(row),
+                }
+                for row in rows
+            ]
+        }
+    finally:
+        connection.close()
 
 
 def run() -> None:

@@ -2,9 +2,12 @@
 
 Brings your own Prudence-recorded session history into a Claude Code session: a
 `/prudence:sessions` skill that shows this week's sessions without leaving the
-terminal, a `/prudence:recall` skill that asks the agent to search your history for
-prior work, and the `prudence` MCP server (`search_sessions`, `show_session`, `status`)
-that both skills, or any other prompt, can call directly.
+terminal, a `/prudence:outcomes` skill for what became of the code, a `/prudence:usage`
+skill for where the tokens and time went, a `/prudence:recall` skill that asks the
+agent to search your history for prior work, and the `prudence` MCP server
+(`search_sessions`, `show_session`, `session_outcomes`, `usage_summary`,
+`observations`, `status`) that any of the skills, or any other prompt, can call
+directly.
 
 ## Requirements
 
@@ -38,6 +41,8 @@ real.
   (`tests/test_plugin_files.py`) checks this on every change; if you edit one, copy it
   to the other.
 - `skills/sessions/SKILL.md`: `/prudence:sessions`.
+- `skills/outcomes/SKILL.md`: `/prudence:outcomes`.
+- `skills/usage/SKILL.md`: `/prudence:usage`.
 - `skills/recall/SKILL.md`: `/prudence:recall`.
 
 ## Privacy

@@ -210,6 +210,156 @@ def test_status_summary_before_and_after_ingest(lab: Workspace) -> None:
     assert summary["unknown_record_types"] == []
 
 
+def test_session_outcomes_has_the_shape_the_mcp_tool_promises(lab: Workspace) -> None:
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        summary = views.session_outcomes(connection, SAMPLE_SESSION)
+    finally:
+        connection.close()
+
+    assert summary is not None
+    assert summary["session_id"] == SAMPLE_SESSION
+    assert summary["repository"] == "alpha"
+    assert summary["commits_fact"] == 1
+    assert summary["commits_inferred"] == 0
+    assert summary["commits_uncertain"] == 0
+    assert summary["outcomes_suppressed"] is False
+    assert summary["outcomes_suppressed_reason"] is None
+    assert summary["purpose"] == "development", "it ran git commit itself"
+    assert summary["purpose_rule_version"] is not None
+    assert isinstance(summary["behaviour_facts"], dict)
+    assert summary["behaviour_facts"], "the sample session has at least one behaviour fact"
+    for fact in summary["behaviour_facts"].values():
+        assert set(fact) == {"value", "trust", "fact_version"}
+
+    blob = json.dumps(summary)
+    assert "Write the app" not in blob, "no message text anywhere in the JSON"
+    assert "commit it" not in blob
+
+
+def test_session_outcomes_is_none_for_an_unknown_id(lab: Workspace) -> None:
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        assert views.session_outcomes(connection, "no-such-session") is None
+    finally:
+        connection.close()
+
+
+def test_usage_summary_groups_tokens_by_purpose_and_by_project(lab: Workspace) -> None:
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        repo_key = lab.repo_key()
+        _insert_usage_session(
+            connection,
+            "synthetic-usage-development",
+            repo_key,
+            "2026-09-10T09:00:00",
+            purpose="development",
+            tokens={
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_tokens": 10,
+                "cache_creation_tokens": 5,
+            },
+        )
+        _insert_usage_session(
+            connection,
+            "synthetic-usage-research",
+            repo_key,
+            "2026-09-11T09:00:00",
+            purpose="research",
+            tokens={
+                "input_tokens": 20,
+                "output_tokens": 10,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+            },
+        )
+
+        summary = views.usage_summary(connection, "2026-09-01T00:00:00")
+        narrowed = views.usage_summary(
+            connection, "2026-09-01T00:00:00", until="2026-09-10T12:00:00"
+        )
+        filtered = views.usage_summary(connection, "2026-09-01T00:00:00", repo_key=repo_key)
+        empty = views.usage_summary(connection, "2099-01-01T00:00:00")
+    finally:
+        connection.close()
+
+    assert summary["sessions"] >= 3
+    assert summary["by_purpose"]["development"]["input_tokens"] == 100
+    assert summary["by_purpose"]["development"]["measured"] >= 1
+    assert summary["by_purpose"]["research"]["input_tokens"] == 20
+    assert summary["by_project"]["alpha"]["development"]["output_tokens"] == 50
+    assert summary["by_project"]["alpha"]["research"]["cache_read_tokens"] == 0
+    assert summary["purpose_rule_version"] is not None
+
+    assert narrowed["sessions"] == 1, "only the development session falls before the until bound"
+    assert "research" not in narrowed["by_purpose"]
+
+    assert filtered["by_purpose"]["development"]["input_tokens"] == 100
+    assert set(filtered["by_project"]) == {"alpha"}
+
+    assert empty == {
+        "sessions": 0,
+        "by_purpose": {},
+        "by_project": {},
+        "purpose_rule_version": summary["purpose_rule_version"],
+    }
+
+
+def test_usage_summary_before_ingest_is_empty_not_an_error() -> None:
+    connection = db.connect()
+    try:
+        summary = views.usage_summary(connection, "2026-01-01T00:00:00")
+    finally:
+        connection.close()
+    assert summary == {
+        "sessions": 0,
+        "by_purpose": {},
+        "by_project": {},
+        "purpose_rule_version": None,
+    }
+
+
+def _insert_usage_session(
+    connection: sqlite3.Connection,
+    session_id: str,
+    repo_key: str,
+    first_at: str,
+    purpose: str,
+    tokens: dict[str, int],
+) -> None:
+    """A synthetic session with one usage row and one purpose label, nothing else."""
+    connection.execute(
+        "INSERT INTO session (session_id, repo_key, source, entrypoint, cwd, first_at,"
+        " last_at, record_count, capture_level, parser_version, notes)"
+        " VALUES (?, ?, 'claude_code', 'cli', NULL, ?, ?, 1, 'full', 2, NULL)",
+        (session_id, repo_key, first_at, first_at),
+    )
+    connection.execute(
+        "INSERT INTO usage (record_id, session_id, turn_id, request_id, model, input_tokens,"
+        " output_tokens, cache_read_tokens, cache_creation_tokens, parser_version)"
+        " VALUES (?, ?, NULL, ?, 'claude-x', ?, ?, ?, ?, 2)",
+        (
+            f"{session_id}-u1",
+            session_id,
+            f"{session_id}-req1",
+            tokens["input_tokens"],
+            tokens["output_tokens"],
+            tokens["cache_read_tokens"],
+            tokens["cache_creation_tokens"],
+        ),
+    )
+    connection.execute(
+        "INSERT INTO session_label (session_id, name, label, rule_version)"
+        " VALUES (?, 'purpose', ?, 1)",
+        (session_id, purpose),
+    )
+
+
 def _insert_bare_sessions(connection: sqlite3.Connection, count: int) -> None:
     """Synthetic `session` rows, enough to exercise the limit cap without a full ingest."""
     for i in range(count):

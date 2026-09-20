@@ -18,7 +18,10 @@ task, using the `prudence` MCP server's tools rather than the CLI.
    returns nothing.
 3. For the most relevant matches (by recency and by how well the edited files or command
    classes match the task), call `show_session` to get each one's full detail: files
-   edited, token usage, commits attributed, and coverage.
+   edited, token usage, commits attributed, and coverage. Call `session_outcomes` as
+   well when the user's question is about what became of that work: it returns
+   survival at 7, 30 and 90 days and at head, the share reworked, and the session's
+   behaviour facts with their trust level, each with its own coverage and method mix.
 4. Present findings with their dates and repositories, for example: "You worked on
    `src/store/attribution.py` in the `prudence` repo on 2026-09-15 (session
    `9bc04769`), with a commit attributed at 92% coverage." Cite the session id so the

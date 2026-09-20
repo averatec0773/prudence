@@ -168,6 +168,91 @@ def usage_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, int]:
     }
 
 
+def usage_by_kind_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, dict[str, int]]:
+    """The four token counts per session, absent for a session whose records carried none."""
+    columns = ", ".join(f"SUM(COALESCE({column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
+    return {
+        row["session_id"]: {column: row[column] or 0 for column in TOKEN_COLUMNS}
+        for row in _batched(
+            connection, f"SELECT session_id, {columns} FROM usage", ids, " GROUP BY session_id"
+        )
+    }
+
+
+def usage_summary(
+    connection: sqlite3.Connection,
+    since: str,
+    until: str | None = None,
+    repo_key: str | None = None,
+) -> dict[str, Any]:
+    """Tokens by kind and active hours, summed by purpose and by project.
+
+    The same sessions and the same sums `prudence usage` (`cli/usage.py`) prints, as
+    raw numbers rather than formatted strings, so a surface (the MCP server, the menu
+    bar) can present them however it needs to. `until` narrows the window to a fixed
+    span, such as one ISO week, in addition to `since`. Empty before `prudence ingest`
+    has ever run.
+    """
+    query = "SELECT session_id, repo_key, first_at FROM session WHERE first_at >= ?"
+    parameters: list[str] = [since]
+    if until is not None:
+        query += " AND first_at < ?"
+        parameters.append(until)
+    if repo_key is not None:
+        query += " AND repo_key = ?"
+        parameters.append(repo_key)
+    empty = {"sessions": 0, "by_purpose": {}, "by_project": {}, "purpose_rule_version": None}
+    try:
+        rows = connection.execute(query, parameters).fetchall()
+    except sqlite3.OperationalError:
+        return empty
+    if not rows:
+        return {**empty, "purpose_rule_version": purpose_rule_version(connection)}
+
+    from prudence.facts import purpose as purpose_module
+
+    ids = [row["session_id"] for row in rows]
+    purposes = purpose_map(connection, ids)
+    tokens = usage_by_kind_map(connection, ids)
+    active = active_seconds_map(connection, ids)
+    names = repository_names(connection)
+
+    by_purpose: dict[str, dict[str, Any]] = {}
+    by_project: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        session_id = row["session_id"]
+        label = purposes.get(session_id, purpose_module.UNKNOWN)
+        project = names.get(row["repo_key"], row["repo_key"] or "unassigned")
+        counted = tokens.get(session_id)
+        hours = active.get(session_id, 0.0) / 3600
+        _accumulate_usage(by_purpose.setdefault(label, _empty_usage_cell()), counted, hours)
+        _accumulate_usage(
+            by_project.setdefault(project, {}).setdefault(label, _empty_usage_cell()),
+            counted,
+            hours,
+        )
+
+    return {
+        "sessions": len(rows),
+        "by_purpose": by_purpose,
+        "by_project": by_project,
+        "purpose_rule_version": purpose_rule_version(connection),
+    }
+
+
+def _empty_usage_cell() -> dict[str, Any]:
+    return {"sessions": 0, "hours": 0.0, "measured": 0, **dict.fromkeys(TOKEN_COLUMNS, 0)}
+
+
+def _accumulate_usage(cell: dict[str, Any], counted: dict[str, int] | None, hours: float) -> None:
+    cell["sessions"] += 1
+    cell["hours"] += hours
+    if counted:
+        cell["measured"] += 1
+        for column in TOKEN_COLUMNS:
+            cell[column] += counted[column]
+
+
 def usage_totals(connection: sqlite3.Connection) -> dict[str, Any]:
     """Every token the store recorded, in total and per model. Empty before parser 3."""
     try:
@@ -499,6 +584,35 @@ def session_facts(connection: sqlite3.Connection, session_id: str) -> dict[str, 
             "fact_version": row["fact_version"],
         }
         for row in rows
+    }
+
+
+def session_outcomes(connection: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
+    """One session's outcomes, the MCP tool of the same name and nothing else needs.
+
+    Survival at 7, 30 and 90 days and at head with the denominator each share is over
+    (`outcomes`, None when the repository's outcomes are suppressed or nothing was
+    measured), the share reworked, the coverage and method mix behind the counted
+    commits, the session's purpose and its behaviour facts with their trust level. None
+    when the id does not match a session. No message text, because none is stored.
+    """
+    row = session_row(connection, session_id)
+    if row is None:
+        return None
+    counted = credited(connection, session_id)
+    return {
+        "session_id": session_id,
+        "repository": repository_names(connection).get(row["repo_key"], row["repo_key"]),
+        "outcomes": outcome_shares(outcomes_of(connection, session_id)),
+        "outcomes_suppressed": row["repo_key"] in suppressed_repositories(connection),
+        "outcomes_suppressed_reason": suppression_notes(connection).get(row["repo_key"]),
+        "commits_fact": counted["fact"],
+        "commits_inferred": counted["inferred"],
+        "commits_uncertain": counted["uncertain"],
+        "coverage": counted["coverage"],
+        "purpose": purpose_of(connection, session_id),
+        "purpose_rule_version": purpose_rule_version(connection),
+        "behaviour_facts": session_facts(connection, session_id),
     }
 
 
