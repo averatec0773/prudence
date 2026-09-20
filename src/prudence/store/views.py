@@ -600,6 +600,57 @@ def hook_timeline(connection: sqlite3.Connection, session_id: str) -> list[sqlit
         return []
 
 
+def turn_ordinals(connection: sqlite3.Connection, session_id: str) -> dict[str, int]:
+    """1-based turn number, chronological, for every `prompt_id` this session's `turn_tree`
+    covers. `turn` carries `started_at` under the same key (`turn_id` is `promptId` when
+    Claude Code writes one), which is what orders turns the hooks never timestamped
+    directly (`turn_tree` stores no timestamp of its own)."""
+    try:
+        rows = connection.execute(
+            "SELECT tt.prompt_id AS prompt_id FROM turn_tree tt"
+            " LEFT JOIN turn t ON t.turn_id = tt.prompt_id"
+            " WHERE tt.session_id = ? ORDER BY COALESCE(t.started_at, ''), tt.prompt_id",
+            (session_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {row["prompt_id"]: index + 1 for index, row in enumerate(rows)}
+
+
+def hand_edits(connection: sqlite3.Connection, session_id: str) -> list[dict[str, Any]] | None:
+    """Gaps where the tree changed by hand between two turns, or None: no hook data at all.
+
+    None means this session predates `prudence hooks install`, or the tables have not
+    been built (`prudence rebuild` was never run); an empty list means hook data exists
+    and no gap was found, which is a real answer, not an absence.
+    """
+    try:
+        has_hooks = connection.execute(
+            "SELECT EXISTS(SELECT 1 FROM hook_event WHERE session_id = ?)", (session_id,)
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        return None
+    if not has_hooks:
+        return None
+    ordinals = turn_ordinals(connection, session_id)
+    try:
+        rows = connection.execute(
+            "SELECT prompt_id, prev_prompt_id, files_changed_delta FROM hand_edit"
+            " WHERE session_id = ? ORDER BY rowid",
+            (session_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    return [
+        {
+            "before_turn": ordinals.get(row["prev_prompt_id"]),
+            "after_turn": ordinals.get(row["prompt_id"]),
+            "files_changed_delta": row["files_changed_delta"],
+        }
+        for row in rows
+    ]
+
+
 def archived_files(connection: sqlite3.Connection, session_id: str) -> list[sqlite3.Row]:
     return connection.execute(
         "SELECT path, source, size, generation FROM archive_file WHERE session_id = ?"
@@ -698,6 +749,7 @@ def session_summary(
         "outcomes_suppressed_reason": suppression_notes(connection).get(row["repo_key"]),
         "behaviour_facts": session_facts(connection, session_id),
         "hooks": _hook_turns(hook_timeline(connection, session_id)),
+        "hand_edits": hand_edits(connection, session_id),
         "archive": {
             "files": len(archive_rows),
             "bytes": archive_total,

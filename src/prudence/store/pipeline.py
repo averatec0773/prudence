@@ -1,19 +1,21 @@
 """The order the store is built in, in one place, so `ingest` and `rebuild` agree.
 
-Eight steps, and the order between them is the only thing this module knows. The
+Nine steps, and the order between them is the only thing this module knows. The
 repositories come first because every later step needs to know which directories
 belong to what, including directories that no longer exist. The archive comes next
 because raw bytes are the truth, and Prudence's own hook spool is archived in the same
 pass for the same reason. The parser reads the archive alone, and so does the spool
-fold. Commits are harvested from the repositories, not from the agent. Attribution
-joins the last two. Outcomes come next, because they ask what became of the lines of
-the commits attribution has just decided to count. Behaviour facts (`facts/registry.py`)
-come next to last, because several of them read across `command`, `attribution` and
-`session` together and none of the earlier steps need anything a fact produces.
-Observations are last of all, because they are the join of the two steps before them:
-a behaviour fact on one side and what became of the lines on the other.
+fold. Turn trees and hand edits come right after the spool fold, because they read
+`hook_event` alone and nothing later needs them. Commits are harvested from the
+repositories, not from the agent. Attribution joins the last two. Outcomes come next,
+because they ask what became of the lines of the commits attribution has just decided
+to count. Behaviour facts (`facts/registry.py`) come next to last, because several of
+them read across `command`, `attribution`, `hook_event`/`hand_edit` and `session`
+together and none of the earlier steps need anything a fact produces. Observations are
+last of all, because they are the join of the two steps before them: a behaviour fact on
+one side and what became of the lines on the other.
 
-`ingest` runs all eight; `rebuild` runs all but the archive, which is what makes a
+`ingest` runs all nine; `rebuild` runs all but the archive, which is what makes a
 parser change a rebuild rather than a migration.
 """
 
@@ -29,6 +31,7 @@ from prudence.store import (
     attribution,
     commits,
     derived,
+    hand_edits,
     lines,
     observations,
     outcomes,
@@ -42,6 +45,7 @@ class Result:
     archived: archive.IngestStats | None = None
     parsed: derived.BuildStats = field(default_factory=derived.BuildStats)
     hooks: spool.SpoolStats = field(default_factory=spool.SpoolStats)
+    turn_trees: hand_edits.BuildStats = field(default_factory=hand_edits.BuildStats)
     harvested: commits.HarvestStats = field(default_factory=commits.HarvestStats)
     attributed: attribution.AttributionStats = field(default_factory=attribution.AttributionStats)
     outcomes: outcomes.OutcomeStats = field(default_factory=outcomes.OutcomeStats)
@@ -67,6 +71,7 @@ def run(connection: sqlite3.Connection, config: config_module.Config, with_archi
 
     result.parsed = derived.build(connection, config.levels, resolver)
     result.hooks = spool.build(connection, resolver)
+    result.turn_trees = hand_edits.build(connection)
     key = lines.load_key()
     result.harvested = commits.harvest(connection, repositories, key, config.levels)
     result.attributed = attribution.build(connection, repositories)

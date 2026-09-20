@@ -21,7 +21,19 @@ import click
 from prudence.cli.render import size
 from prudence.facts import purpose
 from prudence.paths import database_file
-from prudence.store import attribution, commits, db, derived, edits, outcomes, spool, views
+from prudence.store import (
+    attribution,
+    commits,
+    db,
+    derived,
+    edits,
+    outcomes,
+    spool,
+    views,
+)
+from prudence.store import (
+    hand_edits as hand_edits_module,
+)
 
 WITHHELD = "file paths withheld at metadata-only"
 
@@ -78,6 +90,7 @@ def render(connection: sqlite3.Connection, session_id: str, list_files: bool = F
     lines += _purpose(connection, session_id)
     lines += _behaviour_facts(connection, session_id)
     lines += _hooks(connection, session_id)
+    lines += _hand_edits(connection, session_id)
     lines += _archive(connection, session_id, list_files)
     lines.append("")
     lines.append("No message text is recorded, at any capture level.")
@@ -351,6 +364,37 @@ def _hooks(connection: sqlite3.Connection, session_id: str) -> list[str]:
             f"  {turn_id[:26]:<26} {len(events):>6} {(first['ts'] or '')[:21]:<21} "
             f"{(first['head'] or '-')[:10]:<12} {(last['head'] or '-')[:10]:<12} "
             f"{last['dirty_count'] if last['dirty_count'] is not None else '?':>6}"
+        )
+    return lines
+
+
+def _hand_edits(connection: sqlite3.Connection, session_id: str) -> list[str]:
+    """Gaps where the tree changed by hand between two turns the hooks saw.
+
+    Always printed, unlike the hook timeline: the plan asks for "not captured" to be
+    said out loud for a session recorded before the hooks were installed, rather than
+    left as a silently missing group.
+    """
+    lines = _heading(
+        "hand edits",
+        "hand_edit, turn_tree, hook_event",
+        f"parser version {hand_edits_module.PARSER_VERSION}",
+        "medium: no Bash call between two turns is treated as a hand edit",
+    )
+    gaps = views.hand_edits(connection, session_id)
+    if gaps is None:
+        lines.append("  not captured (no hook data)")
+        return lines
+    if not gaps:
+        lines.append("  none: the tree matched at every turn boundary the hooks saw")
+        return lines
+    for gap in gaps:
+        before = gap["before_turn"] if gap["before_turn"] is not None else "?"
+        after = gap["after_turn"] if gap["after_turn"] is not None else "?"
+        delta = gap["files_changed_delta"]
+        delta_text = "?" if delta is None else str(delta)
+        lines.append(
+            f"  between turn {before} and turn {after}: ~{delta_text} files changed by hand"
         )
     return lines
 

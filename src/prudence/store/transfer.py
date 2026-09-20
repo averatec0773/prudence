@@ -38,6 +38,7 @@ from prudence.store import (
     db,
     derived,
     edits,
+    hand_edits,
     observations,
     outcomes,
     repos,
@@ -53,6 +54,8 @@ FORMAT_VERSION = 1
 # Derived and harvested tables, in an order an import can follow without care.
 DERIVED_TABLES = derived.TABLES + (
     "hook_event",
+    hand_edits.TURN_TREE_TABLE,
+    hand_edits.HAND_EDIT_TABLE,
     facts_registry.TABLE,
     facts_registry.LABEL_TABLE,
 )
@@ -102,6 +105,7 @@ def versions() -> dict[str, int]:
         "observation_fact": observations.FACT_VERSION,
         "commit_alias_fact": rewritten.FACT_VERSION,
         "hook_event_fact": spool.FACT_VERSION,
+        "turn_tree_fact": hand_edits.PARSER_VERSION,
     }
 
 
@@ -214,6 +218,8 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
         statement = derived.SCHEMA[table].format(name=table)
         connection.execute(statement.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
     connection.execute(spool.SCHEMA.format(name=spool.TABLE))
+    connection.execute(hand_edits.TURN_TREE_SCHEMA.format(name=hand_edits.TURN_TREE_TABLE))
+    connection.execute(hand_edits.HAND_EDIT_SCHEMA.format(name=hand_edits.HAND_EDIT_TABLE))
     for schema, name in (
         (facts_registry.SCHEMA, facts_registry.TABLE),
         (facts_registry.LABEL_SCHEMA, facts_registry.LABEL_TABLE),

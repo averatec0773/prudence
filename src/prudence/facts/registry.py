@@ -31,6 +31,7 @@ from prudence.facts import (
     context_resets,
     files_edited_unread,
     formatter_runs,
+    hand_edits_between_turns,
     prompts_per_active_hour,
     purpose,
     repeated_errors,
@@ -83,6 +84,7 @@ FACTS: tuple[Fact, ...] = (
     compactions.FACT,
     context_resets.FACT,
     prompts_per_active_hour.FACT,
+    hand_edits_between_turns.FACT,
 )
 
 # Classifications, in the same explicit form. One so far.
