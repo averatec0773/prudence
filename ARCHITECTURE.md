@@ -33,6 +33,8 @@ src/prudence/
                    again by timing and overlapping lines
     outcomes.py   what became of each attributed line: presence at 7, 30, 90 days and at
                    HEAD, blame as the check, and rework by the author's own later commit
+    observations.py  the join: for one behaviour and one threshold, the median outcome of
+                   the sessions above it against the sessions below, inside one project
     spool.py      what the hooks saw, folded from the archived spool into hook_event
     erase.py      taking a session or a repository back out, archive included
     transfer.py   the whole store as one .tar.gz, and back into an empty one
@@ -111,6 +113,19 @@ docs/reference/store-schema.md   every table and column, with its trust level
    `session_fact`, whose `value` is REAL and is summed and averaged. Labels are grouped
    by and printed; they are never ranked, scored or averaged, and every surface that
    prints one says that it comes from counts rather than from reading the conversation.
+13. **An observation is a join, and it is descriptive.** One row of `observation`
+   (`store/observations.py`) compares one behaviour fact, at a threshold stored on the
+   row as text, against one outcome of the user's own sessions: the sessions credited
+   with lines that could be followed are split in two and each side's median is taken.
+   It qualifies only with at least `observations.MIN_SESSIONS` sessions on each side and
+   at least `observations.MIN_GAP` between the two medians, and it carries the fact
+   version, the coverage and the method mix of the sessions behind it, like every
+   outcome row. A row belongs to the project its sessions came from (principle 2); the
+   pooled row, `repo_key = '*'`, exists only for a behaviour no single project had the
+   sessions to answer, says "across your projects" in its own words, and is never shown
+   inside a project's view. An observation states what the two sides did and stops there:
+   no advice, no ranking, no score, and no adjective (principle 3). `direction` says
+   which side is higher, not which is better.
 
 ## Adding things
 

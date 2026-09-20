@@ -15,6 +15,7 @@ from prudence.cli.ingest import ingest
 from prudence.cli.init import init
 from prudence.cli.mcp import mcp
 from prudence.cli.menubar import menubar
+from prudence.cli.observations import observations
 from prudence.cli.outcomes import outcomes
 from prudence.cli.rebuild import rebuild
 from prudence.cli.sample import sample
@@ -36,6 +37,7 @@ main.add_command(rebuild)
 main.add_command(sample)
 main.add_command(sessions)
 main.add_command(outcomes)
+main.add_command(observations)
 main.add_command(usage)
 main.add_command(facts)
 main.add_command(classify)

@@ -21,8 +21,13 @@ import sqlite3
 import click
 
 from prudence import config as config_module
+
+# The submodule by its full name, never `from prudence.cli import observations`: the
+# package binds that name to the command function, not to the module.
+from prudence.cli.observations import block as observation_block
 from prudence.paths import database_file
 from prudence.store import db, views
+from prudence.store import observations as observations_module
 from prudence.store import outcomes as outcomes_module
 
 DEFAULT_WINDOW = "90d"
@@ -110,7 +115,33 @@ def render(connection: sqlite3.Connection, window: str, repo_key: str | None) ->
         lines.append(f"  {names.get(key, key):<16} suppressed, see the note above")
     lines.append("")
     lines.extend(_footer(shown, len(rows), window))
+    lines.append("")
+    lines.append("observations")
+    lines.extend(_observations(connection, repo_key, {row["repo_key"] for row in rows}, names))
     return "\n".join(lines)
+
+
+def _observations(
+    connection: sqlite3.Connection,
+    repo_key: str | None,
+    keys: set[str],
+    names: dict[str, str],
+) -> list[str]:
+    """The join, for the repositories this table speaks about.
+
+    The observation rows are over the whole store rather than over the window, because a
+    split needs more sessions than a short window holds; the window filters which
+    projects are shown, never which sessions an observation was computed from.
+    """
+    if repo_key is not None:
+        rows = views.observations(connection, repo_key)
+    else:
+        rows = [
+            row
+            for row in views.observations(connection)
+            if row["repo_key"] in keys or row["repo_key"] == observations_module.POOLED
+        ]
+    return observation_block(rows, names)
 
 
 def _header() -> str:

@@ -38,6 +38,7 @@ from prudence.store import (
     db,
     derived,
     edits,
+    observations,
     outcomes,
     repos,
     rewritten,
@@ -62,6 +63,7 @@ HARVESTED_TABLES = (
     "attribution",
     "commit_alias",
     "line_fate",
+    "observation",
 )
 ARCHIVE_TABLES = ("archive_file", "archive_chunk")
 
@@ -97,6 +99,7 @@ def versions() -> dict[str, int]:
         "commit_fact": commits.FACT_VERSION,
         "attribution_fact": attribution.FACT_VERSION,
         "line_fate_fact": outcomes.FACT_VERSION,
+        "observation_fact": observations.FACT_VERSION,
         "commit_alias_fact": rewritten.FACT_VERSION,
         "hook_event_fact": spool.FACT_VERSION,
     }
@@ -223,6 +226,7 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
     connection.executescript(attribution.SCHEMA)
     connection.executescript(rewritten.SCHEMA)
     connection.executescript(outcomes.SCHEMA)
+    connection.executescript(observations.SCHEMA)
 
 
 def _occupied(connection: sqlite3.Connection) -> dict[str, int]:

@@ -158,4 +158,10 @@ def report(result: pipeline.Result) -> list[str]:
         f"({len(facts_registry.FACTS)} facts), {facts.labels} purpose labels "
         f"({len(facts_registry.LABELS)} label rules), {facts.elapsed:.1f} s."
     )
+    joined = result.observations
+    lines.append(
+        f"Observations: {joined.rows} in {joined.repositories} projects and {joined.pooled} "
+        f"pooled over all of them, from {joined.sessions} sessions with lines that could be "
+        f"followed, {joined.elapsed:.1f} s."
+    )
     return lines

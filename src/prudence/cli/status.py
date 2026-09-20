@@ -21,6 +21,7 @@ from prudence.store import (
     commits,
     db,
     derived,
+    observations,
     outcomes,
     rewritten,
     spool,
@@ -111,6 +112,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     lines.extend(_commit_lines(connection))
     lines.extend(_outcome_lines(connection))
     lines.extend(_purpose_lines(connection))
+    lines.extend(_observation_lines(connection))
     lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
         "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
@@ -215,6 +217,16 @@ def _purpose_lines(connection: sqlite3.Connection) -> list[str]:
     return [
         f"purpose: {detail} (rule version {version}; a label from the tool mix, not from "
         "reading the conversation)"
+    ]
+
+
+def _observation_lines(connection: sqlite3.Connection) -> list[str]:
+    """How many joins of a behaviour against an outcome cleared both floors."""
+    counted = observations.counts(connection)
+    return [
+        f"observations: {counted['projects']} in a project, {counted['pooled']} pooled across "
+        f"your projects (at least {observations.MIN_SESSIONS} sessions each side, at least "
+        f"{observations.MIN_GAP * 100:.0f} points apart; `prudence observations`)"
     ]
 
 

@@ -1,6 +1,6 @@
 """The order the store is built in, in one place, so `ingest` and `rebuild` agree.
 
-Seven steps, and the order between them is the only thing this module knows. The
+Eight steps, and the order between them is the only thing this module knows. The
 repositories come first because every later step needs to know which directories
 belong to what, including directories that no longer exist. The archive comes next
 because raw bytes are the truth, and Prudence's own hook spool is archived in the same
@@ -8,10 +8,12 @@ pass for the same reason. The parser reads the archive alone, and so does the sp
 fold. Commits are harvested from the repositories, not from the agent. Attribution
 joins the last two. Outcomes come next, because they ask what became of the lines of
 the commits attribution has just decided to count. Behaviour facts (`facts/registry.py`)
-come last of all, because several of them read across `command`, `attribution` and
+come next to last, because several of them read across `command`, `attribution` and
 `session` together and none of the earlier steps need anything a fact produces.
+Observations are last of all, because they are the join of the two steps before them:
+a behaviour fact on one side and what became of the lines on the other.
 
-`ingest` runs all seven; `rebuild` runs all but the archive, which is what makes a
+`ingest` runs all eight; `rebuild` runs all but the archive, which is what makes a
 parser change a rebuild rather than a migration.
 """
 
@@ -28,6 +30,7 @@ from prudence.store import (
     commits,
     derived,
     lines,
+    observations,
     outcomes,
     repos,
     spool,
@@ -43,6 +46,9 @@ class Result:
     attributed: attribution.AttributionStats = field(default_factory=attribution.AttributionStats)
     outcomes: outcomes.OutcomeStats = field(default_factory=outcomes.OutcomeStats)
     facts: facts_registry.BuildStats = field(default_factory=facts_registry.BuildStats)
+    observations: observations.ObservationStats = field(
+        default_factory=observations.ObservationStats
+    )
     repositories: int = 0
 
 
@@ -66,4 +72,5 @@ def run(connection: sqlite3.Connection, config: config_module.Config, with_archi
     result.attributed = attribution.build(connection, repositories)
     result.outcomes = outcomes.build(connection, repositories, key)
     result.facts = facts_registry.build(connection)
+    result.observations = observations.build(connection)
     return result
