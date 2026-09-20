@@ -4,8 +4,9 @@ Prudence is a local-first, open-source growth coach for developers who build wit
 
 ## Status
 
-0.1.0, a recorder: it captures your sessions and links them to your commits.
-Outcomes and reviews come next.
+0.2.0: it captures your sessions, links them to your commits, and follows what became
+of the code and where the tokens went. Outcomes and usage by purpose; reviews come
+next.
 
 ## Principles we build on
 
@@ -44,9 +45,12 @@ prudence init --scan
 prudence init --enable <repo> --level full
 prudence ingest
 prudence sessions --last 30d
+prudence outcomes --project <repo>
+prudence usage --last 30d
+prudence observations --project <repo>
 prudence show --session <id>
+prudence facts --last 30d
 prudence hooks install
-prudence forget --session <id>
 prudence export
 ```
 
@@ -54,16 +58,32 @@ prudence export
 anything. `init --enable` turns recording on for one repository at a time, at
 `full` capture or `metadata-only` (use `--level metadata-only` for a repository whose
 content you would rather not store). `ingest` reads what the agent recorded since the
-last run. `hooks install` adds the git-state hooks Prudence uses to catch what happens
-around each turn; it edits Claude Code's settings file, shows the diff first, and
-`prudence hooks uninstall` reverses it.
+last run. `sessions` lists what happened; `outcomes` follows the commits each session
+produced forward, to what survived; `usage` follows the tokens and active time back, to
+what they were for; `observations` joins the two, inside one project, when your own
+data supports it. `show` prints one session's full record; `facts` prints the behaviour
+counts every session was scored on. `hooks install` adds the git-state hooks Prudence
+uses to catch what happens around each turn; it edits Claude Code's settings file, shows
+the diff first, and `prudence hooks uninstall` reverses it.
+
+## What it can tell you today
+
+- `prudence outcomes --project <repo>`: "62% of the lines from your last 90 days are
+  still in the tree at head, with 78% coverage (41 fact-attributed commits, 12
+  inferred)."
+- `prudence usage --last 30d`: "development 55%, research 25%, conversation 15%,
+  debugging 5% of this week's tokens."
+- An observation at the end of `outcomes`: "In one project, your sessions that ran a
+  formatter still had more lines at head than the ones that did not (88% vs 74%, 14
+  sessions each side)."
 
 ## Claude Code plugin
 
 Prudence also ships a Claude Code plugin that brings your recorded history into a
-session: a `/prudence:sessions` skill, a `/prudence:recall` skill, and an MCP server
-an agent can query directly. See [plugin/README.md](plugin/README.md). To try it from
-this repository without installing it:
+session: `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage` and
+`/prudence:recall` skills, and an MCP server an agent can query directly. See
+[plugin/README.md](plugin/README.md). To try it from this repository without
+installing it:
 
 ```
 claude --plugin-dir ./plugin
@@ -82,7 +102,9 @@ level records shape (how much changed, when, in which class of command) without 
 fingerprint of the content itself.
 
 Nothing Prudence records is uploaded anywhere. If you plan to enable it on a work
-repository, check your employer's policy first.
+repository, check your employer's policy first. Observations, the correlations between
+your own behaviour and your own outcomes, are computed the same way: they never leave
+this machine, and they never compare you with anyone else, only with yourself.
 
 ## Contributing
 
