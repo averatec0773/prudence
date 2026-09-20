@@ -37,7 +37,7 @@ def test_an_export_round_trips_into_a_fresh_data_directory(
         manifest = json.loads(opened.extractfile("manifest.json").read())
     assert "config.toml" in names
     assert "tables/session.jsonl" in names and "tables/hook_event.jsonl" in names
-    assert manifest["versions"]["parser"] == 3
+    assert manifest["versions"]["parser"] == 4
     assert manifest["with_archive"] is False
 
     monkeypatch.setenv("PRUDENCE_DATA_DIR", str(lab.root / "restored"))

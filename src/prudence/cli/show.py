@@ -73,6 +73,7 @@ def render(connection: sqlite3.Connection, session_id: str, list_files: bool = F
     lines += _usage(connection, session_id)
     lines += _files(connection, session_id, full)
     lines += _commits(connection, session_id)
+    lines += _behaviour_facts(connection, session_id)
     lines += _hooks(connection, session_id)
     lines += _archive(connection, session_id, list_files)
     lines.append("")
@@ -234,6 +235,35 @@ def _commits(connection: sqlite3.Connection, session_id: str) -> list[str]:
     )
     lines.append("  coverage is NULL, printed as -, when there is no line evidence at all.")
     return lines
+
+
+def _behaviour_facts(connection: sqlite3.Connection, session_id: str) -> list[str]:
+    """Every behaviour fact this session has a value for, each with its own trust.
+
+    Facts do not share one trust level the way the other groups do, so it is printed
+    per row instead of once in the heading.
+    """
+    facts = views.session_facts(connection, session_id)
+    lines = [
+        "",
+        "behaviour facts",
+        "  from session_fact; one row per fact, each with its own version and trust",
+    ]
+    if not facts:
+        lines.append("  none (run `prudence rebuild` to compute them)")
+        return lines
+    for name in sorted(facts):
+        info = facts[name]
+        lines.append(
+            f"  {name:<28} {_fact_value(info['value']):>10}  "
+            f"fact version {info['fact_version']}, trust {info['trust']}"
+        )
+    return lines
+
+
+def _fact_value(value: float) -> str:
+    rounded = round(value, 3)
+    return f"{rounded:g}"
 
 
 def _hooks(connection: sqlite3.Connection, session_id: str) -> list[str]:

@@ -7,6 +7,7 @@ import click
 
 from prudence import __version__
 from prudence.cli.export import export, import_bundle
+from prudence.cli.facts import facts
 from prudence.cli.forget import forget
 from prudence.cli.hooks import hooks
 from prudence.cli.ingest import ingest
@@ -31,6 +32,7 @@ main.add_command(ingest)
 main.add_command(rebuild)
 main.add_command(sample)
 main.add_command(sessions)
+main.add_command(facts)
 main.add_command(show)
 main.add_command(status)
 main.add_command(forget)

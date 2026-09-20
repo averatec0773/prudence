@@ -12,6 +12,7 @@ import click
 from prudence import config as config_module
 from prudence import hooks as hooks_module
 from prudence.cli.render import size
+from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
 from prudence.store import db, pipeline
 
@@ -125,5 +126,10 @@ def report(result: pipeline.Result) -> list[str]:
     lines.append(
         f"Confidence: {labels.get('fact', 0)} fact, {labels.get('inferred', 0)} inferred, "
         f"{labels.get('uncertain', 0)} uncertain attribution rows."
+    )
+    facts = result.facts
+    lines.append(
+        f"Behaviour facts: {facts.rows} rows over {facts.sessions} sessions "
+        f"({len(facts_registry.FACTS)} facts), {facts.elapsed:.1f} s."
     )
     return lines
