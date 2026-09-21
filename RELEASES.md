@@ -25,6 +25,40 @@ Before the first tag can publish, the project owner does this once, on pypi.org:
 
 Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
 
+## Unreleased
+
+- **A forked session is its own session, and it starts when it was forked.** Claude Code's
+  fork (and a resume into a new file) writes the parent's whole history into the new
+  transcript, record for record, with the parent's own `sessionId` still on every copied
+  line. Prudence read each file as one session named after the file, so a fork took its
+  parent's start time and its parent's turns, and which of the two owned a shared record
+  depended on which file happened to be read first. A record now belongs to the session it
+  declares, whatever file it was read from; copied history is read from the parent's own
+  file, or kept under the parent when the agent has already deleted that file. The
+  `session` row gains `forked_from` and `fork_point`, the last copied record's own id, so
+  the point of divergence can be looked up in the parent's records.
+
+  `derived.PARSER_VERSION` is 5, so **`prudence rebuild` repairs existing history**. On the
+  founder's store that found 10 forks and moved 129 turns and 1,194 token-usage rows back
+  to the sessions that earned them; store-wide token totals are unchanged, because nothing
+  was ever lost, only credited to the wrong session. The `app_*` read contract is
+  untouched at version 3: the same columns, with correct values.
+
+- **A source adapter, so a second agent is a new package rather than a new set of
+  branches.** `sources/base.py` defines what every source hands the store: one event per
+  record of the agent's own log. `sources/claude_code/` is now a package and the only place
+  that knows Claude Code's format, and `store/derived.py` names no agent at all, which a
+  test asserts. Nothing about the boundary is speculative: the capture level, the pairing
+  of a tool call with its result, and the ownership rule above all stay in the store, so
+  they mean the same thing for every agent. Codex is not part of this change;
+  `ARCHITECTURE.md` has an "adding a source" section for whoever writes it.
+
+- Known, and separate: some older resumed transcripts in the founder's history carry the
+  copied lines re-stamped with the **new** session's id, so nothing in the file says which
+  session a shared record belongs to. Those records still go to the session whose
+  transcript starts earlier, which is deterministic for a given archive but is not read off
+  the record. 13 sessions on the founder's store are of this shape.
+
 ## 0.4.0 - 2026-09-21
 
 M4: the app looks and reads like a product. The macOS app was redesigned from a set of

@@ -14,8 +14,13 @@ src/prudence/
   paths.py        every path Prudence reads or writes, in one place
   config.py       the user's choices, as TOML: which repositories, at which level
   scan.py         read-only inventory of agent history on this machine
-  sources/        where we see the developer's work: one module per agent
-    claude_code.py
+  sources/        where we see the developer's work: one package per agent, behind one
+                   interface, so the store never learns an agent's file format
+    base.py       the `Source` protocol and the event types; no agent knowledge
+    __init__.py   the registry: kind -> adapter (`claude_code` today, Codex later)
+    claude_code/  everything that knows Claude Code's layout and format
+      discovery.py  where the files are, and what a scan reads from one
+      events.py     transcript lines -> events
   hooks/          the one thing we write into the user's world, and how to undo it
     __init__.py       install, uninstall and inspect the settings entries
     prudence-hook.sh  the POSIX shell hook itself, shipped as package data
@@ -24,7 +29,10 @@ src/prudence/
     repos.py      which repository a directory belongs to when it no longer exists
     db.py         the one SQLite file: connection, file mode, archive migrations
     archive.py    the agent's bytes, compressed, unmodified, appended incrementally
-    derived.py    the versioned tables built from the archive and nothing else
+    derived.py    the versioned tables, built from the events one adapter yields over
+                   the archive and nothing else; owner of the capture level, of the
+                   pairing of a call with its result, and of which session a record
+                   belongs to
     edits.py      what one tool call did: lines changed, what a command was for
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
@@ -170,10 +178,70 @@ docs/reference/store-schema.md   every table and column, with its trust level
    the rows lack is the engine's job to compute, not the model's, which is why `ask`
    sends a `totals` block. Every call prints the whole request shape before it is sent,
    and transcript content is sent only for a `full` project with `--with-content`.
+17. **The store imports no agent module.** An agent's file layout and log format live in
+   `sources/<agent>/` and nowhere else. `store/derived.py` builds its tables from the
+   events `sources/base.py` defines, asks `sources/__init__.py` for an adapter and never
+   names one; `tests/test_sources.py` asserts that no module under `store/` reaches into
+   an agent's package. Three consequences, because they are where the boundary would
+   otherwise leak back:
+   - **The capture level is the store's, not an adapter's.** An adapter reports what the
+     format says, text included (a prompt's length, an edit's lines, a command); the code
+     that writes the row decides what becomes a count, a keyed hash or nothing. One rule
+     for every source, and no adapter is trusted with a promise made to the user.
+   - **Pairing and ownership are the store's.** A tool call and its result can be records
+     or files apart, and which session a record belongs to is a question about all the
+     files together, so both are settled in `store/derived.py` over the event stream.
+   - **A file is not a session.** A record belongs to the session it declares, which for a
+     record copied into a fork is the parent's. An adapter for an agent with no fork
+     concept simply never reports a foreign session id, and the rule does nothing.
+   The one exception today: `store/edits.py` still reads Claude Code's own field names
+   (`structuredPatch`, `toolUseResult`, `gitOperation`). It is called from the adapter and
+   not from the store, and it stays put because it also holds the `EDIT_FACT_VERSION` and
+   `COMMAND_FACT_VERSION` the store writes into rows; splitting the format readers out of
+   it belongs with the commit that adds the second adapter.
+
+## Adding a source
+
+A second agent is a new package under `sources/`, and nothing else. What it has to do:
+
+1. **One package, two modules.** `sources/<agent>/discovery.py` answers where the files
+   are; `sources/<agent>/events.py` answers what a line of one means. Nothing else in the
+   tree may read the agent's field names.
+2. **Implement `sources.base.Source`.** `kind` (the word that goes into
+   `session.source`), `session_files()`, `companion_files(session)`, `head(lines)` and
+   `events(lines, path, file_session_id, agent_id)`. Register the instance in
+   `sources/__init__.py`.
+3. **Yield one `Event` per record of the agent's log**, in file order, with the payloads
+   that record holds. Fill only what a derived table already uses; a field no table reads
+   does not belong in `Event`. The two fields that are easy to get wrong:
+   - `session_id` is the session the record **declares**, not the file it came from. None
+     when the record names no session. Report what the format says and nothing else; the
+     ownership rule is the store's.
+   - `record_id` must be stable and unique across the whole source. When the format has
+     no identifier of its own (Codex's rollout items do not), derive one from the file and
+     the line and set `stable_id=False`, so the store knows the id names that copy of the
+     record rather than the record.
+4. **Be lenient, always.** A line that will not parse is skipped; a field of the wrong
+   shape is absent; a record type the adapter does not know is reported with
+   `known_type=False` and becomes a row in `unknown_record_type` rather than an error.
+   Every agent's log format is internal to it: Claude Code's changed 24 times in five
+   months on the founder's machine, and one local check found 32 distinct Codex
+   `cli_version` strings in 234 files.
+5. **Teach the archive which agent wrote a file.** With one adapter, the store can assume
+   the registry's only entry. A second one needs an `agent` column on `archive_file`,
+   behind an `ARCHIVE_SCHEMA_VERSION` bump and a step in `store/db.migrate`, because
+   `store/derived.py` reads files out of the archive long after the scan that found them.
+   This is the only change outside `sources/` that a second adapter should need.
+6. **Bring a fixture per observed format version**, synthetic, under
+   `tests/fixtures/<agent>/`, and a test module beside `tests/test_sources.py`. A number
+   a fixture asserts is a number somebody counted by hand.
+7. **Say what the source cannot answer.** A fact an agent does not record is absent, not
+   zero: a session with no token counts has no `usage` rows, and a surface prints a dash.
+   Do not fabricate a figure from an external table inside an adapter.
 
 ## Adding things
 
-- A new agent: one module in `sources/` that finds the agent's files and yields records.
+- A new agent: see "Adding a source" above.
 - A new model backend: one file in `model/` with a `complete(request) -> Completion`, a
   name in `model.BACKENDS`, and its prices in `model/prices.py`. No other module imports
   a vendor SDK, and no command branches on which backend is in use.
