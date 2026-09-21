@@ -43,6 +43,8 @@ import AppKit
 import Quartz
 
 APP = Path(__file__).resolve().parent.parent
+# Built with `--features harness`: a release build has no automation hooks at all, which
+# is the point of the feature. `pnpm tauri build --features harness --bundles app`.
 BINARY = APP / "src-tauri/target/release/bundle/macos/Prudence.app/Contents/MacOS/Prudence"
 DEBUG_BINARY = APP / "src-tauri/target/debug/bundle/macos/Prudence.app/Contents/MacOS/Prudence"
 

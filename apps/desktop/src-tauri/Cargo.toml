@@ -6,6 +6,13 @@ edition = "2021"
 rust-version = "1.82"
 publish = false
 
+[features]
+# Everything that exists only so a script can drive the app: the stress runner, the
+# screenshot hooks and the backdrop window. A release build does not have them, so the
+# shipped binary cannot be told to evaluate JavaScript against its own window by setting
+# an environment variable. `Scripts/shot.py` and `Scripts/stress.py` build with it.
+harness = []
+
 [lib]
 name = "prudence_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -48,4 +55,6 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 panic = "abort"
-strip = true
+# `true` strips the symbol table, which also strips it out of the macOS crash report, so
+# a start-up failure becomes an icon that bounces once and a report nobody can read.
+strip = "debuginfo"

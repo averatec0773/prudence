@@ -28,7 +28,7 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parent.parent
 CATALOG = APP / "../mac/PrudenceKit/Sources/PrudenceUI/Resources/Localizable.xcstrings"
-OUT = APP / "src/design"
+OUT = APP / "src/text"
 LANGUAGES = ("en", "zh-Hans")
 
 NOTE = (

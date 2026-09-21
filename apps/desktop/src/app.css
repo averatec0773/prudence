@@ -96,7 +96,18 @@ body {
   color: var(--accent);
 }
 
-/* From `dropdown.html`'s own <style> block: the four classes variant C adds. */
+/* The footer's quiet actions sit on the block's own edges, which is what the button grid
+   means: the caption column's left edge to the value column's right edge. They were
+   inset by their own flex sizing before, about 30 pt inside the column. */
+.buttons-row.spread {
+  justify-content: space-between;
+}
+
+.buttons-row.spread .btn {
+  flex: none;
+}
+
+/* The panel's own classes. */
 .obs-line {
   font-size: var(--t-footnote);
   line-height: 1.4;

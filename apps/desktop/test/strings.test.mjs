@@ -20,7 +20,7 @@ const LANGUAGES = ["en", "zh-Hans"];
 const tables = Object.fromEntries(
   LANGUAGES.map((language) => [
     language,
-    JSON.parse(readFileSync(join(app, `src/design/strings.${language}.json`), "utf8")),
+    JSON.parse(readFileSync(join(app, `src/text/strings.${language}.json`), "utf8")),
   ])
 );
 
@@ -176,15 +176,12 @@ test("plurals choose a form in English and do not in Chinese", () => {
   assert.equal(zh.select(3), "other");
 });
 
-/* The two exceptions that do not go through the locale are marked in `fmt.js`; this pins
-   the shape they have to keep, because an observation sentence is compared word for word
-   against the engine's own in batch 3. */
-test("the share and the plain integer keep the shapes the engine prints", () => {
-  const fmt = readFileSync(join(app, "src/design/fmt.js"), "utf8");
-  assert.match(fmt, /function percent\(share\)/);
-  assert.match(fmt, /Math\.round\(share \* 100\) \+ "%"/);
-  assert.match(fmt, /function plain\(value\)\s*\{\s*return String\(value\);/);
-});
+/* The two values that do not go through the locale used to be guarded here by asserting
+   that a particular expression appeared in `fmt.js`. That pinned an implementation which
+   was **wrong** (it rounded half away from zero where the engine rounds half to even) and
+   called itself the guard against that defect. The rule is now asserted by calling the
+   function: see `test/fmt.test.mjs`, "a share rounds the way the engine rounds", and
+   `test/sentences.test.mjs`, which compares the whole sentence with the engine's own. */
 
 /* The generated files say out loud that they are generated and that the generator dies
    with `apps/mac/`, which is the lead's ruling of 2026-09-21. */

@@ -32,16 +32,25 @@ Unchanged from the Swift app. They are the product's rules, not a framework's.
 
 ## The tokens
 
-`src/design/tokens.css`, copied from `docs/design/mockups/` and now the product's own
-copy: from phase 1 on, `src/design/` is the source of truth and `docs/design/mockups/` is
-a frozen record. `apps/mac/DESIGN.md` prints the table (purpose palette, outcome pair,
+`src/design/tokens.css`. It began as a copy of the mockups' stylesheet and **is no longer
+one**: the mockup's own page chrome (the variant switcher, the compare strip), its fake
+desktop, fake menu bar, fake status item and fake traffic lights are gone, about 190
+lines that existed to drive a clickable prototype. `docs/design/mockups/` is the frozen
+record; this file is the product's. `apps/mac/DESIGN.md` prints the table (purpose palette, outcome pair,
 project scale, surfaces and ink, spacing, type, radii, motion) and
 `test/tokens.test.mjs` asserts the file against it, so a token table nobody checks cannot
 drift from what is drawn.
 
 **`src/app.css` and `src/window.css` say where things go and never declare a token.** A
 colour, a spacing or a radius written in an app stylesheet is a decision two surfaces will
-eventually disagree about; a test asserts that neither file declares a custom property.
+eventually disagree about. A test asserts it for `app.css`; `window.css` is not covered
+yet, and that gap is listed under Known compromises.
+
+**Design rule 4 is enforced at the root**, not per element: `body` carries
+`font-variant-numeric: tabular-nums`. There was a `.num` class for two batches and not one
+element ever used it, so no figure the app drew was tabular. A rule that has to be
+remembered at every call site is a rule that is not kept. Numbers inside a sentence are
+figures too, which is why it is not scoped to figure elements.
 
 Two places where the mockups are a round behind the shipping Swift app, and this app
 follows the app:
@@ -72,6 +81,26 @@ stylesheets only take the *surface* tint away, because on a real window the surf
 material is native. A `backdrop-filter` could not do the surface anyway: inside a webview
 it samples the page, never the desktop.
 
+## The layers
+
+| Directory | What lives there | What may import it |
+|---|---|---|
+| `src/design/` | tokens, the DOM helpers, the brand mark, the purpose list, the charts | anything |
+| `src/text/` | the two string tables, the string runtime, the formatters, the composed sentences | anything above `design` |
+| `src/store/` | the shell's payload, turned into rows and the two windows the panel asks about | `ui`, `boot` |
+| `src/ui/` | one file per surface: the panel, the window | `boot` only |
+| `src/bridge.js` | every Tauri call in the frontend | anything |
+| `src/boot.js` | start-up, for both pages | the two HTML entry points |
+
+The frontend is **native ES modules**: `import` is the dependency order, so there is no
+loader and no start-up file per page. There is still no bundler and no build step, which
+is what keeps the Electron exit cheap and every module importable by `node --test`. That
+last part is not a nicety: it is the only way a rule can be tested on both browser
+engines, because a test that runs in Node runs the same on WebKit and on WebView2.
+
+Before this the frontend was globals on `window` with a hand-written script injector, and
+the two start-up files shared 106 identical lines and had already drifted.
+
 ## The bridge
 
 **Every Tauri call in the frontend is in `src/bridge.js`.** Nothing under `src/design/`,
@@ -81,19 +110,32 @@ This is load bearing, not tidiness. If the webview under this frontend ever has 
 the shell and that one file are rewritten and everything else moves unchanged. That is the
 way out if Tauri fails on a later macOS, and it stays open only while the rule holds.
 
-The surface is small on purpose: read the store, ask the shell about itself, report how
-tall the panel's content is, open and close the window, remember which section the window
-is on, say something on the shell's standard error, quit.
+The surface is nine commands: read the store, ask the shell about itself, log a line,
+fit the panel to its content, hide the panel, open and close the window, remember the
+section, quit. `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts
+that the names and the **argument names** match, because renaming a Rust parameter breaks
+the page at runtime with no error on either side.
+
+**There is one channel in the other direction and it is not the bridge.** With the
+`harness` feature built in, the shell drives `window.eval("window.Stress...")` against
+`ui/window.js`. It is how a script switches screens and paints the compositor probe. It
+is absent from a release build, and the page exposes `Stress` only when `shell_info` says
+the build carries the harness.
 
 ## No build step
 
-Plain script tags, no bundler, no transpiler. Native ES modules if a batch needs real
-module boundaries; still no build step.
+Native ES modules, no bundler, no transpiler. The browser loads the files as they are
+written, and `tsc -p jsconfig.json` type-checks them without emitting anything.
 
-Three reasons, in order: `src/design/` stays readable as the design system rather than as
-an input to a pipeline; the Electron exit stays cheap, because a frontend with no build is
-a frontend any shell can serve; and a batch is judged on a picture of the running app, so
-nothing is gained by putting a compiler between the source and the picture.
+Three reasons, in order: the source stays readable as itself rather than as an input to a
+pipeline; the Electron exit stays cheap, because a frontend with no build is a frontend
+any shell can serve; and a batch is judged on a picture of the running app, so nothing is
+gained by putting a compiler between the source and the picture.
+
+**Static checking is `tsc --checkJs` over JSDoc types**, not eslint. The defects worth
+catching here are shape defects: a JSON string where an array was expected, an optional
+read as if it were present, a language argument accepted and then ignored. `tsc` sees
+those; eslint does not. It runs in the batch checklist and in CI.
 
 ## Platform differences
 
@@ -115,6 +157,65 @@ nothing else. A median, a threshold or an attribution is a new view in
 
 Any number on a screen that is not one of those three things is a bug, however reasonable
 it looks.
+
+## Known compromises
+
+Registered per `memory/rules.md`, 2026-09-21: what it assumes, what the user sees when the
+assumption breaks, and the condition under which it is removed. A sleep, a retry, a
+special case or a widened tolerance that is not in this table is a patch and does not go
+in.
+
+### The status item's button is found by class name
+
+`platform/macos.rs`, `status_bar_button`. Neither Tauri nor `tray-icon` exposes the
+`NSStatusItem` it created (`TrayIcon.inner` is private), and `tray-icon` clears the
+highlight on mouse-up, so the capsule would last only while the button is held. The
+window list is walked for the one window whose class name contains `StatusBar`, and the
+first `NSButton` inside it is the status item's.
+
+- **Assumes:** AppKit keeps calling that window class `NSStatusBarWindow`, and this
+  process owns exactly one status item.
+- **When it breaks:** the icon stops highlighting while the panel is open, and the panel
+  opens in a screen corner instead of under the icon, because `tray_anchor` is the same
+  lookup. Both are silent to the user today; `shell_info.tray_highlight` carries the
+  answer and the shell logs it.
+- **Removed when:** either Tauri exposes the status item, or the tray is built with
+  `tray_icon` directly (its `ns_status_item()` is public) instead of through
+  `TrayIconBuilder`. Worth pricing before the Windows work, because `tray_anchor` is one
+  of the five functions the platform boundary rests on.
+
+### The WKWebView is found by class name
+
+`platform/macos.rs`, `webview_view`. The glass view takes the webview as its content view
+so the material owns its content rather than sitting behind it; the webview is found as
+the first subview whose class name contains `WebView`.
+
+- **Assumes:** wry's view is the outermost `*WebView*` in the window's tree.
+- **When it breaks:** the glass is applied behind the webview instead of owning it, so
+  the frost does not refract properly. The failure is detected and recorded in
+  `MaterialReport.attempts`, which `shell_info` carries.
+- **Removed when:** Tauri exposes the webview's `NSView` synchronously. `with_webview`
+  exists but its closure must be `Send` and cannot carry an AppKit object out.
+
+### The relative time counts in fixed seconds, not in calendar units
+
+`text/fmt.js`, `relative`. `Intl.RelativeTimeFormat` needs a unit and a count, so the
+unit is chosen from a table of fixed second counts.
+
+- **Assumes:** a month is thirty days and a year is 365.
+- **When it breaks:** a timestamp several months old can read one unit off. The only
+  timestamp the app prints this way is the last ingest, which is hours or days old.
+- **Removed when:** something needs a correct long-range relative time, at which point
+  the unit is chosen with `Intl.DateTimeFormat`'s calendar arithmetic instead.
+
+### `window.css` is not covered by the no-tokens test
+
+`test/tokens.test.mjs` asserts that `app.css` declares no custom property; `window.css`
+is not checked, so a token could be declared there.
+
+- **When it breaks:** two stylesheets disagree about a colour and nothing says so.
+- **Removed when:** the test takes a list of stylesheets rather than one. Batch 5, which
+  is the next batch to touch `window.css`.
 
 ## Working on the founder's machine
 
@@ -165,9 +266,16 @@ Grown by each batch. Batch 1 adds the window shell only.
 
 | Component | What it is | Where |
 |---|---|---|
-| The panel | 360 pt, variant C with a caption above every block, the action grid at the foot | `src/panel.js` |
-| The window shell | Titlebar (the system's own, overlaid), sidebar with four entries, toolbar strip, one screen at a time | `src/window.js`, `src/window.css` |
+| The panel | 360 pt, one column, a caption above every block, the action grid at the foot | `src/ui/panel.js` |
+| The window shell | The system's titlebar overlaid, a sidebar with four entries, the heading and the screen's controls on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
+| `miniStack` | One row of a stacked bar: the composition of a whole, in a single line | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
+
+**There is one chart.** The mockups' module had seven builders and 598 lines; six drew
+screens that do not exist yet and none had been read to a product standard. They are not
+in the app. `docs/design/mockups/charts.js` keeps them as the visual reference, and the
+batch that builds each screen writes that screen's chart against the rules at the top of
+`design/charts.js`.
 
 ## What the window remembers
 

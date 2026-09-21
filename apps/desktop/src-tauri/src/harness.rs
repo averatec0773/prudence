@@ -1,4 +1,11 @@
-//! The compositor question, asked in a way a screenshot can answer.
+//! Everything that exists so a script can drive the app, and nothing a user can reach.
+//!
+//! Compiled only with `--features harness`, so a release build has none of it: no
+//! environment variable can make the shipped app open a window by itself, put a backdrop
+//! on the screen, or evaluate JavaScript against its own page. `Scripts/shot.py` and
+//! `Scripts/stress.py` build with the feature.
+//!
+//! ## The compositor question, asked in a way a screenshot can answer
 //!
 //! Wry issue 1848 (opened 2026-09-16, still open) reports the macOS 26 WKWebView
 //! compositor intermittently ceasing to present new frames: the DOM keeps updating and
@@ -16,6 +23,88 @@
 use tauri::{AppHandle, Manager};
 
 use crate::{panel, window, MAIN};
+
+/// Is a script driving the app right now? The panel must not dismiss itself on focus
+/// loss while one is, or every screenshot is of an empty desktop.
+pub fn driving() -> bool {
+    panel_stays_open() || window_opens_at_launch() || plan().is_some()
+}
+
+fn flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+fn panel_stays_open() -> bool {
+    flag("PRUDENCE_PANEL_OPEN")
+}
+
+fn window_opens_at_launch() -> bool {
+    flag("PRUDENCE_WINDOW_OPEN")
+}
+
+fn backdrop_wanted() -> bool {
+    flag("PRUDENCE_BACKDROP")
+}
+
+/// Open whatever the script asked for, once the status item is laid out.
+pub fn start(app: &AppHandle) {
+    if !(driving() || backdrop_wanted()) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        if backdrop_wanted() {
+            let backdrop = handle.clone();
+            let _ = handle
+                .clone()
+                .run_on_main_thread(move || window::open_backdrop(&backdrop));
+        }
+
+        wait_for_the_status_item(&handle);
+
+        if window_opens_at_launch() {
+            let open = handle.clone();
+            let _ = handle
+                .clone()
+                .run_on_main_thread(move || window::open(&open));
+        }
+        if panel_stays_open() {
+            let open = handle.clone();
+            let _ = handle
+                .clone()
+                .run_on_main_thread(move || panel::show(&open));
+        }
+        if let Some(plan) = plan() {
+            run(&handle, plan);
+        }
+    });
+}
+
+/// AppKit lays the status item out a moment after launch, and a panel anchored before
+/// that lands off the bottom of the screen.
+///
+/// This used to be `sleep(1200 ms)`, which is a guess: too long on a fast launch and too
+/// short on a loaded CI runner, where the anchor silently falls back to a screen corner
+/// and the script photographs a panel in the wrong place. `tray_anchor` already returns
+/// `None` for exactly this condition, so it is asked rather than waited out.
+fn wait_for_the_status_item(app: &AppHandle) {
+    use std::sync::mpsc::channel;
+
+    for _ in 0..60 {
+        let (tx, rx) = channel();
+        let _ = app.run_on_main_thread(move || {
+            let _ = tx.send(crate::platform::tray_anchor().is_some());
+        });
+        if rx
+            .recv_timeout(std::time::Duration::from_millis(500))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    eprintln!("[harness] the status item never laid out; the panel will fall back to a corner");
+}
 
 pub struct Plan {
     pub rounds: u32,

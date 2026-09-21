@@ -164,6 +164,13 @@ body {
 body {
   background: var(--canvas);
   color: var(--text);
+  /* Design rule 4: **every figure is tabular**, so a value that changes does not reflow
+     the row it sits in. Set once at the root rather than on a `.num` class, because the
+     class version shipped for two batches with no element using it: a rule that has to
+     be remembered at every call site is a rule that is not kept. Numbers inside a
+     sentence are figures too, which is why this is not scoped to figure elements. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     "Helvetica Neue", "PingFang SC", sans-serif;
   font-size: var(--t-body);
@@ -196,115 +203,6 @@ a:hover {
   text-decoration: underline;
 }
 
-.num {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
-
-/* --- page chrome (mockup only, not part of the app) ------------------------------- */
-
-.chrome {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  padding: var(--s3) var(--s5);
-  background: color-mix(in srgb, var(--canvas) 86%, transparent);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 0.5px solid var(--separator);
-}
-
-.chrome .spacer {
-  flex: 1;
-}
-
-.chrome-title {
-  font-size: var(--t-footnote);
-  font-weight: 590;
-  letter-spacing: 0.01em;
-}
-
-.chrome-note {
-  font-size: var(--t-caption);
-  color: var(--text-3);
-}
-
-.stage {
-  padding: var(--s7) var(--s5) var(--s8);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s7);
-}
-
-.variant-block {
-  width: 100%;
-  max-width: 1120px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s4);
-  align-items: center;
-}
-
-.variant-block.narrow {
-  width: auto;
-  max-width: none;
-  align-items: flex-start;
-}
-
-.variant-body {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-}
-
-.variant-block.narrow .variant-body {
-  width: auto;
-}
-
-.compare-strip {
-  display: flex;
-  gap: var(--s6);
-  align-items: flex-start;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.variant-head {
-  width: 100%;
-  max-width: 1120px;
-  display: flex;
-  align-items: baseline;
-  gap: var(--s3);
-  flex-wrap: wrap;
-}
-
-.variant-block.narrow .variant-head {
-  max-width: 360px;
-}
-
-.variant-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 var(--s2);
-  border-radius: var(--r-chip);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--t-caption);
-  font-weight: 640;
-}
-
-.variant-what {
-  font-size: var(--t-footnote);
-  color: var(--text-2);
-}
 
 /* --- controls ---------------------------------------------------------------------- */
 
@@ -527,9 +425,6 @@ a:hover {
   white-space: nowrap;
 }
 
-.chip.delta {
-  font-variant-numeric: tabular-nums;
-}
 
 .coverage-chip {
   display: flex;
@@ -589,7 +484,6 @@ table.data {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--t-footnote);
-  font-variant-numeric: tabular-nums;
 }
 
 table.data th {
@@ -673,19 +567,6 @@ figcaption.sr {
   padding: 0 var(--s4);
   background: var(--sidebar);
   border-bottom: 0.5px solid var(--separator);
-}
-
-.traffic {
-  display: flex;
-  gap: 8px;
-}
-
-.traffic i {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--control-2);
-  display: block;
 }
 
 .titlebar .name {
@@ -927,7 +808,6 @@ figcaption.sr {
 .paired-value {
   font-size: var(--t-caption);
   color: var(--text-2);
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -969,7 +849,6 @@ figcaption.sr {
   font-size: var(--t-caption);
   color: var(--text-2);
   min-height: 18px;
-  font-variant-numeric: tabular-nums;
 }
 
 .heat rect {
@@ -987,76 +866,6 @@ figcaption.sr {
   color: var(--brand-ink);
   display: block;
   flex: none;
-}
-
-.desktop {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Full bleed, so that the strip sits at the very top of the stage and runs the whole
-   width of the window, the way a menu bar does. `overflow-x: clip` on the stage keeps a
-   scrollbar's width from turning that into a horizontal scroll. */
-.desktop:not(.narrow) {
-  width: 100vw;
-  flex: none;
-  margin-left: calc(50% - 50vw);
-}
-
-.stage {
-  overflow-x: clip;
-}
-
-.desktop.narrow {
-  width: 400px;
-}
-
-.menu-bar {
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--s3);
-  padding: 0 var(--s2);
-  background: var(--menubar);
-  border-radius: 0;
-  box-shadow: none;
-  border: 0;
-}
-
-.status-item {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 20px;
-  border-radius: 5px;
-  color: var(--text);
-  transition: background var(--dur-fast) var(--ease);
-}
-
-.status-item.pressed {
-  background: var(--menubar-press);
-}
-
-.desktop .popover {
-  align-self: flex-end;
-  margin-top: 6px;
-  margin-right: var(--s3);
-}
-
-.desktop:not(.narrow) .menu-bar {
-  padding: 0 var(--s3);
-}
-
-:root[data-material="glass"] .menu-bar {
-  background-image: var(--glass-specular);
-  background-color: var(--glass-tint);
-  backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
-  box-shadow: none;
-  border-radius: 0;
 }
 
 .titlebar .brand-mark {
@@ -1185,8 +994,7 @@ figcaption.sr {
 
 /* The navigation surfaces: they carry the material and their own shadow. */
 :root[data-material="glass"] .popover,
-:root[data-material="glass"] .window,
-:root[data-material="glass"] .chrome {
+:root[data-material="glass"] .window {
   background-image: var(--glass-specular);
   background-color: var(--glass-tint);
   backdrop-filter: var(--glass-filter);

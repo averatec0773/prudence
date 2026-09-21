@@ -7,10 +7,12 @@
     <link rel="stylesheet" href="design/tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body>
+  <body class="is-panel">
     <div id="root"></div>
-    <script src="bridge.js"></script>
-    <script src="panel.js" defer></script>
-    <script src="boot.js" defer></script>
+    <script type="module">
+      import { boot } from "./boot.js";
+      import { page } from "./ui/panel.js";
+      boot(page);
+    </script>
   </body>
 </html>

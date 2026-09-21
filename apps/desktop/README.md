@@ -22,9 +22,15 @@ cd apps/desktop
 pnpm install                       # the Tauri CLI, nothing else
 pnpm tauri dev                     # the app, for working on the page
 pnpm tauri build --bundles app,dmg # Prudence.app and an unsigned DMG
-pnpm test                          # the token table and the strings, in node
+pnpm test                          # the frontend's tests, in node
+pnpm check                         # tsc --checkJs over JSDoc types; no build, nothing emitted
 cd src-tauri && cargo test         # the store layer, the panel's placement, the memory
 ```
+
+`pnpm tauri build --features harness` is the build the two scripts under `Scripts/` need.
+A plain release build has **no** automation in it: no stress runner, no backdrop window,
+and no way for an environment variable to make the app evaluate JavaScript against its
+own page.
 
 ### The checklist for every batch
 
@@ -36,12 +42,20 @@ answers to the root `pyproject.toml`'s ruff settings**, not to anything under
 ```sh
 cd apps/desktop
 pnpm test
+pnpm check
 python3 Scripts/strings.py --check         # the JSON still matches the String Catalog
-cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --features harness -- -D warnings
+cargo test
 cd ../../..                                 # the repository root
 uv run ruff check apps/desktop/Scripts
 uv run ruff format --check apps/desktop/Scripts
 ```
+
+Everything in that list is also in `.github/workflows/desktop-ci.yml`, so forgetting one
+is caught rather than discovered later.
 
 Plus, in every batch that adds a screen: `python3 Scripts/stress.py --rounds 400 ...`,
 with its one-line result in the report.
@@ -54,10 +68,15 @@ look before you start it:
 mkdir -p /tmp/prudence-copy
 sqlite3 "$HOME/Library/Application Support/prudence/prudence.db" \
   ".backup '/tmp/prudence-copy/prudence.db'"
-PRUDENCE_DATA_DIR=/tmp/prudence-copy PRUDENCE_CONFIG_DIR=/tmp/prudence-copy prudence status
-PRUDENCE_DATA_DIR=/tmp/prudence-copy PRUDENCE_CONFIG_DIR=/tmp/prudence-copy \
-  src-tauri/target/release/bundle/macos/Prudence.app/Contents/MacOS/prudence-desktop
+PRUDENCE_DATA_DIR=/tmp/prudence-copy prudence status
+PRUDENCE_DATA_DIR=/tmp/prudence-copy \
+  src-tauri/target/release/bundle/macos/Prudence.app/Contents/MacOS/Prudence
 ```
+
+The shell reads **`PRUDENCE_DATA_DIR`** and nothing else: the store's location is the
+only path it resolves. `PRUDENCE_CONFIG_DIR` is the engine's and the shell does not read
+it, so setting it isolates the CLI and not this app; what isolates this app's own state
+is `PRUDENCE_UI_MEMORY=off`, and the two scripts set it.
 
 ### Hooks for looking at it
 
@@ -112,15 +131,13 @@ apps/desktop/
     window.html        the main window
     backdrop.html      a plain full-screen window, for screenshots only
     bridge.js          THE ONLY FILE THAT KNOWS ABOUT TAURI
-    boot.js            the panel's start-up: ask the shell for the store, then draw
-    boot-window.js     the window's, in the same order and for the same reason
-    panel.js           the dropdown, variant C with a caption on every block
-    window.js          the sidebar, the toolbar, one screen at a time
-    app.css            what differs between a mockup of the popover and the popover
-    window.css         what differs between a mockup of the window and the window
-    design/            the design system: tokens.css, i18n.js, brand.js, derive.js,
-                       charts.js. Copied from docs/design/mockups/ and now the source of
-                       truth; the mockups are a frozen record
+    boot.js            start-up, for both pages
+    app.css            the panel's own layout, and what both pages share
+    window.css         the window's own layout
+    design/            tokens.css, dom.js, brand.js, purposes.js, charts.js
+    text/              strings.{en,zh-Hans}.json, strings.js, fmt.js, sentences.js
+    store/             payload.js: the shell's answer, as rows
+    ui/                panel.js, window.js: one file per surface
   src-tauri/
     tauri.conf.json    one window, transparent, frameless, hidden from the Dock
     capabilities/      what the page is allowed to ask the shell for
@@ -131,7 +148,7 @@ apps/desktop/
       window.rs        the main window, and the screenshot backdrop
       store.rs         read-only SQLite over the app_* views, and the contract check
       ui_state.rs      what the window remembers between launches
-      stress.rs        the compositor question, and the paint probe
+      harness.rs       the automation, behind `--features harness`, absent from a release
       platform/        everything true of one operating system and not the other
   Scripts/             shot.py, stress.py
   test/                the token table, asserted against DESIGN.md
@@ -145,11 +162,12 @@ version outside `SUPPORTED_CONTRACT`, and selects from `app_*` views only. The p
 view columns into a bucket and take the ratio of two columns of the same row; a median, a
 threshold or an attribution is a new view in `src/prudence/store/app_views.py`.
 
-**2. The frontend talks to the shell through `bridge.js` and nothing else.** Four verbs:
-read the store, ask the shell about itself, report how tall the content is, close or quit.
-If the webview under this frontend ever has to change, the shell and this one file are
-rewritten and everything else moves unchanged. That is the way out if Tauri fails on a
-later macOS, and it only stays open while the rule holds.
+**2. The frontend talks to the shell through `bridge.js` and nothing else.** Nine
+commands, and `test/bridge.test.mjs` asserts both that nothing else in `src/` touches a
+Tauri API and that every command's **argument names** match `lib.rs`. If the webview under
+this frontend ever has to change, the shell and that one file are rewritten and everything
+else moves unchanged. That is the way out if Tauri fails on a later macOS, and it only
+stays open while the rule holds.
 
 **3. Platform differences live in `src-tauri/src/platform/`.** The page never asks which
 system it is on. A difference that cannot be held in that folder is a difference that will

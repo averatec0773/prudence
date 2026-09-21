@@ -10,6 +10,10 @@ name: Desktop app
 # not: a Developer ID certificate in GitHub secrets is real exposure for a solo founder,
 # so a tagged release is signed from the founder's own machine.
 #
+# The Python under `Scripts/` is not checked here: `ci.yml` already runs `ruff check .`
+# and `ruff format --check .` over the whole tree, which includes it. Adding a second
+# ruff job would be two places to keep in step.
+#
 # `macos-26` is pinned deliberately, as in `mac-ci.yml`: `macos-latest` moves under you.
 # The Windows job compiles `src-tauri/src/platform/windows.rs`, which no macOS build ever
 # touches; without it that file is dead code nobody has ever put through a compiler. It
@@ -61,8 +65,14 @@ jobs:
       - name: Install the Tauri CLI
         run: pnpm install --frozen-lockfile
 
-      - name: The token table
+      - name: The frontend's tests
         run: pnpm test
+
+      - name: Types
+        run: pnpm check
+
+      - name: The strings still match the String Catalog
+        run: python3 Scripts/strings.py --check
 
       - name: Formatting
         working-directory: apps/desktop/src-tauri
@@ -70,7 +80,9 @@ jobs:
 
       - name: Clippy
         working-directory: apps/desktop/src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features harness -- -D warnings
 
       - name: The shell's own tests
         # They read `apps/mac/PrudenceKit/Tests/.../Fixtures/store.db`, the same store the

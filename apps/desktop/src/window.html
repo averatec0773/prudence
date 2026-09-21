@@ -10,8 +10,10 @@
   </head>
   <body class="is-window">
     <div id="root"></div>
-    <script src="bridge.js"></script>
-    <script src="window.js" defer></script>
-    <script src="boot-window.js" defer></script>
+    <script type="module">
+      import { boot } from "./boot.js";
+      import { page } from "./ui/window.js";
+      boot(page);
+    </script>
   </body>
 </html>

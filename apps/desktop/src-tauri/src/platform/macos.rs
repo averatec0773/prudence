@@ -12,6 +12,17 @@ use window_vibrancy::{
 
 use super::{Attempt, MaterialReport, Surface, TrayAnchor};
 
+#[cfg(feature = "harness")]
+fn glass_override() -> Option<bool> {
+    let value = std::env::var("PRUDENCE_GLASS_OPAQUE").ok()?;
+    Some(!value.is_empty() && value != "0")
+}
+
+#[cfg(not(feature = "harness"))]
+fn glass_override() -> Option<bool> {
+    None
+}
+
 /// `apply_liquid_glass` refuses below this, and the crate reads the same number off
 /// `NSAppKitVersionNumber`. Kept here so the log can say which side said no.
 const APPKIT_MACOS_26: f64 = 2685.0;
@@ -39,12 +50,15 @@ pub fn apply_material(window: &WebviewWindow, surface: Surface) -> MaterialRepor
     let appkit = unsafe { objc2_app_kit::NSAppKitVersionNumber };
     if appkit >= APPKIT_MACOS_26 {
         // `opaque` puts an `NSBox` filled with `windowBackgroundColor` behind the glass,
-        // so the panel keeps its own tone instead of taking the tone of whatever is behind
-        // it. An `NSPopover` reads that way, and pure glass over a dark editor reads grey,
-        // which is a figure read against a moving backdrop — the thing design rule 1 is
-        // about. Default on; `PRUDENCE_GLASS_OPAQUE=0` photographs the other reading.
-        let opaque = std::env::var("PRUDENCE_GLASS_OPAQUE")
-            .map_or(true, |value| !value.is_empty() && value != "0");
+        // so a surface keeps its own tone instead of taking the tone of whatever is
+        // behind it. The panel wants that: it is navigation layer all the way down, and
+        // pure glass over a dark editor makes a light panel read grey, which is a figure
+        // read against a moving backdrop and is what design rule 1 is about. The window
+        // does not: its screens are the content layer and are already opaque in CSS, so
+        // a filled backing would frost a solid colour and the sidebar would stop being
+        // glass at all. Only the harness can override it, because the choice is a design
+        // decision and not a preference.
+        let opaque = glass_override().unwrap_or(surface == Surface::Panel);
         // A decorated window is rounded by the system; only the frameless panel has to
         // round its own layer.
         let radius = match surface {

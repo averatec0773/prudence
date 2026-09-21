@@ -7,9 +7,15 @@
 mod panel;
 mod platform;
 mod store;
-mod stress;
 mod ui_state;
 mod window;
+
+/// Everything that exists only so a script can drive the app. Absent from a release
+/// build, which is the point: a shipped binary that evaluates JavaScript against its own
+/// window when an environment variable is set is a sentence nobody wants in a security
+/// policy. `harness::` is the whole surface, and every call to it is behind this feature.
+#[cfg(feature = "harness")]
+mod harness;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -25,7 +31,8 @@ use ui_state::Memory;
 /// The two windows. The frontend never names either; `panel.rs` and `window.rs` do.
 pub const PANEL: &str = "panel";
 pub const MAIN: &str = "main";
-/// The screenshot backdrop, built only when the hook asks for it.
+/// The screenshot backdrop. Built only by the harness; see `harness.rs`.
+#[cfg(feature = "harness")]
 pub const BACKDROP: &str = "backdrop";
 
 pub struct Shell {
@@ -49,9 +56,16 @@ pub struct ShellInfo {
     language: Option<String>,
     /// The section the window last had, or null when this build no longer has it.
     section: Option<String>,
+    /// Whether this build carries the automation hooks. The page exposes its own test
+    /// entry point only when it does.
+    harness: bool,
 }
 
-#[tauri::command]
+/// `async` so that a slow disk cannot freeze the panel: a non-async command runs on the
+/// main thread, and this one issues seven selects. They take about 60 ms on the founder's
+/// 815 MB store today, which is fine, and the failure mode if that ever changes is a
+/// frozen window rather than a slow one.
+#[tauri::command(async)]
 fn store_read(shell: State<'_, Shell>) -> Result<Value, String> {
     store::read(&shell.database).map_err(|error| error.to_string())
 }
@@ -67,6 +81,7 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         supported_contract: store::SUPPORTED_CONTRACT.to_vec(),
         language: forced_language(),
         section: shell.memory.read().usable_section().map(str::to_string),
+        harness: cfg!(feature = "harness"),
     }
 }
 
@@ -112,22 +127,9 @@ fn app_quit(app: AppHandle) {
     app.exit(0);
 }
 
-/// An agent cannot click a menu-bar icon and there is no supported way to script one, so
-/// the hooks the Swift app grew for screenshots exist here too. None of them is reachable
-/// by anything a user does.
-fn screenshot_hooks(window: &WebviewWindow) {
-    if let Ok(appearance) = std::env::var("PRUDENCE_FORCE_APPEARANCE") {
-        let theme = match appearance.as_str() {
-            "dark" => Some(tauri::Theme::Dark),
-            "light" => Some(tauri::Theme::Light),
-            _ => None,
-        };
-        if theme.is_some() {
-            let _ = window.set_theme(theme);
-        }
-    }
-}
-
+/// The language and the appearance are settings that batch 8 will read from the store's
+/// own configuration. Until then they are read from the environment, which is why these
+/// two are **not** behind the `harness` feature: they are the setting, early.
 fn forced_language() -> Option<String> {
     match std::env::var("PRUDENCE_FORCE_LANGUAGE").ok()?.as_str() {
         "en" => Some("en".into()),
@@ -136,16 +138,29 @@ fn forced_language() -> Option<String> {
     }
 }
 
-fn panel_stays_open() -> bool {
-    std::env::var("PRUDENCE_PANEL_OPEN").is_ok_and(|value| !value.is_empty() && value != "0")
+fn forced_appearance(window: &WebviewWindow) {
+    let Ok(appearance) = std::env::var("PRUDENCE_FORCE_APPEARANCE") else {
+        return;
+    };
+    let theme = match appearance.as_str() {
+        "dark" => Some(tauri::Theme::Dark),
+        "light" => Some(tauri::Theme::Light),
+        _ => return,
+    };
+    let _ = window.set_theme(theme);
 }
 
-fn backdrop_wanted() -> bool {
-    std::env::var("PRUDENCE_BACKDROP").is_ok_and(|value| !value.is_empty() && value != "0")
-}
-
-fn window_opens_at_launch() -> bool {
-    std::env::var("PRUDENCE_WINDOW_OPEN").is_ok_and(|value| !value.is_empty() && value != "0")
+/// True while a script is driving the app, so the panel does not dismiss itself out from
+/// under a screenshot. Always false in a release build.
+fn scripted() -> bool {
+    #[cfg(feature = "harness")]
+    {
+        harness::driving()
+    }
+    #[cfg(not(feature = "harness"))]
+    {
+        false
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -190,8 +205,8 @@ pub fn run() {
                 .get_webview_window(MAIN)
                 .expect("the main window is declared in tauri.conf.json");
 
-            screenshot_hooks(&panel_window);
-            screenshot_hooks(&main_window);
+            forced_appearance(&panel_window);
+            forced_appearance(&main_window);
 
             let report = platform::apply_material(&panel_window, platform::Surface::Panel);
             eprintln!("[prudence] panel material: {}", report.kind);
@@ -254,51 +269,17 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // The status item is not laid out for a moment after launch, and a panel shown
-            // before that cannot be anchored under it. A user's first click is always later
-            // than this; the screenshot hooks have to wait on purpose.
-            if panel_stays_open()
-                || window_opens_at_launch()
-                || stress::plan().is_some()
-                || backdrop_wanted()
-            {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    if backdrop_wanted() {
-                        let backdrop = handle.clone();
-                        let _ = handle
-                            .clone()
-                            .run_on_main_thread(move || window::open_backdrop(&backdrop));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1200));
-                    if window_opens_at_launch() {
-                        let open = handle.clone();
-                        let _ = handle
-                            .clone()
-                            .run_on_main_thread(move || window::open(&open));
-                    }
-                    if panel_stays_open() {
-                        let open = handle.clone();
-                        let _ = handle
-                            .clone()
-                            .run_on_main_thread(move || panel::show(&open));
-                    }
-                    if let Some(plan) = stress::plan() {
-                        stress::run(&handle, plan);
-                    }
-                });
-            }
+            #[cfg(feature = "harness")]
+            harness::start(app.handle());
 
             Ok(())
         })
         .on_window_event(|window, event| {
             let app = window.app_handle();
             match (window.label(), event) {
-                // Not `Focused(false)` alone: the screenshot hooks and the stress run
-                // both need a panel that stays put while something else has the focus.
-                (PANEL, tauri::WindowEvent::Focused(false))
-                    if !panel_stays_open() && stress::plan().is_none() =>
-                {
+                // Not `Focused(false)` alone: a script driving the app needs a panel
+                // that stays put while something else has the focus.
+                (PANEL, tauri::WindowEvent::Focused(false)) if !scripted() => {
                     panel::hide(app);
                 }
                 (MAIN, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) => {
@@ -316,6 +297,14 @@ pub fn run() {
                 _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("the Prudence shell failed to start");
+        .build(tauri::generate_context!())
+        .expect("the Prudence shell failed to start")
+        .run(|app, event| {
+            // Cmd-Q goes through Tauri's default application menu and through none of the
+            // three places that used to save, so the window's position and section were
+            // lost on the most ordinary way of quitting.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                app.state::<Shell>().memory.save();
+            }
+        });
 }
