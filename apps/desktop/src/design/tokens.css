@@ -79,6 +79,19 @@
      share a hue family and differ in line style, never in "good" and "bad" colour. */
   --o-alive: #0a7d45;
   --o-rework: #8a5a00;
+  /* The project scale, for the one chart that draws more than one project at a time.
+     A project's colour is its place in the **sorted** list of project names, so it does
+     not move when the range picker changes which projects have a row, and two shots of
+     different ranges agree about which line is which. None of the six is a purpose
+     colour or one of the outcome pair, and a test asserts it: a project drawn in
+     `development`'s blue would read as a purpose, and red or green would read as a
+     verdict on a project. */
+  --proj-0: #3e6ae1;
+  --proj-1: #a2845e;
+  --proj-2: #b3358c;
+  --proj-3: #00786f;
+  --proj-4: #7a5af8;
+  --proj-5: #6e6e73;
 
   /* The mark's own ink: which of assets/brand/logo.svg and logo-white.svg a surface
      is showing. The markup is inlined once with `currentColor`. */
@@ -120,6 +133,14 @@
     --p-unknown: #98989d;
     --o-alive: #3ac07a;
     --o-rework: #e0a33a;
+    --proj-0: #6e9bff;
+    --proj-1: #c8a579;
+    --proj-2: #e36fc4;
+    --proj-3: #2fb3a6;
+    --proj-4: #a68bff;
+    /* See the note on the other dark block: the printed value collides with
+       `--p-unknown`. */
+    --proj-5: #b3b3bb;
     --brand-ink: #ffffff;
     --menubar: #1e1e20;
     --menubar-press: rgba(255, 255, 255, 0.18);
@@ -158,6 +179,16 @@
   --p-unknown: #98989d;
   --o-alive: #3ac07a;
   --o-rework: #e0a33a;
+  --proj-0: #6e9bff;
+  --proj-1: #c8a579;
+  --proj-2: #e36fc4;
+  --proj-3: #2fb3a6;
+  --proj-4: #a68bff;
+  /* `apps/mac/DESIGN.md` prints #98989D here, which in dark is exactly `--p-unknown`,
+     the grey a purpose the engine does not recognise is drawn in. The document's own
+     rule is that no project colour may be a purpose colour, so the document is wrong
+     and this is a shade lighter. Reported to the lead. */
+  --proj-5: #b3b3bb;
   --brand-ink: #ffffff;
   --menubar: #1e1e20;
   --menubar-press: rgba(255, 255, 255, 0.18);

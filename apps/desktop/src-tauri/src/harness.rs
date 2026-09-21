@@ -26,6 +26,14 @@ use crate::{panel, window, MAIN};
 
 /// Is a script driving the app right now? The panel must not dismiss itself on focus
 /// loss while one is, or every screenshot is of an empty desktop.
+/// A screen taller than the window cannot be photographed whole, and the charts below
+/// the fold are the ones a batch is usually judged on. The offset is handed to the page
+/// in `shell_info` rather than evaluated into it, because an eval races the page's first
+/// draw and a value the page reads cannot.
+pub fn scroll_to() -> Option<u32> {
+    std::env::var("PRUDENCE_SCROLL").ok()?.parse().ok()
+}
+
 pub fn driving() -> bool {
     panel_stays_open() || window_opens_at_launch() || plan().is_some()
 }
@@ -74,6 +82,16 @@ pub fn start(app: &AppHandle) {
                 .clone()
                 .run_on_main_thread(move || panel::show(&open));
         }
+        // A screen taller than the window cannot be photographed whole, and the charts
+        // below the fold are the ones a batch is usually judged on.
+        if let Ok(offset) = std::env::var("PRUDENCE_SCROLL") {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            eval(
+                &handle,
+                &format!("window.Stress && window.Stress.scroll({offset})"),
+            );
+        }
+
         if let Some(plan) = plan() {
             run(&handle, plan);
         }

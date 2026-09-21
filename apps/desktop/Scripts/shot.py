@@ -145,6 +145,7 @@ def main() -> int:
     parser.add_argument("--out", default=str(APP / "shots"))
     parser.add_argument("--store", required=True, help="a COPY of a store, never the real one")
     parser.add_argument("--wait", type=float, default=7.0)
+    parser.add_argument("--scroll", type=int, default=0, help="scroll the screen first")
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")
     parser.add_argument(
@@ -206,6 +207,8 @@ def main() -> int:
             env[key] = value
     else:
         env.update(TARGETS[args.window]["env"])
+    if args.scroll:
+        env["PRUDENCE_SCROLL"] = str(args.scroll)
 
     log = out / f"{args.name}.log"
     started = []

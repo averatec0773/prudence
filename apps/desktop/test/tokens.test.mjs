@@ -91,6 +91,47 @@ test("every purpose has a colour in both appearances, and no two share one", () 
   }
 });
 
+/** DESIGN.md, "The project colour scale". Six, and none of them may be mistaken for a
+    purpose or for a verdict. */
+const PROJECT_SCALE = [
+  ["#3e6ae1", "#6e9bff"],
+  ["#a2845e", "#c8a579"],
+  ["#b3358c", "#e36fc4"],
+  ["#00786f", "#2fb3a6"],
+  ["#7a5af8", "#a68bff"],
+  // Dark is #B3B3BB and not the #98989D the document prints: that value is exactly
+  // `--p-unknown` in dark, and the document's own rule forbids a project colour being a
+  // purpose colour. The test below is what found it.
+  ["#6e6e73", "#b3b3bb"],
+];
+
+test("the project scale is the six the document prints", () => {
+  PROJECT_SCALE.forEach(([lightHex, darkHex], index) => {
+    assert.equal(light[`--proj-${index}`], lightHex, `light --proj-${index}`);
+    assert.equal(dark[`--proj-${index}`], darkHex, `dark --proj-${index}`);
+  });
+});
+
+/* A project drawn in `development`'s blue would read as a purpose in a window where
+   every other chart is coloured by purpose, and one drawn in the outcome pair would read
+   as a verdict on the project. */
+test("no project colour is a purpose colour or one of the outcome pair", () => {
+  for (const [name, table] of [
+    ["light", light],
+    ["dark", dark],
+  ]) {
+    const taken = new Set([
+      ...PURPOSE.map(([purpose]) => table[`--p-${purpose}`]),
+      table["--o-alive"],
+      table["--o-rework"],
+    ]);
+    PROJECT_SCALE.forEach((_, index) => {
+      const colour = table[`--proj-${index}`];
+      assert.equal(taken.has(colour), false, `${name} --proj-${index} (${colour}) is taken`);
+    });
+  }
+});
+
 test("no outcome colour is a purpose colour", () => {
   for (const table of [light, dark]) {
     const purposes = PURPOSE.map(([purpose]) => table[`--p-${purpose}`]);

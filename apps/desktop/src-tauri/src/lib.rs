@@ -61,6 +61,9 @@ pub struct ShellInfo {
     /// Whether this build carries the automation hooks. The page exposes its own test
     /// entry point only when it does.
     harness: bool,
+    /// How far down a script wants the screen scrolled before it is photographed.
+    /// Always null in a release build.
+    scroll: Option<u32>,
 }
 
 /// `async` so that a slow disk cannot freeze the panel: a non-async command runs on the
@@ -84,6 +87,18 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         language: forced_language(),
         section: shell.memory.read().usable_section().map(str::to_string),
         harness: cfg!(feature = "harness"),
+        scroll: scripted_scroll(),
+    }
+}
+
+fn scripted_scroll() -> Option<u32> {
+    #[cfg(feature = "harness")]
+    {
+        harness::scroll_to()
+    }
+    #[cfg(not(feature = "harness"))]
+    {
+        None
     }
 }
 
