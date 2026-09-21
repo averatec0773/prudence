@@ -189,7 +189,8 @@ fn in_the_menu_bar(frame: NSRect, screen: NSRect) -> bool {
         && frame.origin.x + frame.size.width <= screen.origin.x + screen.size.width;
     // Exactly equal in every case seen, but a menu bar is not measured to the micron.
     let flush_with_the_top =
-        ((frame.origin.y + frame.size.height) - (screen.origin.y + screen.size.height)).abs() <= 1.0;
+        ((frame.origin.y + frame.size.height) - (screen.origin.y + screen.size.height)).abs()
+            <= 1.0;
     horizontally_inside && flush_with_the_top
 }
 
@@ -210,7 +211,10 @@ pub fn tray_anchor() -> Option<TrayAnchor> {
     // AppKit has not laid the status item out yet during `setup`. Answering with the frame
     // it reports then would put the panel off the screen, so say nothing and let the
     // caller fall back.
-    if !screens.iter().any(|screen| in_the_menu_bar(frame, screen.frame())) {
+    if !screens
+        .iter()
+        .any(|screen| in_the_menu_bar(frame, screen.frame()))
+    {
         eprintln!(
             "[anchor] status item not laid out yet: {:?} ({})",
             frame,
