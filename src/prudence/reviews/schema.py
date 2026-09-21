@@ -77,6 +77,10 @@ SEGMENT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("segment_input_hash", "TEXT"),
     ("segment_numbers", "TEXT"),
     ("segment_created_at", "TEXT"),
+    # The language the segment was asked for, resolved (never `system`). A row written
+    # before this column existed is NULL, which reads as "English, before there was a
+    # choice"; `segment_of` says so rather than guessing.
+    ("segment_language", "TEXT"),
 )
 
 
@@ -221,17 +225,20 @@ def store_segment(
     input_hash: str,
     numbers: list[dict[str, Any]],
     created_at: str,
+    language: str | None = None,
 ) -> None:
     """Attach a model-written segment to a review, with everything needed to judge it.
 
-    The prompt version, the model id, the hash of what was sent and the list of numbers
-    the model was given are stored with the text, so that a segment written months ago
-    can still be checked against the figures it was allowed to use (rule 10).
+    The prompt version, the model id, the hash of what was sent, the list of numbers the
+    model was given and the language it was asked to write in are stored with the text,
+    so that a segment written months ago can still be checked against the figures it was
+    allowed to use (rule 10) and read in the language it was meant to be in.
     """
     ensure(connection)
     connection.execute(
         "UPDATE review SET segment_text = ?, segment_prompt_version = ?, segment_model = ?,"
-        " segment_input_hash = ?, segment_numbers = ?, segment_created_at = ? WHERE id = ?",
+        " segment_input_hash = ?, segment_numbers = ?, segment_created_at = ?,"
+        " segment_language = ? WHERE id = ?",
         (
             text,
             prompt_version,
@@ -239,6 +246,7 @@ def store_segment(
             input_hash,
             json.dumps(numbers, ensure_ascii=False),
             created_at,
+            language,
             review_id,
         ),
     )
@@ -268,7 +276,16 @@ def segment_of(row: sqlite3.Row) -> dict[str, Any] | None:
         "input_hash": row["segment_input_hash"],
         "numbers": numbers if isinstance(numbers, list) else [],
         "created_at": row["segment_created_at"],
+        "language": _column(row, "segment_language"),
     }
+
+
+def _column(row: sqlite3.Row, name: str) -> Any:
+    """One column of a row that may predate it. Absent is None, never an exception."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
 
 
 def sections_of(row: sqlite3.Row) -> dict[str, Any]:

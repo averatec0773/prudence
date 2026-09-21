@@ -18,6 +18,7 @@ let package = Package(
                 .product(name: "PrudenceStore", package: "PrudenceKit"),
                 .product(name: "PrudenceEngine", package: "PrudenceKit"),
                 .product(name: "PrudenceModels", package: "PrudenceKit"),
+                .product(name: "PrudenceUI", package: "PrudenceKit"),
             ]
         )
     ]

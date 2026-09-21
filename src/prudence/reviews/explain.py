@@ -25,21 +25,24 @@ from dataclasses import dataclass
 from typing import Any
 
 from prudence.model import Model, Request, Sent
+from prudence.model import language as language_module
 from prudence.model.guard import Verdict, complete_checked
 from prudence.model.numbers import check_numbers, numbers_in
 from prudence.model.recorded import input_hash
 from prudence.reviews import schema
 
-# Bumped whenever SYSTEM changes. A stored segment carries the version that wrote it, so
-# two segments written months apart can be told apart without guessing from their prose.
+# Bumped whenever the system prompt changes. A stored segment carries the version that
+# wrote it, so two segments written months apart can be told apart without guessing from
+# their prose.
 # 2: the first live run graded the work ("which is solid", "a substantial shift"), so the
 # rule against grading moved from implicit to stated, and `tone.check_tone` now enforces it.
-EXPLAIN_PROMPT_VERSION = 2
+# 3: the last line names the output language, in that language (`model/language.py`).
+EXPLAIN_PROMPT_VERSION = 3
 
 MAX_WORDS = 180
 DEFAULT_MAX_TOKENS = 600
 
-SYSTEM = f"""\
+RULES = f"""\
 You are writing one short segment at the end of a developer's own work review. The
 review is already written and every figure in it was computed from that developer's own
 recorded sessions and commits before you were called.
@@ -72,6 +75,20 @@ Rules, all of them hard:
 """
 
 
+def system(language: str = language_module.DEFAULT) -> str:
+    """The rules, and then one line naming the language to answer in, in that language.
+
+    The language line is last and on its own, so the rules above it are byte-identical
+    across languages: the long half of the prompt is the cached half, and a user who
+    switches language keeps every rule they had.
+    """
+    return f"{RULES}\n{language_module.instruction(language)}\n"
+
+
+# The English rendering, which is what a caller that says nothing gets.
+SYSTEM = system()
+
+
 @dataclass(frozen=True)
 class Segment:
     """One model-written segment and everything needed to judge it later.
@@ -86,6 +103,7 @@ class Segment:
     input_hash: str
     numbers: list[dict[str, Any]]
     verdict: Verdict
+    language: str = language_module.DEFAULT
 
     @property
     def invented(self) -> list[str]:
@@ -173,18 +191,24 @@ def prompt_body(payload: dict[str, Any]) -> str:
     return json.dumps(body, indent=2, ensure_ascii=False, sort_keys=True)
 
 
-def build_request(payload: dict[str, Any], max_tokens: int = DEFAULT_MAX_TOKENS) -> Request:
+def build_request(
+    payload: dict[str, Any],
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    language: str = language_module.DEFAULT,
+) -> Request:
     """The whole call, with the receipt the surface prints before making it."""
     user = prompt_body(payload)
+    prompt = system(language)
     return Request(
-        system=SYSTEM,
+        system=prompt,
         user=user,
         max_tokens=max_tokens,
         sent=Sent(
             sections=section_names(payload),
             numbers=len(numbers_of(payload)),
             content=False,
-            bytes=len(SYSTEM.encode()) + len(user.encode()),
+            bytes=len(prompt.encode()) + len(user.encode()),
+            language=language,
         ),
     )
 
@@ -194,6 +218,7 @@ def explain(
     model: Model,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     call: Any = None,
+    language: str = language_module.DEFAULT,
 ) -> Segment:
     """Make the call and check the answer. Storing it is the caller's decision.
 
@@ -206,8 +231,10 @@ def explain(
     `input_hash` stored is the first request's, because that is the identity of the
     prompt the segment answers, not of the argument it took to get there.
     """
-    request = build_request(payload, max_tokens=max_tokens)
-    completion, verdict = complete_checked(model, request, allowed_numbers(payload), call=call)
+    request = build_request(payload, max_tokens=max_tokens, language=language)
+    completion, verdict = complete_checked(
+        model, request, allowed_numbers(payload), call=call, language=language
+    )
     return Segment(
         text=completion.text.strip(),
         model=completion.model,
@@ -215,6 +242,7 @@ def explain(
         input_hash=input_hash(request),
         numbers=numbers_of(payload),
         verdict=verdict,
+        language=language,
     )
 
 
@@ -233,6 +261,7 @@ def store(
         input_hash=segment.input_hash,
         numbers=segment.numbers,
         created_at=created_at,
+        language=segment.language,
     )
 
 
@@ -240,6 +269,7 @@ __all__ = [
     "DEFAULT_MAX_TOKENS",
     "EXPLAIN_PROMPT_VERSION",
     "MAX_WORDS",
+    "RULES",
     "SYSTEM",
     "Segment",
     "allowed_numbers",
@@ -250,4 +280,5 @@ __all__ = [
     "prompt_body",
     "section_names",
     "store",
+    "system",
 ]

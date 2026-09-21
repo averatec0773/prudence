@@ -27,6 +27,11 @@ from prudence.model.base import (
     Sent,
 )
 from prudence.model.guard import Verdict, complete_checked, judge
+from prudence.model.language import CODES as LANGUAGES
+from prudence.model.language import DEFAULT as DEFAULT_LANGUAGE
+from prudence.model.language import LANGUAGE_VERSION
+from prudence.model.language import SYSTEM as SYSTEM_LANGUAGE
+from prudence.model.language import resolve as resolve_language
 from prudence.model.none import NoModel
 from prudence.model.numbers import check_numbers, numbers_in
 from prudence.model.tone import TONE_VERSION, check_tone
@@ -49,15 +54,19 @@ __all__ = [
     "ANTHROPIC",
     "BACKENDS",
     "BACKEND_ENV",
+    "DEFAULT_LANGUAGE",
     "FIXTURES_ENV",
+    "LANGUAGES",
+    "LANGUAGE_VERSION",
     "NONE",
     "RECORDED",
+    "SYSTEM_LANGUAGE",
+    "TONE_VERSION",
     "Completion",
     "Model",
     "ModelFailed",
     "ModelUnavailable",
     "NoModel",
-    "TONE_VERSION",
     "Request",
     "Sent",
     "Verdict",
@@ -66,6 +75,7 @@ __all__ = [
     "complete_checked",
     "judge",
     "numbers_in",
+    "resolve_language",
     "select_model",
 ]
 

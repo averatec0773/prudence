@@ -1,4 +1,5 @@
 import PrudenceModels
+import PrudenceUI
 import SwiftUI
 
 /// One stored review, section by section.
@@ -18,12 +19,12 @@ struct ReviewView: View {
 
     var body: some View {
         if let review = model.review {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: Space.cardGap) {
                 header(review)
                 if let reason = model.notReadyReason { notReady(reason) }
                 else if let message = model.actionMessage { banner(message) }
                 if review.payloadUnreadable {
-                    EmptyStateView(
+                    EmptyState(
                         symbol: "doc.questionmark",
                         title: "This review's sections cannot be read",
                         detail:
@@ -39,10 +40,10 @@ struct ReviewView: View {
                 provenance(review)
             }
         } else {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: Space.cardGap) {
                 if let reason = model.notReadyReason { notReady(reason) }
                 else if let message = model.actionMessage { banner(message) }
-                EmptyStateView(
+                EmptyState(
                     symbol: "doc.text",
                     title: "No review yet",
                     detail:
@@ -58,11 +59,11 @@ struct ReviewView: View {
 
     private func header(_ review: ReviewModel) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(review.headline).font(.title3.bold())
+            Text(review.headline).font(Type.title3)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(review.rangeLine).font(.callout).foregroundStyle(.secondary)
+            Text(review.rangeLine).font(Type.footnote).foregroundStyle(Ink.secondary)
             if let outcomeLine = review.outcomeLine {
-                Text(outcomeLine).font(.caption).foregroundStyle(.secondary)
+                Text(outcomeLine).font(Type.caption).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 14) {
@@ -76,15 +77,18 @@ struct ReviewView: View {
                     .help("Every number on this page, each one re-derivable from the CLI.")
             }
         }
-        .padding(16)
+        .padding(Space.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+        .background(Surface.plain, in: RoundedRectangle(cornerRadius: Radius.panel))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                .strokeBorder(Surface.hairline, lineWidth: 0.5))
     }
 
     private func tag(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.caption2).foregroundStyle(.tertiary)
-            Text(value).font(.callout.monospacedDigit())
+            Text(label).font(Type.caption2).foregroundStyle(Ink.tertiary)
+            Text(value).font(Type.figure(13, weight: .regular)).foregroundStyle(Ink.primary)
         }
     }
 
@@ -94,8 +98,8 @@ struct ReviewView: View {
             + "numbers, each re-derivable with `prudence usage`, `prudence outcomes` or "
             + "`prudence observations` over the same range."
         )
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        .font(Type.caption)
+        .foregroundStyle(Ink.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -106,34 +110,35 @@ struct ReviewView: View {
     /// readiness rule and is the user's decision to make, not the app's.
     private func notReady(_ reason: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+            Image(systemName: "clock.badge.exclamationmark").foregroundStyle(Outcome.rework)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Not ready for a review yet").font(.callout.weight(.semibold))
-                Text(reason).font(.callout).foregroundStyle(.secondary)
+                Text("Not ready for a review yet").font(Type.footnoteStrong)
+                Text(reason).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             Button("Write anyway") { model.reviewNow(force: true) }
+                .buttonStyle(.prudence)
                 .disabled(model.isBusy)
             Button("Dismiss") { model.dismissMessage() }
-                .buttonStyle(.borderless)
+                .buttonStyle(.prudencePlain)
         }
-        .padding(12)
+        .padding(Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .background(Outcome.rework.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.card))
     }
 
     private func banner(_ message: String) -> some View {
         HStack(spacing: 10) {
             if model.isBusy { ProgressView().controlSize(.small) }
-            Text(message).font(.callout).foregroundStyle(.secondary)
+            Text(message).font(Type.footnote).foregroundStyle(Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
-            Button("Dismiss") { model.dismissMessage() }.buttonStyle(.borderless)
+            Button("Dismiss") { model.dismissMessage() }.buttonStyle(.prudencePlain)
         }
-        .padding(12)
+        .padding(Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+        .background(Surface.secondary, in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -165,10 +170,10 @@ struct SectionView: View {
             if !cards.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(cards) { number in
-                        SummaryCard(
+                        StatCard(
                             title: number.label,
                             value: number.text,
-                            detail: number.coverage.map { "coverage \(Formatting.percent($0))" },
+                            detail: number.coverage.map { "coverage \(Fmt.percent($0))" },
                             help: helpFor(number),
                             compact: true
                         )
@@ -178,7 +183,7 @@ struct SectionView: View {
             if section.hasTable {
                 StringTable(headers: section.headers, rows: section.rows)
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -197,7 +202,7 @@ struct SectionView: View {
                 let columns = [GridItem(.adaptive(minimum: 138), spacing: 10)]
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                     ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
-                        SummaryCard(
+                        StatCard(
                             title: row.first ?? "",
                             value: row.count > 1 ? row[1] : "-",
                             detail: row.count > 2 ? "coverage \(row[2])" : "coverage \(coverage)",
@@ -210,7 +215,7 @@ struct SectionView: View {
                     }
                 }
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -222,17 +227,17 @@ struct SectionView: View {
             if section.hasTable {
                 ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(row.first ?? "").font(.callout)
+                        Text(row.first ?? "").font(Type.footnote)
                             .fixedSize(horizontal: false, vertical: true)
                         if row.count > 1 {
-                            Text(row[1]).font(.caption).foregroundStyle(.secondary)
+                            Text(row[1]).font(Type.caption).foregroundStyle(Ink.secondary)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if index < section.rows.count - 1 { Divider().opacity(0.4) }
                 }
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -251,7 +256,7 @@ struct SectionView: View {
                     }
                 }
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -274,15 +279,16 @@ struct SectionView: View {
         .padding(.vertical, 5)
     }
 
-    /// The change column reads green up and red down, and the dash stays grey. The sign comes
-    /// from the stored text; nothing is recomputed to decide the colour.
-    private func cellStyle(_ cell: String, index: Int, isHeader: Bool) -> AnyShapeStyle {
-        guard !isHeader, index == 3 else {
-            return AnyShapeStyle(isHeader ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-        }
-        if cell.hasPrefix("+") { return AnyShapeStyle(Color.green) }
-        if cell.hasPrefix("-") && cell.count > 1 { return AnyShapeStyle(Color.red) }
-        return AnyShapeStyle(.secondary)
+    /// **The change column is never coloured by its sign.**
+    ///
+    /// It used to read green up and red down. That is the one thing principle 3 forbids: more
+    /// sessions is not better and less rework is not a score, and a colour that says otherwise
+    /// is a grade the engine never computed. The sign stays in the text, where it came from,
+    /// and the ink is `DeltaChip.tint` whichever way the number went (`PrudenceUI`'s delta
+    /// rule; a test pins it).
+    private func cellStyle(_ cell: String, index: Int, isHeader: Bool) -> Color {
+        if isHeader { return Ink.secondary }
+        return index == 3 ? DeltaChip.tint : Ink.primary
     }
 
     // Last time's suggestions: one row each, with what moved under it.
@@ -291,15 +297,15 @@ struct SectionView: View {
             if section.hasTable {
                 ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(row.first ?? "").font(.callout)
+                        Text(row.first ?? "").font(Type.footnote)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(trailing(of: row)).font(.caption).foregroundStyle(.secondary)
+                        Text(trailing(of: row)).font(Type.caption).foregroundStyle(Ink.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if index < section.rows.count - 1 { Divider().opacity(0.4) }
                 }
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -317,8 +323,8 @@ struct SectionView: View {
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("A section this version of the app does not lay out; here it is as stored.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Type.caption)
+                .foregroundStyle(Ink.secondary)
             if section.hasTable {
                 StringTable(headers: section.headers, rows: section.rows)
             } else if !section.rows.isEmpty {
@@ -327,9 +333,9 @@ struct SectionView: View {
                         ForEach(Array(section.pairs(of: row).enumerated()), id: \.offset) {
                             _, pair in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(pair.0).font(.caption).foregroundStyle(.secondary)
+                                Text(pair.0).font(Type.caption).foregroundStyle(Ink.secondary)
                                     .frame(width: 130, alignment: .leading)
-                                Text(pair.1).font(.callout)
+                                Text(pair.1).font(Type.footnote)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -337,7 +343,7 @@ struct SectionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if let empty = section.empty {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -348,7 +354,7 @@ struct SectionView: View {
         if !section.notes.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(section.notes.enumerated()), id: \.offset) { _, note in
-                    Text(note).font(.caption).foregroundStyle(.secondary)
+                    Text(note).font(Type.caption).foregroundStyle(Ink.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -358,7 +364,7 @@ struct SectionView: View {
 
     private func helpFor(_ number: ReviewNumber) -> String {
         guard let coverage = number.coverage else { return number.label }
-        return "\(number.label), at coverage \(Formatting.percent(coverage))."
+        return "\(number.label), at coverage \(Fmt.percent(coverage))."
     }
 }
 
@@ -376,19 +382,20 @@ struct SegmentCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("What this means", systemImage: "text.quote")
-                .font(.headline)
+                .font(Type.headline)
             Text(segment.text)
-                .font(.body)
+                .font(Type.body)
                 .fixedSize(horizontal: false, vertical: true)
             Text(credit)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Type.caption)
+                .foregroundStyle(Ink.secondary)
         }
-        .padding(16)
+        .padding(Space.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        .background(Surface.secondary, in: RoundedRectangle(cornerRadius: Radius.panel))
         .overlay(
-            RoundedRectangle(cornerRadius: 12).strokeBorder(.tertiary.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                .strokeBorder(Ink.accent.opacity(0.35), lineWidth: 1)
         )
     }
 

@@ -15,6 +15,7 @@ import pytest
 
 from prudence import config as config_module
 from prudence.model import NoModel, Request, Sent, select_model
+from prudence.model import language as language_module
 from prudence.model.anthropic_backend import AnthropicModel
 from prudence.model.base import Completion, ModelFailed, ModelUnavailable
 from prudence.model.guard import complete_checked, correction, judge
@@ -84,6 +85,51 @@ def test_the_config_file_round_trips_the_model_block(tmp_path) -> None:
     assert back.model.model_id == "claude-haiku-4-5"
     assert back.model.max_tokens == 512
     assert back.review.explain is True
+    assert back.model.language == config_module.DEFAULT_LANGUAGE
+
+
+def test_the_config_file_round_trips_the_language(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    config = config_module.Config(path=path)
+    config.model = config_module.ModelSettings(language="zh-Hans")
+    config_module.save(config)
+    assert config_module.load(path).model.language == "zh-Hans"
+
+    # A code nobody knows is kept as written and falls back at the call, so an unreadable
+    # setting cannot stop a review being written (architecture rule 3).
+    path.write_text('version = 1\n\n[model]\nlanguage = "kl"\n')
+    assert config_module.load(path).model.language == "kl"
+    assert language_module.resolve("kl") == "en"
+
+
+# --- the language -------------------------------------------------------------------------
+
+
+def test_system_reads_the_locale_at_the_moment_of_the_call() -> None:
+    assert language_module.resolve("system", {"LANG": "zh_CN.UTF-8"}) == "zh-Hans"
+    assert language_module.resolve("system", {"LANG": "en_GB.UTF-8"}) == "en"
+    # LC_ALL wins, as POSIX says, and a `C` locale is no answer at all.
+    assert language_module.resolve("system", {"LC_ALL": "zh_CN", "LANG": "en_US"}) == "zh-Hans"
+    assert language_module.resolve("system", {"LC_ALL": "C", "LANG": "zh_SG"}) == "zh-Hans"
+    # Nothing set, and a language no row matches, are both the engine's own language.
+    assert language_module.resolve("system", {}) == "en"
+    assert language_module.resolve("system", {"LANG": "fr_FR.UTF-8"}) == "en"
+    # `zh_TW` is traditional Chinese: it must not fall into the simplified row.
+    assert language_module.resolve("system", {"LANG": "zh_TW.UTF-8"}) == "en"
+
+
+def test_a_chosen_language_beats_the_locale_and_names_itself_in_itself() -> None:
+    assert language_module.resolve("en", {"LANG": "zh_CN.UTF-8"}) == "en"
+    assert language_module.instruction("en") == "Write in English."
+    assert language_module.instruction("zh-Hans") == "用简体中文写。"
+    assert language_module.name_of("zh-Hans") == "Simplified Chinese"
+
+
+def test_the_sending_line_says_which_language_the_answer_is_asked_for() -> None:
+    line = Sent(numbers=3, bytes=100, language="zh-Hans").line("recorded", max_tokens=64)
+    assert "answer in zh-Hans;" in line
+    # A receipt for a call that named no language says nothing about one.
+    assert "answer in" not in Sent(numbers=3, bytes=100).line("recorded", max_tokens=64)
 
 
 # --- the Anthropic request --------------------------------------------------------------
@@ -215,6 +261,27 @@ def test_check_numbers_ignores_a_date_a_person_wrote() -> None:
     assert check_numbers("In 2026 you reworked 91.1% of them", given) == ["91.1%"]
 
 
+def test_check_numbers_reads_a_chinese_answer_in_its_own_characters() -> None:
+    """A segment written in Chinese prints the same figures in different characters."""
+    given = ["92%", "5000", "2"]
+    # Full-width percent sign and full-width digits are presentation, not arithmetic.
+    assert check_numbers("覆盖率 92％，共 2 个会话。", given) == []
+    assert check_numbers("覆盖率 ９２％。", given) == []
+    # A magnitude word is a multiplier: 0.5万 is the 5000 it was given.
+    assert check_numbers("总共 0.5万 行。", given) == []
+    assert check_numbers("总共 5千 行。", given) == []
+    # And a figure the magnitude changed is still an invention.
+    assert check_numbers("总共 5万 行。", given) == ["5万"]
+    # Without the reading, 5万 would tokenise as a bare 5 and be missed entirely.
+    assert check_numbers("总共 5万 行。", ["5"]) == ["5万"]
+
+
+def test_a_magnitude_does_not_launder_a_dropped_unit() -> None:
+    """`5k` and `5000` are different claims, and 0.5万 is the second one."""
+    assert check_numbers("总共 0.5万 tokens", ["5k"]) == ["0.5万"]
+    assert check_numbers("总共 5k tokens", ["5k"]) == []
+
+
 # --- the tone guard -------------------------------------------------------------------
 
 
@@ -240,6 +307,18 @@ def test_check_tone_leaves_description_alone() -> None:
     )
     assert check_tone(described) == []
     assert check_tone("goods were committed to the badge directory") == []
+
+
+def test_check_tone_grades_chinese_with_the_chinese_list() -> None:
+    """A Chinese segment breaks principle 3 with Chinese words, and with English ones."""
+    assert check_tone("覆盖率 92%，表现优秀。", "zh-Hans") == ["优秀"]
+    assert check_tone("这一周很棒，返工率大幅下降。", "zh-Hans") == ["很棒", "大幅"]
+    # The English list runs too: a Chinese paragraph still quotes the page's labels.
+    assert check_tone("覆盖率 92%，which is solid。", "zh-Hans") == ["solid"]
+    # And a Chinese sentence that only describes passes, as the English one does.
+    assert check_tone("本周有 4 个会话，18 次提交，平均覆盖率 92%。", "zh-Hans") == []
+    # Asked in English, the Chinese words are not looked for at all.
+    assert check_tone("表现优秀") == []
 
 
 def test_a_verdict_names_both_kinds_of_violation() -> None:

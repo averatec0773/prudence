@@ -20,6 +20,7 @@ import click
 from prudence import config as config_module
 from prudence.ask import answer as answer_module
 from prudence.cli import modelio
+from prudence.model import LANGUAGES
 from prudence.paths import database_file
 from prudence.store import db, views
 
@@ -35,6 +36,12 @@ from prudence.store import db, views
     help="Also send short transcript excerpts. Full-capture projects only; never by default.",
 )
 @click.option("--model-id", "model_id", metavar="ID", help="Override the configured model id.")
+@click.option(
+    "--language",
+    "language",
+    type=click.Choice(LANGUAGES),
+    help="Language for the answer only; the evidence stays English (config: model.language).",
+)
 @click.option("--json", "as_json", is_flag=True, help="The evidence and the answer as JSON.")
 def ask(
     question: str,
@@ -42,6 +49,7 @@ def ask(
     no_model: bool,
     with_content: bool,
     model_id: str | None,
+    language: str | None,
     as_json: bool,
 ) -> None:
     """Answer a question about your recent work from the record."""
@@ -61,6 +69,7 @@ def ask(
                 levels=settings.levels,
                 max_tokens=settings.model.max_tokens,
                 call=_call,
+                language=modelio.language_for(settings, language),
             )
         except LookupError as error:
             raise click.UsageError(str(error)) from error

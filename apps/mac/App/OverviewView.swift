@@ -1,5 +1,6 @@
 import Charts
 import PrudenceModels
+import PrudenceUI
 import SwiftUI
 
 /// The Overview: three cards, then two charts.
@@ -9,12 +10,16 @@ import SwiftUI
 /// view, which is the rule task 8 set: the bars read `app_usage_by_purpose_day`, the lines
 /// read `app_outcomes_by_week`, the cards read those two plus `app_session_list` and
 /// `app_commits_by_day`. Nothing joins anything.
+///
+/// Batch 1 gave this screen the tokens: the same palette, spacing, card and type scale as the
+/// popover, so the two do not look like two apps. The charts themselves are batch 2 work
+/// (`apps/mac/DESIGN.md`, "What batch 2 still owes").
 struct OverviewView: View {
 
     @ObservedObject var model: WindowModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.cardGap) {
             cards
             UsageByWeekChart(model: model.weeklyUsage, range: model.range)
             OutcomesByWeekChart(model: model.outcomes)
@@ -23,26 +28,27 @@ struct OverviewView: View {
 
     private var cards: some View {
         let cards = model.cards
-        let scope = model.project ?? ProjectFilter.allProjectsLabel
-        return HStack(alignment: .top, spacing: 14) {
-            SummaryCard(
-                title: "Sessions in range",
-                value: "\(cards.sessions)",
-                detail: cards.edits.map { "\($0) edits" } ?? "edits not measured",
+        let scope = model.project ?? Str.scopeAllProjects.text
+        return HStack(alignment: .top, spacing: Space.cardGap) {
+            StatCard(
+                title: Str.overviewSessionsInRange.text,
+                value: Fmt.count(cards.sessions),
+                detail: cards.edits.map { Fmt.edits($0) } ?? Str.overviewEditsNotMeasured.text,
                 help: "Rows of app_session_list started in this range, \(scope)."
             )
-            SummaryCard(
-                title: "Active hours",
-                value: cards.activeHoursText,
-                detail: "sum of each session's sittings",
+            StatCard(
+                title: Str.overviewActiveHours.text,
+                value: Fmt.hours(cards.activeMinutes / 60),
+                detail: Str.overviewSittingsNote.text,
                 help:
                     "The sum of active_minutes on app_usage_by_purpose_day over this range, the "
                     + "same way `prudence usage` counts them."
             )
-            SummaryCard(
-                title: "Commits in range",
-                value: "\(cards.commits)",
-                detail: cards.methodText,
+            StatCard(
+                title: Str.overviewCommitsInRange.text,
+                value: Fmt.count(cards.commits),
+                detail: Str.overviewFactInferred(
+                    Fmt.count(cards.commitsFact), Fmt.count(cards.commitsInferred)),
                 help:
                     "From app_commits_by_day, where a commit is counted once at its best "
                     + "confidence. Uncertain commits are reported by the engine and never "
@@ -68,7 +74,7 @@ struct UsageByWeekChart: View {
     @State private var hovered: String?
 
     private var scale: (domain: [String], range: [Color]) {
-        PurposeColour.scale(for: model.purposes)
+        Purpose.scale(for: model.purposes)
     }
 
     private var selected: UsageWeek? {
@@ -78,22 +84,18 @@ struct UsageByWeekChart: View {
 
     var body: some View {
         Panel(
-            title: "Tokens by purpose, per week",
-            note:
-                "Summed from app_usage_by_purpose_day into the ISO week each local day falls in. "
-                + "A session's tokens are counted on the day its first record was written."
+            title: Str.overviewTokensByPurpose.text,
+            note: Str.overviewTokensByPurposeNote.text
         ) {
             if model.isEmpty {
-                EmptyStateView(
+                EmptyState(
                     symbol: "chart.bar",
-                    title: "No tokens in this range",
-                    detail:
-                        "Nothing here measured any tokens. A Claude Code version that wrote no "
-                        + "usage fields is not zero tokens; it is no measurement at all."
+                    title: Str.overviewNoTokensTitle.text,
+                    detail: Str.overviewNoTokensDetail.text
                 )
             } else {
                 chart
-                legend
+                PurposeLegend(purposes: scale.domain)
             }
         }
     }
@@ -119,7 +121,7 @@ struct UsageByWeekChart: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let tokens = value.as(Int.self) {
-                        Text(Formatting.tokens(tokens))
+                        Text(Fmt.tokens(tokens)).font(Type.caption2.monospacedDigit())
                     }
                 }
             }
@@ -135,45 +137,34 @@ struct UsageByWeekChart: View {
     @ViewBuilder
     private var hoverCard: some View {
         if let selected {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Week of \(selected.label)").font(.caption.weight(.semibold))
-                ForEach(selected.slices) { slice in
+            Card(padding: Space.s3, radius: Radius.control) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(Str.overviewWeekOf(Fmt.shortDay(selected.label)))
+                        .font(Type.captionStrong)
+                        .foregroundStyle(Ink.primary)
+                    ForEach(selected.slices) { slice in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Purpose.colour(slice.purpose))
+                                .frame(width: 7, height: 7)
+                            Text(Fmt.purpose(slice.purpose)).font(Type.caption)
+                            Spacer(minLength: 10)
+                            Text(Fmt.tokens(slice.tokens))
+                                .font(Type.figure(12, weight: .regular))
+                        }
+                    }
+                    Divider()
                     HStack(spacing: 6) {
-                        Circle().fill(PurposeColour.colour(slice.purpose)).frame(width: 7, height: 7)
-                        Text(slice.purpose).font(.caption)
+                        Text(.overviewAllPurposes).font(Type.captionStrong)
                         Spacer(minLength: 10)
-                        Text(Formatting.tokens(slice.tokens)).font(.caption.monospacedDigit())
+                        Text(Fmt.tokens(selected.total)).font(Type.figure(12, weight: .semibold))
                     }
                 }
-                Divider()
-                HStack(spacing: 6) {
-                    Text("all purposes").font(.caption.weight(.semibold))
-                    Spacer(minLength: 10)
-                    Text(Formatting.tokens(selected.total))
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                }
+                .foregroundStyle(Ink.primary)
             }
-            .padding(9)
             .frame(minWidth: 170)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .fixedSize()
             .padding(6)
-        }
-    }
-
-    /// Built by hand. Swift Charts' own legend has long-standing alignment and wrapping
-    /// complaints (research note, section 3), and a legend that reflows differently between
-    /// light and dark would make the two screenshots hard to compare.
-    private var legend: some View {
-        HStack(spacing: 14) {
-            ForEach(scale.domain, id: \.self) { purpose in
-                HStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(PurposeColour.colour(purpose))
-                        .frame(width: 10, height: 10)
-                    Text(purpose).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -194,21 +185,14 @@ struct OutcomesByWeekChart: View {
 
     var body: some View {
         Panel(
-            title: "What became of each week's work",
-            note:
-                "alive_30d / measured_30d and reworked / lines, both from app_outcomes_by_week. "
-                + "A week whose 30-day mark has not arrived is a gap, never a zero. The pale "
-                + "wide line is that week's mean coverage: the share of a counted commit's "
-                + "added lines the session itself wrote."
+            title: Str.overviewWhatBecame.text,
+            note: Str.overviewWhatBecameNote.text
         ) {
             if model.isEmpty {
-                EmptyStateView(
+                EmptyState(
                     symbol: "chart.xyaxis.line",
-                    title: "No outcomes to follow yet",
-                    detail:
-                        "No commit in this range is credited with a line that could be followed. "
-                        + "A repository where other people commit has its outcomes withheld "
-                        + "rather than guessed."
+                    title: Str.overviewNoOutcomesTitle.text,
+                    detail: Str.overviewNoOutcomesDetail.text
                 )
             } else {
                 chart
@@ -264,7 +248,9 @@ struct OutcomesByWeekChart: View {
             AxisMarks { value in
                 AxisGridLine()
                 AxisValueLabel {
-                    if let share = value.as(Double.self) { Text(Formatting.percent(share)) }
+                    if let share = value.as(Double.self) {
+                        Text(Fmt.percent(share)).font(Type.caption2.monospacedDigit())
+                    }
                 }
             }
         }
@@ -279,19 +265,22 @@ struct OutcomesByWeekChart: View {
     @ViewBuilder
     private var hoverCard: some View {
         if let hovered, !rows(at: hovered).isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Week of \(hovered)").font(.caption.weight(.semibold))
-                ForEach(rows(at: hovered), id: \.0) { label, point in
-                    HStack(spacing: 6) {
-                        Text(label).font(.caption)
-                        Spacer(minLength: 12)
-                        Text(point.withDenominator).font(.caption.monospacedDigit())
+            Card(padding: Space.s3, radius: Radius.control) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(Str.overviewWeekOf(Fmt.shortDay(hovered)))
+                        .font(Type.captionStrong)
+                    ForEach(rows(at: hovered), id: \.0) { label, point in
+                        HStack(spacing: 6) {
+                            Text(label).font(Type.caption)
+                            Spacer(minLength: 12)
+                            Text(point.withDenominator).font(Type.figure(12, weight: .regular))
+                        }
                     }
                 }
+                .foregroundStyle(Ink.primary)
             }
-            .padding(9)
             .frame(minWidth: 210)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .fixedSize()
             .padding(6)
         }
     }
@@ -305,33 +294,43 @@ struct OutcomesByWeekChart: View {
 
     private var legend: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 14) {
+            HStack(spacing: Space.s3) {
                 ForEach(model.projects, id: \.self) { project in
                     HStack(spacing: 5) {
-                        RoundedRectangle(cornerRadius: 2)
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
                             .fill(projectColour(project))
-                            .frame(width: 10, height: 10)
-                        Text(project).font(.caption).foregroundStyle(.secondary)
+                            .frame(width: 9, height: 9)
+                        Text(project).font(Type.caption).foregroundStyle(Ink.secondary)
                     }
                 }
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 14) {
-                Text("solid: alive at 30 days")
-                Text("dashed: reworked later")
-                Text("pale wide: coverage")
+            HStack(spacing: Space.s3) {
+                Text(.overviewLegendAlive)
+                Text(.overviewLegendRework)
+                Text(.overviewLegendCoverage)
                 Spacer(minLength: 0)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(Type.caption)
+            .foregroundStyle(Ink.tertiary)
         }
     }
 
     /// Stable per project, so two screenshots of different ranges agree about which line is
     /// which. Index into a fixed palette by the project's place in the sorted list.
+    ///
+    /// Not the purpose palette: these are projects, and a project drawn in the colour of
+    /// "development" would read as a purpose. Batch 2 replaces this with a project scale of
+    /// its own.
     private func projectColour(_ project: String) -> Color {
-        let palette: [Color] = [.blue, .green, .orange, .pink, .teal, .purple, .brown]
-        guard let index = model.projects.firstIndex(of: project) else { return .gray }
+        let palette: [Color] = [
+            Ink.accent, Outcome.alive, Purpose.colour("debugging"),
+            Purpose.colour("conversation"), Purpose.colour("research"),
+            Purpose.colour("mixed"), Outcome.rework,
+        ]
+        guard let index = model.projects.firstIndex(of: project) else {
+            return Purpose.colour("unknown")
+        }
         return palette[index % palette.count]
     }
 }

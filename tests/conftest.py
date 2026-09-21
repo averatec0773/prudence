@@ -220,11 +220,17 @@ def record_one_session(lab: Workspace, level: str = "full") -> str:
 def isolated_paths(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No test may see the developer's own config, data or Claude Code history."""
+    """No test may see the developer's own config, data, history or locale."""
     base = tmp_path_factory.mktemp("elsewhere")
     monkeypatch.setenv("PRUDENCE_CONFIG_DIR", str(base / "config"))
     monkeypatch.setenv("PRUDENCE_DATA_DIR", str(base / "data"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(base / "claude"))
+    # The default language is the machine's, and the language is part of a prompt, which
+    # is part of a recorded fixture's hash. A suite that passed in Boston and failed in
+    # Beijing would be a fixture keyed on somebody's locale, so the locale is one too.
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
 
 
 def _prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Workspace:

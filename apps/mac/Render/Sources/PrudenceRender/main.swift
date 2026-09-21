@@ -1,19 +1,23 @@
 import AppKit
 import PrudenceModels
 import PrudenceStore
+import PrudenceUI
 import SwiftUI
 
-// Renders the shipping SwiftUI views to PNG, off-screen, in light and dark.
+// Renders the shipping SwiftUI views to PNG, off-screen, in light and dark, English and
+// Simplified Chinese, and — for the two surfaces that have a material — Standard and Glass.
 //
 // This needs no permission of any kind. Nothing is ever ordered on screen, no window server
 // capture happens, and no Apple events are sent, so it runs in CI, over SSH and inside an
 // agent's sandbox alike, and it renders the same code the app runs. That is the whole reason
 // it exists: the founder judges screenshots, not diffs.
 //
-// Two traps, both from the research note (section 7): render through `cacheDisplay(in:to:)`
-// rather than `displayIgnoringOpacity`, which draws SwiftUI `Text` invisibly; and pin the
-// appearance, the scale and the frame, because a window's own title bar is a different height
-// on a CI VM than on a real Mac.
+// Three traps, two from the research note (section 7) and one from batch 1: render through
+// `cacheDisplay(in:to:)` rather than `displayIgnoringOpacity`, which draws SwiftUI `Text`
+// invisibly; pin the appearance, the scale and the frame, because a window's own title bar is
+// a different height on a CI VM than on a real Mac; and force the language around the whole of
+// building *and* laying out a view, because a SwiftUI body is evaluated during layout rather
+// than at construction, so a language set and put back too early renders the other one.
 
 @MainActor
 func renderEverything() {
@@ -49,8 +53,8 @@ func renderEverything() {
 
     let model = MenuViewModel.preview(
         snapshot: snapshot,
-        engineVersion: "prudence, version 0.2.0",
-        actionMessage: "Review 1 written."
+        engineVersion: "prudence, version 0.3.0",
+        actionMessage: nil
     )
 
     let settings = AppSettings(
@@ -68,7 +72,7 @@ func renderEverything() {
     }
 
     /// One `WindowModel` per screen, because the section is a property of the model and the
-    /// shots are taken in one pass. All three read the same rows.
+    /// shots are taken in one pass. All of them read the same rows.
     func window(_ section: MainSection) -> AnyView {
         AnyView(
             MainWindowContentView(
@@ -79,32 +83,74 @@ func renderEverything() {
         )
     }
 
+    func settingsView(_ tab: SettingsView.Tab) -> AnyView {
+        AnyView(
+            SettingsView(
+                settings: settings,
+                launchAtLogin: launchAtLogin,
+                status: { data.status.map(StatusModel.init(row:)) },
+                initialTab: tab
+            ))
+    }
+
     let big = CGSize(width: 1200, height: 800)
-    let shots: [(name: String, size: CGSize?, view: AnyView)] = [
-        ("menu", nil, AnyView(MenuContentView(model: model, actions: MenuActions()))),
+
+    /// The six screens. `materials` says which of them have one: the popover and the window
+    /// are the control and navigation layer, so they are photographed under both Standard and
+    /// Glass; the three screens inside the window and the standalone Settings sheet are drawn
+    /// on content surfaces, which are opaque under either.
+    let shots: [(name: String, size: CGSize?, bothMaterials: Bool, view: () -> AnyView)] = [
+        ("menu", nil, true, { AnyView(MenuContentView(model: model, actions: MenuActions())) }),
         // The window at the floor `MainWindowController` sets, which is where the layout is
         // under the most pressure.
-        ("window", CGSize(width: 900, height: 600), window(.overview)),
-        ("overview", big, window(.overview)),
-        ("review", big, window(.review)),
-        ("observations", big, window(.observations)),
+        ("window", CGSize(width: 900, height: 600), true, { window(.overview) }),
+        ("overview", big, false, { window(.overview) }),
+        ("review", big, false, { window(.review) }),
+        ("observations", big, false, { window(.observations) }),
+        // Both tabs of Settings B. The Data tab holds the two path rows and the line the
+        // store says about itself, which is half the screen; a shot of General alone would
+        // leave the founder judging the half that has no numbers in it.
         (
-            "settings", CGSize(width: 520, height: 420),
-            AnyView(SettingsView(settings: settings, launchAtLogin: launchAtLogin))
+            "settings", CGSize(width: 620, height: 470), false,
+            { settingsView(.general) }
+        ),
+        (
+            "settings-data", CGSize(width: 620, height: 470), false,
+            { settingsView(.data) }
         ),
     ]
 
     let appearances: [(String, NSAppearance.Name)] = [("light", .aqua), ("dark", .darkAqua)]
+    let languages: [(String, Language)] = [("en", .english), ("zh", .chineseSimplified)]
 
     let directory = URL(fileURLWithPath: outputDirectory)
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     for shot in shots {
-        for (suffix, appearanceName) in appearances {
-            guard let appearance = NSAppearance(named: appearanceName) else { continue }
-            let url = directory.appendingPathComponent("\(shot.name)-\(suffix).png")
-            render(shot.view, size: shot.size, appearance: appearance, to: url)
-            print("wrote \(url.path)")
+        for (appearanceSuffix, appearanceName) in appearances {
+            for (languageSuffix, language) in languages {
+                guard let appearance = NSAppearance(named: appearanceName) else { continue }
+                var materials: [(String, Theme.Material)] = [("", .standard)]
+                if shot.bothMaterials { materials.append(("-glass", .glass)) }
+                for (materialSuffix, material) in materials {
+                    let name =
+                        "\(shot.name)-\(appearanceSuffix)-\(languageSuffix)\(materialSuffix).png"
+                    let url = directory.appendingPathComponent(name)
+                    // The language is forced around the whole render, not around building the
+                    // view: SwiftUI evaluates a body during layout, and `Str` resolves its
+                    // locale there.
+                    Localization.withLanguage(language) {
+                        render(
+                            shot.view().prudenceTheme(
+                                Theme(material: material, reduceTransparency: false)),
+                            size: shot.size,
+                            appearance: appearance,
+                            to: url
+                        )
+                    }
+                    print("wrote \(url.path)")
+                }
+            }
         }
     }
 }
@@ -137,13 +183,18 @@ func dumpCards(data: WindowData, now: Date) {
     }
 }
 
-/// One view, one appearance, one PNG at 1x.
+/// One view, one appearance, one language, one material, one PNG at 1x.
 @MainActor
-func render(_ view: AnyView, size: CGSize?, appearance: NSAppearance, to url: URL) {
+func render<Content: View>(
+    _ view: Content, size: CGSize?, appearance: NSAppearance, to url: URL
+) {
     let hosting = NSHostingView(
         rootView:
             ZStack {
-                Color(nsColor: .windowBackgroundColor)
+                // The wallpaper a translucent surface has to be translucent about. Standard
+                // draws its own opaque background over this, so both materials are
+                // photographed over the same thing and only the material differs.
+                RenderBackdrop()
                 view
             }
             .environment(\.colorScheme, appearance.name == .darkAqua ? .dark : .light)
@@ -201,6 +252,31 @@ func render(_ view: AnyView, size: CGSize?, appearance: NSAppearance, to url: UR
     } catch {
         FileHandle.standardError.write(Data("could not write \(url.path): \(error)\n".utf8))
         exit(1)
+    }
+}
+
+/// Three soft blobs, the same idea as the mockups' `--wallpaper`.
+///
+/// It exists so that a Glass shot has something behind it to sample; a frosted surface over a
+/// flat grey is indistinguishable from an opaque one, and a pair of shots that cannot be told
+/// apart is not a verification. The Standard shots draw over it and hide it entirely, which is
+/// the honest Standard look.
+struct RenderBackdrop: View {
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            LinearGradient(
+                colors: [
+                    Color(.sRGB, red: 0.55, green: 0.66, blue: 0.92, opacity: 0.55),
+                    Color(.sRGB, red: 0.86, green: 0.62, blue: 0.80, opacity: 0.40),
+                    Color(.sRGB, red: 0.48, green: 0.80, blue: 0.84, opacity: 0.45),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .blur(radius: 60)
+        }
+        .ignoresSafeArea()
     }
 }
 

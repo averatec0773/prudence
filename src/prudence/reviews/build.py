@@ -510,11 +510,24 @@ def build(
     }
 
 
+# The section coverages the row's column may be taken from, best first. The outcome
+# section's is the one that matters when there is one, because every figure it carries is
+# over the lines that coverage speaks for; the activity section's mean over the commits
+# credited to the range's sessions is the answer when no commit in the outcome window has
+# reached its seven-day mark, which is most reviews of recent work. Before this list the
+# column was NULL in exactly that case, and a surface reading it had nothing to show.
+COVERAGE_KEYS: tuple[str, ...] = ("became.coverage", "did.coverage")
+
+
 def coverage_of(payload: dict[str, Any]) -> float | None:
-    """The review row's coverage column: the outcome section's, which is the one that matters."""
-    for number in payload.get("numbers", []):
-        if number.get("key") == "became.coverage":
-            return number.get("coverage")
+    """The review row's coverage column: the first of `COVERAGE_KEYS` the page computed."""
+    by_key = {
+        str(number.get("key")): number.get("coverage") for number in payload.get("numbers", [])
+    }
+    for key in COVERAGE_KEYS:
+        coverage = by_key.get(key)
+        if coverage is not None:
+            return float(coverage)
     return None
 
 

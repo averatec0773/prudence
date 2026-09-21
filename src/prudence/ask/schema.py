@@ -31,14 +31,24 @@ CREATE TABLE IF NOT EXISTS question(
     evidence_hash TEXT NOT NULL,
     model TEXT,
     answer TEXT,
-    refused_numbers TEXT
+    refused_numbers TEXT,
+    language TEXT
 );
 CREATE INDEX IF NOT EXISTS question_asked ON question(asked_at DESC);
 """
 
+# Columns added after the table shipped. A question row is the user's own history and
+# `rebuild` could not produce it again, so it is grown rather than recreated, the same
+# way `reviews/schema.py` grows the review table.
+ADDED_COLUMNS: tuple[tuple[str, str], ...] = (("language", "TEXT"),)
+
 
 def ensure(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    present = {row["name"] for row in connection.execute(f'PRAGMA table_info("{QUESTION_TABLE}")')}
+    for name, kind in ADDED_COLUMNS:
+        if name not in present:
+            connection.execute(f'ALTER TABLE "{QUESTION_TABLE}" ADD COLUMN {name} {kind}')
 
 
 def evidence_hash(payload: str) -> str:
@@ -55,12 +65,13 @@ def insert(
     model: str | None,
     answer: str | None,
     refused_numbers: str | None = None,
+    language: str | None = None,
 ) -> int:
     ensure(connection)
     cursor = connection.execute(
         "INSERT INTO question (asked_at, question, project, evidence_hash, model, answer,"
-        " refused_numbers) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (asked_at, question, project, evidence_hash, model, answer, refused_numbers),
+        " refused_numbers, language) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (asked_at, question, project, evidence_hash, model, answer, refused_numbers, language),
     )
     return int(cursor.lastrowid or 0)
 
@@ -90,6 +101,7 @@ def render(row: sqlite3.Row) -> str:
         f"  project   {row['project'] or 'every project'}",
         f"  evidence  {row['evidence_hash']}",
         f"  model     {row['model'] or 'none (--no-model)'}",
+        f"  language  {_column(row, 'language') or 'en'}",
         "",
     ]
     refused = _refused(row)
@@ -112,8 +124,13 @@ def render(row: sqlite3.Row) -> str:
 
 def _refused(row: sqlite3.Row) -> str | None:
     """The refusal note, or None. Absent on a row written before the column existed."""
+    return _column(row, "refused_numbers")
+
+
+def _column(row: sqlite3.Row, name: str) -> Any:
+    """One column of a row that may predate it. Absent is None, never an exception."""
     try:
-        return row["refused_numbers"]
+        return row[name]
     except (IndexError, KeyError):
         return None
 

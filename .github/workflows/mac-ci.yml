@@ -48,7 +48,19 @@ jobs:
             -configuration Release -derivedDataPath build/dd \
             CODE_SIGNING_ALLOWED=NO build
 
+      - name: Check the icon set against assets/brand
+        # `assets/` is not tracked, so on a clean checkout there is nothing to check
+        # against and the step passes by saying so rather than failing.
+        run: |
+          if [ -d ../../assets/brand ]; then
+            swift Scripts/make_icons.swift --check
+          else
+            echo "assets/brand is not in this checkout; skipping the icon check"
+          fi
+
       - name: Render the screens
+        # Thirty-six PNGs: every screen in light and dark and in English and Simplified
+        # Chinese, and the popover and the window under both materials as well.
         run: ./Scripts/shots.sh
 
       - name: Upload the screens

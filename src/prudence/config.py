@@ -31,6 +31,9 @@ DEFAULT_BACKEND = "anthropic"
 DEFAULT_MODEL_ID = "claude-sonnet-5"
 DEFAULT_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_MAX_TOKENS = 1024
+# `system` means "read the machine's locale when the call is made"; the codes themselves
+# are `model/language.LANGUAGES`, which this file deliberately does not import.
+DEFAULT_LANGUAGE = "system"
 
 HEADER = """\
 # Prudence configuration.
@@ -59,12 +62,16 @@ class ModelSettings:
     The key itself is never here: `api_key_env` names the environment variable to read,
     so a config file can be copied, printed or committed without carrying a secret. A
     user who wants the default only has to leave this block out.
+
+    `language` is the language the model writes its prose in, and only that: the review
+    page, the CLI and everything the engine computes stay English.
     """
 
     backend: str = DEFAULT_BACKEND
     model_id: str = DEFAULT_MODEL_ID
     api_key_env: str = DEFAULT_KEY_ENV
     max_tokens: int = DEFAULT_MAX_TOKENS
+    language: str = DEFAULT_LANGUAGE
 
 
 @dataclass(frozen=True)
@@ -143,6 +150,7 @@ def _model_settings(block: object) -> ModelSettings:
     model_id = block.get("model_id")
     key_env = block.get("api_key_env")
     max_tokens = block.get("max_tokens")
+    language = block.get("language")
     return ModelSettings(
         backend=backend if isinstance(backend, str) and backend else DEFAULT_BACKEND,
         model_id=model_id if isinstance(model_id, str) and model_id else DEFAULT_MODEL_ID,
@@ -150,6 +158,9 @@ def _model_settings(block: object) -> ModelSettings:
         max_tokens=(
             max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else DEFAULT_MAX_TOKENS
         ),
+        # Kept as written, like `backend`: an unknown code falls back to English at the
+        # call, where the resolved language is printed in the "Sending" line.
+        language=language if isinstance(language, str) and language else DEFAULT_LANGUAGE,
     )
 
 
@@ -177,6 +188,7 @@ def dumps(config: Config) -> str:
         lines.append(f"model_id = {_string(config.model.model_id)}")
         lines.append(f"api_key_env = {_string(config.model.api_key_env)}")
         lines.append(f"max_tokens = {config.model.max_tokens}")
+        lines.append(f"language = {_string(config.model.language)}")
         lines.append("")
     if config.review != ReviewSettings():
         lines.append("[review]")

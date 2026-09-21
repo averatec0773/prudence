@@ -205,10 +205,20 @@ public final class WindowModel: ObservableObject {
     /// shown under a heading that says every project would be read as a statement about all
     /// of them, which is exactly what principle 2 forbids. Choose a project to see its own.
     public var observations: [ObservationModel] {
+        observationRows.map(ObservationModel.init(row:))
+    }
+
+    /// The same rows, unformatted and in the same order.
+    ///
+    /// The screen composes each sentence in the interface language from these columns
+    /// (`PrudenceUI/ObservationText`), so it needs the row rather than the finished English
+    /// `ObservationModel` carries.
+    public var observationRows: [AppObservationRow] {
         data.observations
             .filter { project == nil ? $0.isPooled : (!$0.isPooled && $0.project == project) }
-            .map(ObservationModel.init(row:))
-            .sorted { $0.gap == $1.gap ? $0.id < $1.id : $0.gap > $1.gap }
+            .sorted {
+                $0.gap == $1.gap ? $0.observationId < $1.observationId : $0.gap > $1.gap
+            }
     }
 
     /// Every stored review, newest first, whatever the project picker says. A review is a

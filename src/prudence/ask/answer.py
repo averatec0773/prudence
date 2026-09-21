@@ -21,18 +21,20 @@ from prudence.ask import schema
 from prudence.ask.parse import Question, parse
 from prudence.ask.retrieve import Evidence, retrieve, tables
 from prudence.model import Model, Request, Sent
+from prudence.model import language as language_module
 from prudence.model.guard import Verdict, complete_checked
 from prudence.model.numbers import numbers_in
 from prudence.model.recorded import input_hash
 
-# Bumped whenever SYSTEM changes. 2: the rule against grading, after the segment's first
-# live run graded the work; `tone.check_tone` enforces it on this side too.
-ASK_PROMPT_VERSION = 2
+# Bumped whenever the system prompt changes. 2: the rule against grading, after the
+# segment's first live run graded the work; `tone.check_tone` enforces it on this side
+# too. 3: the last line names the output language, in that language.
+ASK_PROMPT_VERSION = 3
 
 DEFAULT_MAX_TOKENS = 700
 MAX_WORDS = 250
 
-SYSTEM = f"""\
+RULES = f"""\
 You answer one question about a developer's own recorded work, using only the evidence
 below. The evidence is rows computed from their own sessions and commits; it is all you
 know, and you know nothing about any other person.
@@ -61,6 +63,15 @@ Write at most {MAX_WORDS} words in plain prose. Rules, all of them hard:
 """
 
 
+def system(language: str = language_module.DEFAULT) -> str:
+    """The rules, and then one line naming the language to answer in, in that language."""
+    return f"{RULES}\n{language_module.instruction(language)}\n"
+
+
+# The English rendering, which is what a caller that says nothing gets.
+SYSTEM = system()
+
+
 @dataclass(frozen=True)
 class Answer:
     """One answer, the evidence it stood on, and what the guards made of it.
@@ -79,6 +90,7 @@ class Answer:
     evidence_hash: str
     input_hash: str | None
     verdict: Verdict
+    language: str = language_module.DEFAULT
 
     @property
     def invented(self) -> list[str]:
@@ -94,6 +106,7 @@ class Answer:
             "answer": self.text if self.ok else None,
             "model": self.model,
             "prompt_version": self.prompt_version,
+            "language": self.language,
             "evidence_hash": self.evidence_hash,
             "refused_numbers": self.verdict.invented,
             "refused_words": self.verdict.graded,
@@ -101,7 +114,11 @@ class Answer:
         }
 
 
-def build_request(evidence: Evidence, max_tokens: int = DEFAULT_MAX_TOKENS) -> Request:
+def build_request(
+    evidence: Evidence,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    language: str = language_module.DEFAULT,
+) -> Request:
     """The whole call, with the receipt the surface prints before making it."""
     user = (
         f"Question: {evidence.question.text}\n\n"
@@ -116,8 +133,9 @@ def build_request(evidence: Evidence, max_tokens: int = DEFAULT_MAX_TOKENS) -> R
         sections.append("observations")
     if evidence.excerpts:
         sections.append("excerpts")
+    prompt = system(language)
     return Request(
-        system=SYSTEM,
+        system=prompt,
         user=user,
         max_tokens=max_tokens,
         sent=Sent(
@@ -125,7 +143,8 @@ def build_request(evidence: Evidence, max_tokens: int = DEFAULT_MAX_TOKENS) -> R
             numbers=len(allowed_numbers(evidence)),
             content=bool(evidence.excerpts),
             excerpts=len(evidence.excerpts),
-            bytes=len(SYSTEM.encode()) + len(user.encode()),
+            bytes=len(prompt.encode()) + len(user.encode()),
+            language=language,
         ),
     )
 
@@ -145,6 +164,7 @@ def ask(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     now: Any = None,
     call: Any = None,
+    language: str = language_module.DEFAULT,
 ) -> Answer:
     """Parse, retrieve and (unless `model` is None) answer. The one entry point.
 
@@ -177,10 +197,13 @@ def ask(
             evidence_hash=digest,
             input_hash=None,
             verdict=Verdict(),
+            language=language,
         )
 
-    request = build_request(evidence, max_tokens=max_tokens)
-    completion, verdict = complete_checked(model, request, allowed_numbers(evidence), call=call)
+    request = build_request(evidence, max_tokens=max_tokens, language=language)
+    completion, verdict = complete_checked(
+        model, request, allowed_numbers(evidence), call=call, language=language
+    )
     return Answer(
         question=question,
         evidence=evidence,
@@ -190,6 +213,7 @@ def ask(
         evidence_hash=digest,
         input_hash=input_hash(request),
         verdict=verdict,
+        language=language,
     )
 
 
@@ -209,6 +233,7 @@ def store(connection: sqlite3.Connection, answer: Answer, asked_at: str) -> int:
         model=answer.model,
         answer=answer.text if answer.ok else None,
         refused_numbers=None if answer.ok else (answer.verdict.as_note() or None),
+        language=answer.language,
     )
 
 

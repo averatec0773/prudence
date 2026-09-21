@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from prudence.model.base import Completion, Model, Request
+from prudence.model.language import DEFAULT as DEFAULT_LANGUAGE
 from prudence.model.numbers import check_numbers
 from prudence.model.tone import TONE_VERSION, check_tone
 
@@ -75,9 +76,9 @@ class Verdict:
         return "; ".join(parts)
 
 
-def judge(text: str, allowed: Any) -> Verdict:
-    """Both guards over one piece of model text."""
-    return Verdict(invented=check_numbers(text, allowed), graded=check_tone(text))
+def judge(text: str, allowed: Any, language: str = DEFAULT_LANGUAGE) -> Verdict:
+    """Both guards over one piece of model text, in the language it was asked for."""
+    return Verdict(invented=check_numbers(text, allowed), graded=check_tone(text, language))
 
 
 def correction(verdict: Verdict) -> str:
@@ -115,20 +116,25 @@ def complete_checked(
     allowed: Any,
     call: Callable[[Model, Request], Completion] | None = None,
     retries: int = RETRIES,
+    language: str = DEFAULT_LANGUAGE,
 ) -> tuple[Completion, Verdict]:
     """Call, check, and on a failure call once more with the offending tokens named.
 
     Returns the last completion and its verdict. A caller stores the text only when the
     verdict is `ok`, and prints nothing of it otherwise.
+
+    The correction sentence stays English whatever the answer's language: it is an
+    instruction to the model rather than prose for the reader, and naming the offending
+    tokens is what it is for.
     """
     make = call if call is not None else (lambda chosen, sent: chosen.complete(sent))
     attempt = request
     completion = make(model, attempt)
-    verdict = judge(completion.text, allowed)
+    verdict = judge(completion.text, allowed, language)
     for _ in range(retries):
         if verdict.ok:
             break
         attempt = corrected(attempt, verdict)
         completion = make(model, attempt)
-        verdict = judge(completion.text, allowed)
+        verdict = judge(completion.text, allowed, language)
     return completion, verdict

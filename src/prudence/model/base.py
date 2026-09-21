@@ -37,6 +37,9 @@ class Sent:
     content: bool = False
     excerpts: int = 0
     bytes: int = 0
+    # The resolved language code the answer is asked for, as a plain string: this module
+    # must not need the language table to print a receipt about one.
+    language: str = ""
 
     def line(
         self,
@@ -60,6 +63,8 @@ class Sent:
         else:
             parts.append("no transcript content;")
         parts.append(f"{_kilobytes(self.bytes)};")
+        if self.language:
+            parts.append(f"answer in {self.language};")
         parts.append(f"at most {max_tokens if max_tokens is not None else '?'} tokens back;")
         if caching is None:
             parts.append("caching unknown.")

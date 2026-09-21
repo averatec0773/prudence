@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Render the shipping views off-screen, light and dark, to shots/:
+# Render the shipping views off-screen into shots/.
 #
-#   menu-{light,dark}.png          the dropdown
-#   window-{light,dark}.png        the main window at its 900x600 floor
-#   overview-{light,dark}.png      the Overview screen, 1200x800
-#   review-{light,dark}.png        the Review screen, 1200x800
-#   observations-{light,dark}.png  the Observations screen, 1200x800
-#   settings-{light,dark}.png      the Settings screen
+# Every screen comes in light and dark and in English and Simplified Chinese, and the two
+# surfaces that have a material come in Standard and Glass as well:
+#
+#   menu-{light,dark}-{en,zh}[-glass].png          the dropdown, variant C with captions
+#   window-{light,dark}-{en,zh}[-glass].png        the whole window at its 900x600 floor
+#   overview-{light,dark}-{en,zh}.png              the Overview screen, 1200x800
+#   review-{light,dark}-{en,zh}.png                the Review screen, 1200x800
+#   observations-{light,dark}-{en,zh}.png          the Observations screen, 1200x800
+#   settings-{light,dark}-{en,zh}.png              Settings B, the General tab
+#   settings-data-{light,dark}-{en,zh}.png         Settings B, the Data tab
+#
+# Thirty-six PNGs. The `-glass` pair is the popover and the window because those are the
+# control and navigation layer; the screens inside the window are content and are opaque under
+# either material, so photographing them twice would produce two identical files.
 #
 # The harness compiles the app's own view files rather than copies of them: they are copied in
 # here, built, and the copies are thrown away afterwards, so a PNG can never show a view that

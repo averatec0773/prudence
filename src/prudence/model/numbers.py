@@ -17,6 +17,13 @@ answers and is then switched off:
   violation.
 - **Units.** A suffix is part of the number: `713938k` matches `713938k` and not `713938`,
   and `92%` does not match `92`. A model that drops a unit has changed the claim.
+- **Script.** A segment written in Chinese prints the same figures in different
+  characters: `９２％` is `92%`, and `0.5万` is `5000`. `NORMALISATION` maps the
+  full-width forms onto their ASCII ones and `MAGNITUDES` reads the Chinese
+  ten-thousands the way the tokeniser already reads `k`, so the check neither misses an
+  invented figure written in Chinese nor refuses a quoted one. The scaling is applied to
+  both sides by `parse`, so `0.5万` passes against a given `5000` and fails against a
+  given `5k`, which is right: a unit changed by arithmetic is a claim the model made up.
 """
 
 from __future__ import annotations
@@ -53,9 +60,33 @@ _UUID = re.compile(
 # figure through in the one place where the check is the whole point.
 _HEX = re.compile(r"\b(?=[0-9a-fA-F]{7,}\b)[0-9a-fA-F]*[a-fA-F][0-9a-fA-F]*\b")
 
+# Presentation, not meaning: the full-width characters a Chinese keyboard produces,
+# mapped onto the ASCII the tokeniser below reads. Data, so a script that needs another
+# row is one line here.
+NORMALISATION = {
+    **{chr(0xFF10 + digit): str(digit) for digit in range(10)},
+    "％": "%",
+    "，": ",",
+    "．": ".",
+    "。": ".",
+    "＋": "+",
+    "－": "-",
+    "　": " ",
+}
+_NORMALISE = str.maketrans(NORMALISATION)
+
+# A magnitude word is a multiplier, not a unit: 0.5万 is 5000, the same figure written
+# another way. Applied on both sides by `parse`, so nothing is tolerated on one side and
+# not the other.
+MAGNITUDES = {"千": 1000.0, "万": 10000.0, "亿": 100000000.0}
+
 # A number as a reader sees one: an optional sign, digits with optional thousands
-# separators, an optional fraction, and an optional unit glued or spaced to the end.
-_TOKEN = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:%|[kKxX]\b|[kK](?=[^\w]|$))?")
+# separators, an optional fraction, and an optional unit or magnitude word glued or
+# spaced to the end.
+_MAGNITUDE_CLASS = "".join(MAGNITUDES)
+_TOKEN = re.compile(
+    rf"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:[{_MAGNITUDE_CLASS}]|%|[kKxX]\b|[kK](?=[^\w]|$))?"
+)
 
 SUFFIXES = {"%": "%", "k": "k", "x": "x"}
 
@@ -76,6 +107,11 @@ class Figure:
         return round(self.value, places) == round(other.value, places)
 
 
+def normalise(text: str) -> str:
+    """The same text with its full-width characters written as ASCII ones."""
+    return text.translate(_NORMALISE)
+
+
 def strip_identifiers(text: str) -> str:
     """Dates, session ids and commit hashes removed. They are names, not measurements."""
     for pattern in (_DATE, _WRITTEN_DATE, _UUID, _HEX, _YEAR):
@@ -84,14 +120,18 @@ def strip_identifiers(text: str) -> str:
 
 
 def numbers_in(text: str) -> list[str]:
-    """Every number-like token in a piece of text, as written."""
-    cleaned = strip_identifiers(text)
+    """Every number-like token in a piece of text, as written, in ASCII presentation."""
+    cleaned = strip_identifiers(normalise(text))
     return [match.group(0).strip() for match in _TOKEN.finditer(cleaned) if match.group(0).strip()]
 
 
 def parse(token: str) -> Figure | None:
     """One written number as a `Figure`, or None when it is not one."""
-    body = token.strip().replace(",", "").replace(" ", "")
+    body = normalise(token).strip().replace(",", "").replace(" ", "")
+    scale = 1.0
+    if body and body[-1] in MAGNITUDES:
+        scale = MAGNITUDES[body[-1]]
+        body = body[:-1]
     suffix = ""
     if body and body[-1].lower() in SUFFIXES:
         suffix = SUFFIXES[body[-1].lower()]
@@ -99,7 +139,12 @@ def parse(token: str) -> Figure | None:
     if not body or not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", body):
         return None
     decimals = len(body.split(".")[1]) if "." in body else 0
-    return Figure(value=float(body), suffix=suffix, decimals=decimals)
+    if scale > 1:
+        # 0.5万 is 5000 exactly: the decimals the magnitude absorbed are no longer a
+        # statement about precision, and keeping them would compare 5000 against a given
+        # 5000 at one decimal place for no reason.
+        decimals = max(0, decimals - len(str(int(scale))) + 1)
+    return Figure(value=float(body) * scale, suffix=suffix, decimals=decimals)
 
 
 def allowed_figures(numbers: Iterable[object]) -> list[Figure]:

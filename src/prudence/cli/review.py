@@ -20,6 +20,7 @@ import click
 
 from prudence import config as config_module
 from prudence.cli.observations import repo_key_for
+from prudence.model import LANGUAGES
 from prudence.paths import database_file, reports_dir
 from prudence.reviews import build as build_module
 from prudence.reviews import explain as explain_module
@@ -44,6 +45,12 @@ from prudence.store import outcomes as outcomes_module
     help="Add a model-written segment over the computed numbers (config: review.explain).",
 )
 @click.option("--model-id", "model_id", metavar="ID", help="Override the configured model id.")
+@click.option(
+    "--language",
+    "language",
+    type=click.Choice(LANGUAGES),
+    help="Language for the model segment only; the page stays English (config: model.language).",
+)
 def review(
     last: str | None,
     since: str | None,
@@ -54,6 +61,7 @@ def review(
     as_json: bool,
     wants_explain: bool | None,
     model_id: str | None,
+    language: str | None,
 ) -> None:
     """Write a review of one range: what you did, what became of it, and what changed."""
     if not database_file().exists():
@@ -95,6 +103,7 @@ def review(
             explain=wanted,
             settings=settings,
             model_id=model_id,
+            language=language,
         ):
             click.echo(line)
     except sqlite3.OperationalError as error:
@@ -114,6 +123,7 @@ def write(
     explain: bool = False,
     settings: config_module.Config | None = None,
     model_id: str | None = None,
+    language: str | None = None,
 ) -> list[str]:
     """Compute, store and render one review. Returns the lines the command prints.
 
@@ -139,7 +149,7 @@ def write(
     )
     stats = suggestions_module.refresh(connection, review_id, window.project, created_at)
     if explain:
-        add_segment(connection, review_id, payload, settings, model_id, created_at)
+        add_segment(connection, review_id, payload, settings, model_id, created_at, language)
     row = schema.review_by_id(connection, review_id)
     if row is None:
         raise click.ClickException("The review row was not stored; nothing was written.")
@@ -193,6 +203,7 @@ def add_segment(
     settings: config_module.Config | None,
     model_id: str | None,
     created_at: str,
+    language: str | None = None,
 ) -> explain_module.Segment:
     """One model call over a stored review, checked and stored. Shared with `prudence explain`.
 
@@ -206,7 +217,11 @@ def add_segment(
     chosen = settings or config_module.load()
     model = modelio.choose(chosen, model_id)
     segment = explain_module.explain(
-        payload, model, max_tokens=chosen.model.max_tokens, call=modelio.run
+        payload,
+        model,
+        max_tokens=chosen.model.max_tokens,
+        call=modelio.run,
+        language=modelio.language_for(chosen, language),
     )
     if not segment.ok:
         raise click.ClickException(

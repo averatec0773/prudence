@@ -207,6 +207,11 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new archive column: `store/db.py`, with `ARCHIVE_SCHEMA_VERSION` bumped and a step in
   `migrate`. Archive tables are the only ones that are migrated rather than rebuilt.
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
+- A new language: one entry in `model/language.LANGUAGES` and, if it needs one, a word
+  list in `model/tone.WORDS_BY_LANGUAGE`. Only prose a model writes is translated: the
+  prompts write in the configured language, every sentence the engine stores stays
+  English, and a surface composes a localised sentence from the row's columns rather
+  than asking the engine for a translated one.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
   `store/app_views.py` is the pattern: one view per screen, so a surface's own numbers

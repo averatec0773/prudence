@@ -21,6 +21,7 @@ from prudence.model import (
     ModelFailed,
     ModelUnavailable,
     Request,
+    language,
     prices,
     select_model,
 )
@@ -29,6 +30,16 @@ from prudence.model import (
 def choose(config: object, model_id: str | None = None) -> Model:
     """The model for this command: the `--model-id` override over the config over the env."""
     return select_model(config, model_id=model_id)
+
+
+def language_for(config: object, override: str | None = None) -> str:
+    """The language this command's prose is written in: `--language` over the config.
+
+    Resolved here rather than deeper down, so that `system` becomes a real code once,
+    at the surface, and everything below it is handed a language it can name.
+    """
+    settings = getattr(config, "model", None)
+    return language.resolve(override or getattr(settings, "language", None))
 
 
 def announce(model: Model, request: Request) -> str:

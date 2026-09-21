@@ -32,6 +32,7 @@ ANSWER = (
     "there. There is not enough here to say more than that."
 )
 INVENTED = "About 40% of your lines came back, which is more than you would want."
+ZH_ANSWER = "记录里只有一个会话，它写了一个文件并提交。其余的内容记录没有显示。"
 
 
 # --- reading the question -------------------------------------------------------------
@@ -314,6 +315,34 @@ def test_a_graded_answer_is_refused_too(lab, tmp_path, monkeypatch) -> None:
     assert "graded the work" in result.output
     assert "solid" in result.output
     assert "The coverage there is solid" not in result.output
+
+
+def test_ask_answers_in_the_language_it_was_asked_for(lab, tmp_path, monkeypatch) -> None:
+    """The answer is Chinese; the evidence above it is the same English table."""
+    record_one_session(lab)
+    question = "what did I do lately"
+    request = answer_module.build_request(_evidence(question), language="zh-Hans")
+    _write(tmp_path / "fixtures", request, ZH_ANSWER)
+    monkeypatch.setenv("PRUDENCE_MODEL", "recorded")
+    monkeypatch.setenv("PRUDENCE_MODEL_FIXTURES", str(tmp_path / "fixtures"))
+
+    assert request.system.endswith("用简体中文写。\n")
+    assert answer_module.ASK_PROMPT_VERSION == 3
+
+    result = CliRunner().invoke(main, ["ask", question, "--language", "zh-Hans"])
+    assert result.exit_code == 0, result.output
+    assert "answer in zh-Hans;" in result.output
+    assert ZH_ANSWER[:10] in result.output
+    assert "## Answer" in result.output, "the surface's own words stay English"
+
+    connection = db.connect()
+    row = ask_schema.by_id(connection, 1)
+    assert row["language"] == "zh-Hans"
+    connection.close()
+
+    shown = CliRunner().invoke(main, ["show", "--question", "1"])
+    assert shown.exit_code == 0, shown.output
+    assert "language  zh-Hans" in shown.output
 
 
 def test_ask_json_is_json(lab) -> None:

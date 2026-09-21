@@ -16,7 +16,8 @@ swift test --package-path PrudenceKit  # the fast loop: seconds, no Xcode projec
 xcodebuild -project Prudence.xcodeproj -scheme Prudence \
   -configuration Debug -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
 
-./Scripts/shots.sh                     # the twelve PNGs listed under "Screenshots" below
+./Scripts/shots.sh                     # the thirty-six PNGs listed under "Screenshots" below
+swift Scripts/make_icons.swift         # re-render the icon set from assets/brand
 ```
 
 `-derivedDataPath build/dd` keeps the output inside `apps/mac/` instead of Xcode's shared
@@ -79,21 +80,36 @@ stores it; `app_review.sections` is `json_extract(..., '$.sections')` out of the
 
 ## Screenshots
 
-`./Scripts/shots.sh` writes twelve PNGs, each in light and dark:
+`./Scripts/shots.sh` writes thirty-six PNGs: every screen in light and dark and in English and
+Simplified Chinese, and the two surfaces that have a material in Standard and Glass as well.
 
-| shot | size | what it is |
-| --- | --- | --- |
-| `menu` | fitted | the dropdown |
-| `window` | 900x600 | the whole window at the floor `MainWindowController` sets |
-| `overview` | 1200x800 | the Overview screen |
-| `review` | 1200x800 | the Review screen |
-| `observations` | 1200x800 | the Observations screen |
-| `settings` | 520x420 | the Settings screen |
+| shot | size | materials | what it is |
+| --- | --- | --- | --- |
+| `menu-{light,dark}-{en,zh}[-glass]` | fitted | both | the dropdown, variant C with captions |
+| `window-{light,dark}-{en,zh}[-glass]` | 900x600 | both | the whole window at the floor `MainWindowController` sets |
+| `overview-{light,dark}-{en,zh}` | 1200x800 | standard | the Overview screen |
+| `review-{light,dark}-{en,zh}` | 1200x800 | standard | the Review screen |
+| `observations-{light,dark}-{en,zh}` | 1200x800 | standard | the Observations screen |
+| `settings-{light,dark}-{en,zh}` | 620x470 | standard | Settings B, the General tab |
+| `settings-data-{light,dark}-{en,zh}` | 620x470 | standard | Settings B, the Data tab |
+
+The `-glass` pair is the popover and the window because those are the control and navigation
+layer; the screens inside the window are content and are opaque under either material, so
+photographing them twice would produce two identical files. The harness draws a soft wallpaper
+behind everything, so a frosted surface has something to be frosted about; Standard covers it
+completely, which is the honest Standard look.
 
 The three screen shots are of scrolling views, so a long review runs past the bottom of its
 PNG; that is the screen, not the shot. `PRUDENCE_SHOTS_DUMP=1` also prints the Overview's three
 cards and every week's token totals on standard output, for holding beside
 `prudence usage --last 60d` over the same store.
+
+## Design
+
+[DESIGN.md](DESIGN.md) is the design system: the tokens with their values, the component set
+and where each piece is used, the material rule, the localisation rule, the icon pipeline and
+what batch 2 still owes. All of it lives in `PrudenceKit/Sources/PrudenceUI/`, so the app, the
+render harness and `swift test` share one copy.
 
 ## Layout
 
@@ -105,6 +121,7 @@ apps/mac/
     MainWindow                           the window, its sidebar and the chrome every screen shares
     OverviewView, ReviewView,
     ObservationsView, SettingsView       one file per screen
+  DESIGN.md            the design system: tokens, components, material, localisation, icons
   PrudenceKit/         the local Swift package: everything the app thinks with
     Sources/PrudenceStore/    GRDB, read-only, over the app_* views, with the contract check
     Sources/PrudenceEngine/   finds and runs the prudence CLI
@@ -112,8 +129,16 @@ apps/mac/
       Overview.swift               weekly buckets, outcome series, the three cards
       ReviewPayload.swift          the sections JSON as typed Swift
       WindowModel.swift            what the window read, and the one thing it can do
+    Sources/PrudenceUI/       the design system; see DESIGN.md
+      Theme.swift                  every token, light and dark
+      Glass.swift                  glassEffect on macOS 26, NSVisualEffectView before it
+      Components.swift, Controls.swift, MiniStack.swift, FlowLayout.swift
+      Localization.swift, Fmt.swift   the String Catalog's keys, and Locale-aware numbers
+      ObservationText.swift, ReviewText.swift   sentences composed per language
+      Brand.swift                  the mark, from the package's copy of assets/brand
+      Resources/Localizable.xcstrings   en and zh-Hans
   Render/              off-screen PNG harness; compiles the app's own view files
-  Scripts/             bootstrap.sh, shots.sh
+  Scripts/             bootstrap.sh, shots.sh, make_icons.swift
 ```
 
 ## The window
@@ -155,7 +180,7 @@ Every screen has an empty state that says what it looked at, and every screen be
 that will not open shows one contract-mismatch page instead, carrying the sentence
 `StoreError` writes, which already names both versions and says which side to update.
 
-## Three conventions
+## Four conventions
 
 **1. `NSStatusItem`, not `MenuBarExtra`.** SwiftUI's menu bar scene still cannot close its own
 popup from a button inside it (FB11984872, open since February 2023), cannot tell you the user
@@ -174,7 +199,13 @@ weekly bars are sums of `total_tokens`, the survival line is `alive_30d / measur
 rework line is `reworked / lines`; a median, a threshold or an attribution would be a new view
 in `src/prudence/store/app_views.py`, never a function in Swift.
 
-**3. The contract is checked before anything is rendered.** `Store.init` reads
+**3. Design decisions live in `PrudenceUI`, not in a screen.** A colour, a spacing, a card
+shape or a user-facing string written inline in `App/` is a decision two screens will
+eventually disagree about. `DESIGN.md` says what exists; a screen composes it. The three rules
+that outrank layout are there too: glass never touches content, colour never means good or
+bad, and a composed sentence is composed per language rather than translated.
+
+**4. The contract is checked before anything is rendered.** `Store.init` reads
 `meta.app_contract_version` and refuses anything but `2`, with an error carrying both versions
 and a sentence saying which side to update. No screen ever renders half a schema it does not
 understand.

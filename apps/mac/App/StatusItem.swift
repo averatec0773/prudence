@@ -1,5 +1,6 @@
 import AppKit
 import PrudenceModels
+import PrudenceUI
 import SwiftUI
 
 /// The menu bar item: `NSStatusItem` and `NSPopover`, deliberately not `MenuBarExtra`.
@@ -32,15 +33,23 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
 
         if let button = item.button {
-            // A template image, so the glyph follows the menu bar in light and dark and while
-            // a Space's wallpaper changes under it.
-            let image = NSImage(named: "StatusGlyph") ?? NSImage(
-                systemSymbolName: "chart.bar.doc.horizontal",
-                accessibilityDescription: "Prudence")
+            // The real mark, from `assets/brand/logo-glyph-template.svg`: the mark with its
+            // two bowl pieces merged, because at 16 pt its own 20-unit gaps fall under a
+            // point and read as noise. A template image, so the glyph follows the menu bar in
+            // light and dark and while a Space's wallpaper changes under it. The asset
+            // catalog's copy is preferred; the package's own is the fallback for the render
+            // harness, which has no catalog.
+            let image =
+                NSImage(named: "StatusGlyph")
+                ?? Brand.image(.glyph, size: 16)
+                ?? NSImage(
+                    systemSymbolName: "chart.bar.doc.horizontal",
+                    accessibilityDescription: Product.name)
             image?.isTemplate = true
+            image?.size = NSSize(width: 16, height: 16)
             button.image = image
             button.imagePosition = .imageOnly
-            button.toolTip = "Prudence"
+            button.toolTip = Product.name
             button.target = self
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -51,8 +60,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
+        // The popover is the control layer, so it is the one surface made of glass. The theme
+        // is read once here rather than per view, so that reduced transparency is answered
+        // the same way by every piece inside it.
         popover.contentViewController = NSHostingController(
             rootView: MenuContentView(model: model, actions: actions)
+                .prudenceTheme(.system)
         )
     }
 

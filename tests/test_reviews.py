@@ -22,7 +22,7 @@ from prudence.cli import main
 from prudence.facts import registry as facts_registry
 from prudence.reviews import build, first_look, ranges, readiness, render, schema
 from prudence.reviews import suggestions as suggestions_module
-from prudence.store import db, transfer, views
+from prudence.store import app_views, db, transfer, views
 from prudence.store import observations as observations_module
 
 ALPHA = "repo-alpha"
@@ -283,6 +283,34 @@ def test_the_row_holds_every_section_and_a_numbers_list() -> None:
     assert ["all purposes", "10", "-", "0.0"] in did["rows"]
     became = _section(payload, "became")
     assert ["lines followed", "100", "90%", "10 fact, 0 inferred"] in became["rows"]
+    connection.close()
+
+
+def test_the_row_keeps_a_coverage_even_when_nothing_has_matured() -> None:
+    """The column was NULL for exactly the reviews a user writes most: recent work.
+
+    A review of the last few days has no commit whose seven-day mark has passed, so the
+    outcome section is empty and `became.coverage` does not exist. The activity section's
+    mean over the commits credited to the range's own sessions does, and that is what the
+    row now carries, so `app_review.coverage` has something to show.
+    """
+    connection = _store()
+    for index in range(3):
+        _session(connection, f"fresh-{index}", days_ago=1, commit_days_ago=1)
+    window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)
+    payload = build.build(connection, window, now=NOW)
+
+    assert _section(payload, "became")["empty"], "nothing has reached its mark"
+    keys = {number["key"]: number for number in payload["numbers"]}
+    assert "became.coverage" not in keys
+    assert keys["did.coverage"]["coverage"] == 0.9
+
+    row = schema.review_by_id(connection, _store_review(connection, window))
+    assert row["coverage"] == 0.9
+    # And it reaches the app through the view that already selects the column.
+    app_views.install_app_views(connection)
+    app = connection.execute("SELECT coverage FROM app_review WHERE id = ?", (row["id"],))
+    assert app.fetchone()["coverage"] == 0.9
     connection.close()
 
 

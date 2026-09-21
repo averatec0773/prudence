@@ -4,7 +4,7 @@ The Mac app's tests decode real `app_*` rows rather than SQL retyped in Swift, w
 they need a store the engine itself wrote. This file makes one out of the same synthetic
 machine `conftest.py` gives every other test, adds a few rows the small scenario cannot
 produce on its own (observations need five sessions a side, a review needs a range), and
-vacuums the result into the Swift test bundle at about 350 KB.
+vacuums the result into the Swift test bundle at well under a megabyte.
 
 The name has no `test_` prefix on purpose, so `pytest` does not collect it with the suite.
 It is skipped unless `MAC_FIXTURE_TARGET` names where the store should land.
@@ -16,10 +16,29 @@ it writes with the Swift change that reads the new columns:
     MAC_FIXTURE_TARGET=apps/mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db \\
         uv run pytest tests/mac_fixture.py -q
 
-It writes contract 2: three observations (two in a project and one pooled, each with the
-sentence the CLI prints), one review with a model segment on it, three sessions with
-token usage under three purposes, and the session `conftest` records, which commits and
-so gives `app_commits_by_day` a row. Nothing here is a real transcript.
+**What is in it, and why.** Four tests in `WindowTests.swift` are written with an
+`.enabled(if:)` that switches them off when the fixture cannot show the thing they are
+about, and each of those shapes is deliberate here rather than incidental:
+
+- **two projects** (`alpha` and `beta`, each with sessions, usage, a commit and an
+  observation), so that choosing one in the picker can drop the other's rows;
+- **three ISO weeks of usage**, one of them holding two days of the same purpose, so a
+  chart of weekly bars has more than one bar and a week is one slice per purpose rather
+  than one per day;
+- **three ISO weeks of outcomes for `alpha` where the middle one has `measured_30d = 0`**,
+  so a survival line has a hole to leave open. The hole is drawn on purpose: real 30-day
+  marks arrive in commit order, and no ordinary history has a measured week, then an
+  unmeasured one, then another measured one. It is here because the chart has to be able
+  to draw one;
+- **a second review with no model segment**, so a review page can be read without one.
+
+It also carries one commit credited to two sessions, which is the case where counting
+commits per session and counting commits per day must disagree (`app_commits_by_day`
+counts it once, `app_session_list` reports it against both sessions), and review numbers
+carrying the `label` that `reviews/build.py` writes on every figure.
+
+Nothing here is a real transcript, and every timestamp is fixed, so two runs of this file
+produce the same rows.
 """
 
 from __future__ import annotations
@@ -27,6 +46,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -34,9 +54,47 @@ from conftest import Workspace, record_one_session
 
 from prudence.paths import database_file
 from prudence.reviews import schema
+from prudence.reviews.build import Number
 from prudence.store import app_views, db, meta
 
 TARGET = os.environ.get("MAC_FIXTURE_TARGET")
+
+BETA = "repo-beta"
+
+# The three ISO weeks of usage. The two September 1 and 3 sessions share a purpose and a
+# week, so that week is one slice made of two days.
+USAGE: tuple[tuple[str, str, str, str], ...] = (
+    ("synthetic-w1a", "alpha", "2026-09-01T09:00:00", "development"),
+    ("synthetic-w1b", "alpha", "2026-09-03T09:00:00", "development"),
+    ("synthetic-w2a", "alpha", "2026-09-08T09:00:00", "research"),
+    ("synthetic-b1", "beta", "2026-09-09T09:00:00", "development"),
+    ("synthetic-b2", "beta", "2026-09-10T09:00:00", "debugging"),
+    ("synthetic-a", "alpha", "2026-09-15T09:00:00", "development"),
+    ("synthetic-b", "alpha", "2026-09-15T10:00:00", "research"),
+    ("synthetic-c", "alpha", "2026-09-14T09:00:00", "debugging"),
+)
+
+# One commit per ISO week. `measured_30d` is the third field: 0 means the 30-day mark has
+# not arrived for any of its lines, which is the hole the survival chart has to leave.
+# (hash, project, committed at, lines, lines whose 30-day mark arrived, alive, reworked)
+COMMITS: tuple[tuple[str, str, str, int, int, int, int], ...] = (
+    ("aaaa111", "alpha", "2026-07-06T10:00:00", 120, 120, 96, 12),
+    ("aaaa222", "alpha", "2026-07-13T10:00:00", 80, 0, 0, 7),
+    ("aaaa333", "alpha", "2026-07-20T10:00:00", 140, 140, 98, 21),
+    ("bbbb111", "beta", "2026-07-06T10:00:00", 60, 60, 51, 4),
+)
+
+# The one commit two sessions are credited with, which is what makes counting commits per
+# day and summing them per session two different numbers.
+SHARED_COMMIT = "aaaa333"
+SHARED_SESSIONS = ("synthetic-a", "synthetic-b")
+
+OBSERVATIONS: tuple[tuple, ...] = (
+    ("alpha", "test_runs", "more than 0", "rework", 7, 9, 0.12, 0.31, "lower", 0.86, 5, 2),
+    ("alpha", "sittings", "3 or more", "alive_head", 6, 11, 0.71, 0.54, "higher", 0.9, 4, 3),
+    ("beta", "compactions", "more than 0", "rework", 5, 8, 0.19, 0.36, "lower", 0.81, 3, 2),
+    ("*", "subagent_used", "more than 0", "rework", 8, 14, 0.22, 0.4, "lower", 0.77, 6, 5),
+)
 
 
 @pytest.mark.skipif(not TARGET, reason="set MAC_FIXTURE_TARGET to regenerate the fixture")
@@ -44,35 +102,44 @@ def test_make_fixture(lab: Workspace) -> None:
     record_one_session(lab)
     connection = db.connect()
     try:
-        repo_key = lab.repo_key()
-        _usage_session(connection, "synthetic-a", repo_key, "2026-09-15T09:00:00", "development")
-        _usage_session(connection, "synthetic-b", repo_key, "2026-09-15T10:00:00", "research")
-        _usage_session(connection, "synthetic-c", repo_key, "2026-09-14T09:00:00", "debugging")
-        for row in (
-            (repo_key, "test_runs", "more than 0", "rework", 7, 9, 0.12, 0.31, "lower", 0.86, 5, 2),
-            (
-                repo_key,
-                "sittings",
-                "3 or more",
-                "alive_head",
-                6,
-                11,
-                0.71,
-                0.54,
-                "higher",
-                0.9,
-                4,
-                3,
-            ),
-            ("*", "subagent_used", "more than 0", "rework", 8, 14, 0.22, 0.4, "lower", 0.77, 6, 5),
-        ):
+        keys = {"alpha": lab.repo_key(), "beta": BETA}
+        _repository(connection, BETA, "beta")
+        for session_id, project, first_at, purpose in USAGE:
+            _usage_session(connection, session_id, keys[project], first_at, purpose)
+        for commit_hash, project, at, lines, measured, alive, reworked in COMMITS:
+            _commit(connection, commit_hash, keys[project], at, lines, measured, alive, reworked)
+        # Every commit is credited to the session that shares its project; one of them is
+        # credited to two, which is the disagreement `app_commits_by_day` has to survive.
+        _attribute(connection, "aaaa111", "synthetic-w1a", 0.91)
+        _attribute(connection, "aaaa222", "synthetic-w2a", 0.88)
+        for session_id in SHARED_SESSIONS:
+            _attribute(connection, SHARED_COMMIT, session_id, 0.93)
+        _attribute(connection, "bbbb111", "synthetic-b1", 0.79)
+        for row in OBSERVATIONS:
             connection.execute(
                 "INSERT OR REPLACE INTO observation (repo_key, fact, threshold_text, outcome,"
                 " with_n, without_n, with_value, without_value, direction, coverage,"
                 " fact_commits, inferred_commits, fact_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
-                row,
+                (keys.get(row[0], row[0]), *row[1:]),
             )
-        review_id = schema.insert_review(
+
+        # The older review is the one with no segment, and it is written first so that it
+        # is not the newest: `latestReview()` is what the review screen opens on, and a
+        # test there reads the segment of whatever that returns.
+        without_segment = schema.insert_review(
+            connection,
+            created_at="2026-09-08T18:00:00",
+            range_start="2026-09-01T00:00:00",
+            range_end="2026-09-08T00:00:00",
+            project=keys["alpha"],
+            outcome_range_start="2026-08-25T00:00:00",
+            outcome_range_end="2026-09-01T00:00:00",
+            sections=_sections(),
+            coverage=0.91,
+            fact_version=1,
+            parser_version=2,
+        )
+        latest = schema.insert_review(
             connection,
             created_at="2026-09-15T18:00:00",
             range_start="2026-09-08T00:00:00",
@@ -80,38 +147,14 @@ def test_make_fixture(lab: Workspace) -> None:
             project=None,
             outcome_range_start="2026-09-01T00:00:00",
             outcome_range_end="2026-09-08T00:00:00",
-            sections={
-                "review_version": 1,
-                "project_name": None,
-                "sections": [
-                    {
-                        "key": "did",
-                        "title": "What you did",
-                        "headers": ["purpose", "sessions", "tokens", "active h"],
-                        "rows": [["development", "2", "5k", "1.4"]],
-                        "notes": [],
-                    },
-                    {
-                        "key": "became",
-                        "title": "What became of earlier work",
-                        "headers": [],
-                        "rows": [],
-                        "notes": [],
-                        "empty": "No commit in this range has reached its seven-day mark.",
-                    },
-                ],
-                "numbers": [
-                    {"key": "did.sessions.development", "text": "2", "coverage": None},
-                    {"key": "did.tokens.development", "text": "5k", "coverage": None},
-                ],
-            },
+            sections=_sections(),
             coverage=0.82,
             fact_version=1,
             parser_version=2,
         )
         schema.store_segment(
             connection,
-            review_id,
+            latest,
             text=(
                 "Two development sessions in the range, and 5k tokens across them. "
                 "Nothing here has reached its seven-day mark yet, so what became of the "
@@ -122,34 +165,146 @@ def test_make_fixture(lab: Workspace) -> None:
             input_hash="0" * 16,
             numbers=[{"key": "did.sessions.development", "text": "2"}],
             created_at="2026-09-15T18:01:00",
+            language="en",
         )
         app_views.install_app_views(connection)
         connection.commit()
 
         # The fixture is only worth having if it is what the app will read. Contract and
-        # column lists first, then one row out of each view that batch 3 added.
+        # column lists first, then the shapes the four switched-off Swift tests need.
         assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "2"
         for name, columns in app_views.APP_VIEWS.items():
             assert app_views.columns(connection, name) == columns, name
-        review = connection.execute("SELECT * FROM app_review").fetchone()
+
+        review = connection.execute("SELECT * FROM app_review WHERE id = ?", (latest,)).fetchone()
         assert review["headline"].startswith("Review "), review["headline"]
         assert review["segment_model"] == "recorded-haiku"
+        # The newest review has a segment (the screen opens on it) and exactly one older
+        # one has none.
+        assert _count(connection, "SELECT MAX(id) FROM review") == latest
+        assert _count(connection, "SELECT COUNT(*) FROM review WHERE segment_text IS NULL") == 1
+        assert schema.review_by_id(connection, without_segment)["segment_text"] is None
+        labels = [
+            row["label"]
+            for row in connection.execute(
+                "SELECT json_extract(value, '$.label') AS label FROM app_review,"
+                " json_each(app_review.numbers) WHERE app_review.id = ?",
+                (latest,),
+            )
+        ]
+        assert labels and all(labels), labels
+
         sentences = [row["sentence"] for row in connection.execute("SELECT * FROM app_observation")]
-        assert len(sentences) == 3 and all(sentences), sentences
-        assert connection.execute("SELECT COUNT(*) FROM app_commits_by_day").fetchone()[0] >= 1
-        assert connection.execute("SELECT SUM(edits) FROM app_session_list").fetchone()[0] >= 1
+        assert len(sentences) == len(OBSERVATIONS) and all(sentences), sentences
+        assert _count(connection, "SELECT COUNT(DISTINCT project) FROM app_session_list") >= 2
+        assert _count(connection, WEEKS_OF_USAGE) >= 3
+        assert _count(connection, WEEK_WITH_TWO_DAYS) >= 1
+        assert _count(connection, GAP_IN_THE_SERIES) >= 1
+        assert _count(connection, "SELECT COUNT(*) FROM app_commits_by_day") >= 1
+        assert _count(connection, "SELECT SUM(edits) FROM app_session_list") >= 1
+        # One commit, two sessions: the per-day count and the per-session sum disagree,
+        # and a test in Swift can only see that if they do.
+        per_day = _count(connection, "SELECT SUM(commits) FROM app_commits_by_day")
+        per_session = _count(
+            connection, "SELECT SUM(commits_fact + commits_inferred) FROM app_session_list"
+        )
+        assert per_session == per_day + 1, (per_session, per_day)
     finally:
         connection.close()
 
     target = Path(TARGET)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # `VACUUM INTO` refuses to write a file that is already there, and regenerating means
+    # writing over the one that is. Removing it first is the whole of the fix; without it
+    # the second run of this file fails on the store it is meant to replace.
+    target.unlink(missing_ok=True)
     source = sqlite3.connect(database_file())
     try:
         source.execute("VACUUM INTO ?", (str(target),))
     finally:
         source.close()
     shutil.rmtree(target.parent / "__pycache__", ignore_errors=True)
-    assert target.stat().st_size < 1_000_000, target.stat().st_size
+    size = target.stat().st_size
+    assert size < 1_000_000, size
+    print(f"\n{target} is {size / 1024:.0f} KB")
+
+
+# The three questions the Swift tests ask of the fixture before they agree to run, asked
+# here too, so a regeneration that lost one of them fails at the source rather than
+# silently switching a test off again.
+WEEKS_OF_USAGE = """
+    SELECT COUNT(*) FROM (
+        SELECT DISTINCT date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days') AS week
+          FROM app_usage_by_purpose_day WHERE COALESCE(total_tokens, 0) > 0
+    )
+"""
+
+WEEK_WITH_TWO_DAYS = """
+    SELECT COUNT(*) FROM (
+        SELECT date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days') AS week, purpose
+          FROM app_usage_by_purpose_day WHERE COALESCE(total_tokens, 0) > 0
+         GROUP BY week, purpose HAVING COUNT(DISTINCT day) >= 2
+    )
+"""
+
+GAP_IN_THE_SERIES = """
+    SELECT COUNT(*) FROM app_outcomes_by_week a
+     WHERE COALESCE(a.measured_30d, 0) > 0
+       AND EXISTS (SELECT 1 FROM app_outcomes_by_week b
+                    WHERE b.project = a.project AND b.week_start > a.week_start
+                      AND COALESCE(b.measured_30d, 0) = 0)
+       AND EXISTS (SELECT 1 FROM app_outcomes_by_week c
+                    WHERE c.project = a.project AND c.week_start > a.week_start
+                      AND COALESCE(c.measured_30d, 0) > 0)
+"""
+
+
+def _count(connection: sqlite3.Connection, query: str) -> int:
+    return int(connection.execute(query).fetchone()[0] or 0)
+
+
+def _sections() -> dict:
+    """A stored review payload whose numbers are the shape `reviews/build.py` writes.
+
+    Built out of `build.Number` rather than typed as literals, so a field added to that
+    record appears here too instead of being missed by a fixture nobody re-read.
+    """
+    numbers = [
+        Number("did.sessions.development", "sessions labelled development", "2", 2.0),
+        Number("did.tokens.development", "tokens in development sessions", "5k", 5080.0),
+        Number("did.coverage", "mean coverage of those commits", "91%", 0.91, 0.91),
+    ]
+    return {
+        "review_version": 1,
+        "project_name": None,
+        "sections": [
+            {
+                "key": "did",
+                "title": "What you did",
+                "headers": ["purpose", "sessions", "tokens", "active h"],
+                "rows": [["development", "2", "5k", "1.4"]],
+                "notes": [],
+                "numbers": [asdict(number) for number in numbers],
+            },
+            {
+                "key": "became",
+                "title": "What became of earlier work",
+                "headers": [],
+                "rows": [],
+                "notes": [],
+                "empty": "No commit in this range has reached its seven-day mark.",
+            },
+        ],
+        "numbers": [asdict(number) for number in numbers],
+    }
+
+
+def _repository(connection: sqlite3.Connection, repo_key: str, name: str) -> None:
+    connection.execute(
+        "INSERT OR REPLACE INTO repository (repo_key, name, toplevel, outcomes_suppressed,"
+        " fact_version) VALUES (?, ?, ?, 0, 1)",
+        (repo_key, name, f"/tmp/{name}"),
+    )
 
 
 def _usage_session(
@@ -174,4 +329,57 @@ def _usage_session(
         "INSERT INTO session_label (session_id, name, label, rule_version)"
         " VALUES (?, 'purpose', ?, 1)",
         (session_id, purpose),
+    )
+
+
+def _commit(
+    connection: sqlite3.Connection,
+    commit_hash: str,
+    repo_key: str,
+    at: str,
+    lines: int,
+    measured_30d: int,
+    alive_30d: int,
+    reworked: int,
+) -> None:
+    """One commit and the fate of every line it added, written the way `outcomes` writes it.
+
+    `alive_30d` is NULL on the lines whose 30-day mark has not arrived, never 0: an
+    unmeasured mark is not a dead line (architecture rule 10), and the difference is the
+    whole of what the survival chart's hole is about.
+    """
+    connection.execute(
+        'INSERT OR REPLACE INTO "commit" (commit_hash, repo_key, committer_at, author_at,'
+        " added_lines, files_changed, is_merge, is_bot, fact_version)"
+        " VALUES (?, ?, ?, ?, ?, 1, 0, 0, 2)",
+        (commit_hash, repo_key, at, at, lines),
+    )
+    connection.executemany(
+        "INSERT OR REPLACE INTO line_fate (commit_hash, path, line_hash, alive_7d, alive_30d,"
+        " alive_90d, alive_head, alive_head_anywhere, blame_head, reworked_by, fact_version)"
+        " VALUES (?, 'src/app.py', ?, ?, ?, NULL, ?, ?, ?, ?, 2)",
+        [
+            (
+                commit_hash,
+                f"{commit_hash}-{index}",
+                1 if index < alive_30d else 0,
+                (1 if index < alive_30d else 0) if index < measured_30d else None,
+                1 if index < alive_30d else 0,
+                1 if index < alive_30d else 0,
+                1 if index < alive_30d else 0,
+                "later" if index < reworked else None,
+            )
+            for index in range(lines)
+        ],
+    )
+
+
+def _attribute(
+    connection: sqlite3.Connection, commit_hash: str, session_id: str, coverage: float
+) -> None:
+    connection.execute(
+        "INSERT OR REPLACE INTO attribution (commit_hash, session_id, method, rank,"
+        " lines_matched, coverage, confidence, fact_version)"
+        " VALUES (?, ?, 'in_session', 1, 10, ?, 'fact', 3)",
+        (commit_hash, session_id, coverage),
     )

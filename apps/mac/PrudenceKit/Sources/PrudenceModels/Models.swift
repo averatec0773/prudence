@@ -105,11 +105,20 @@ public struct WeekUsageModel: Equatable, Sendable {
     }
 
     public let top: [Slice]
+    /// Every purpose the week measured, not only the three that are named. The dropdown's
+    /// mini stacked bar draws all of them, so that the legend's three plus "the rest" add up
+    /// to the bar the reader is looking at.
+    public let all: [Slice]
     public let total: Int
+    /// The week's active minutes, summed straight off `active_minutes`. A sum of one view
+    /// column, which is the only arithmetic rule 2 allows a screen.
+    public let activeMinutes: Double
 
-    public init(top: [Slice], total: Int) {
+    public init(top: [Slice], total: Int, all: [Slice]? = nil, activeMinutes: Double = 0) {
         self.top = top
+        self.all = all ?? top
         self.total = total
+        self.activeMinutes = activeMinutes
     }
 
     public static let topCount = 3
@@ -119,20 +128,24 @@ public struct WeekUsageModel: Equatable, Sendable {
         for row in rows {
             totals[row.purpose, default: 0] += row.totalTokens ?? 0
         }
+        let minutes = rows.reduce(0.0) { $0 + ($1.activeMinutes ?? 0) }
         let grand = totals.values.reduce(0, +)
         guard grand > 0 else {
-            self.init(top: [], total: 0)
+            self.init(top: [], total: 0, all: [], activeMinutes: minutes)
             return
         }
         // Ties break on the purpose name so the order is the same on every refresh.
         let ranked = totals.sorted { left, right in
             left.value == right.value ? left.key < right.key : left.value > right.value
         }
+        let slices = ranked.map {
+            Slice(purpose: $0.key, tokens: $0.value, share: Double($0.value) / Double(grand))
+        }
         self.init(
-            top: ranked.prefix(limit).map {
-                Slice(purpose: $0.key, tokens: $0.value, share: Double($0.value) / Double(grand))
-            },
-            total: grand
+            top: Array(slices.prefix(limit)),
+            total: grand,
+            all: slices,
+            activeMinutes: minutes
         )
     }
 
@@ -276,6 +289,12 @@ public struct Snapshot: Sendable {
     public var today: TodayModel
     public var week: WeekUsageModel
     public var observation: LatestObservationModel?
+    /// The same row, unformatted.
+    ///
+    /// The dropdown needs the columns rather than the engine's finished English, because it
+    /// composes the sentence in the interface language (`PrudenceUI/ObservationText`). The
+    /// stored `sentence` stays on the row as the thing that composition is checked against.
+    public var observationRow: AppObservationRow?
     public var review: LatestReviewModel?
     /// The store's own complaint, if it had one: a contract mismatch or a missing file.
     public var storeError: String?
@@ -286,6 +305,7 @@ public struct Snapshot: Sendable {
         today: TodayModel = TodayModel(sessions: 0, commits: 0),
         week: WeekUsageModel = WeekUsageModel(top: [], total: 0),
         observation: LatestObservationModel? = nil,
+        observationRow: AppObservationRow? = nil,
         review: LatestReviewModel? = nil,
         storeError: String? = nil,
         readAt: Date = Date()
@@ -294,6 +314,7 @@ public struct Snapshot: Sendable {
         self.today = today
         self.week = week
         self.observation = observation
+        self.observationRow = observationRow
         self.review = review
         self.storeError = storeError
         self.readAt = readAt
@@ -318,6 +339,7 @@ public struct Snapshot: Sendable {
             today: TodayModel(sessions: todayRows, commits: todayCommits),
             week: WeekUsageModel(rows: usageRows),
             observation: LatestObservationModel(rows: observationRows),
+            observationRow: observationRows.first,
             review: reviewRow.map(LatestReviewModel.init(row:)),
             storeError: nil,
             readAt: now

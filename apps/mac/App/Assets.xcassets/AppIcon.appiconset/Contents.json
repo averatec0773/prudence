@@ -12,7 +12,7 @@
     { "filename" : "icon_512x512@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "512x512" }
   ],
   "info" : {
-    "author" : "xcode",
+    "author" : "apps/mac/Scripts/make_icons.swift",
     "version" : 1
   }
 }

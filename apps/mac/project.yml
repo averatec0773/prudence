@@ -58,6 +58,8 @@ targets:
         product: PrudenceEngine
       - package: PrudenceKit
         product: PrudenceModels
+      - package: PrudenceKit
+        product: PrudenceUI
     settings:
       base:
         # Placeholder. The real identifier is decided with the Apple Developer Program

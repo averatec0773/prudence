@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow = SettingsWindowController(
                 settings: settings,
                 launchAtLogin: launchAtLogin,
+                status: { [weak self] in self?.model.snapshot.status },
                 onChange: { [weak self] in self?.model.startIngestTimer() },
                 onClose: { [weak self] in self?.windowClosed() }
             )

@@ -18,7 +18,8 @@ import os
 import click
 
 from prudence import config as config_module
-from prudence.model import BACKENDS
+from prudence.model import BACKENDS, LANGUAGES
+from prudence.model import language as language_module
 
 
 @click.group()
@@ -35,31 +36,48 @@ def config() -> None:
 @click.option("--model-id", "model_id", metavar="ID", help="The model id to send to.")
 @click.option("--key-env", "key_env", metavar="NAME", help="Environment variable holding the key.")
 @click.option("--max-tokens", "max_tokens", type=int, help="Cap on one call's output.")
+@click.option(
+    "--language",
+    "language",
+    type=click.Choice(LANGUAGES),
+    help="Language the model writes its prose in. `system` follows the machine's locale.",
+)
 def model(
     backend: str | None,
     model_id: str | None,
     key_env: str | None,
     max_tokens: int | None,
+    language: str | None,
 ) -> None:
     """Show the model settings, or change them. With no options, shows."""
     current = config_module.load()
-    changing = any(value is not None for value in (backend, model_id, key_env, max_tokens))
+    changing = any(
+        value is not None for value in (backend, model_id, key_env, max_tokens, language)
+    )
     if changing:
         current.model = config_module.ModelSettings(
             backend=backend or current.model.backend,
             model_id=model_id or current.model.model_id,
             api_key_env=key_env or current.model.api_key_env,
             max_tokens=max_tokens or current.model.max_tokens,
+            language=language or current.model.language,
         )
         config_module.save(current)
 
     settings = current.model
     variable = settings.api_key_env
     has_key = bool(os.environ.get(variable))
+    resolved = language_module.resolve(settings.language)
     click.echo(f"backend      {settings.backend}")
     click.echo(f"model id     {settings.model_id}")
     click.echo(f"key variable {variable} ({'set' if has_key else 'not set'})")
     click.echo(f"max tokens   {settings.max_tokens}")
+    # The setting and what it resolves to now, because `system` is read at each call and
+    # a user changing their locale should be able to see which language that gives them.
+    click.echo(
+        f"language     {settings.language} "
+        f"(now {resolved}, {language_module.name_of(resolved)}; model prose only)"
+    )
     click.echo(f"explain      {'on' if current.review.explain else 'off'} (review.explain)")
     click.echo(f"written to   {current.path}")
     if settings.backend == "anthropic" and not has_key:
