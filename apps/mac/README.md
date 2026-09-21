@@ -87,9 +87,9 @@ Simplified Chinese, and the two surfaces that have a material in Standard and Gl
 | --- | --- | --- | --- |
 | `menu-{light,dark}-{en,zh}[-glass]` | fitted | both | the dropdown, variant C with captions |
 | `window-{light,dark}-{en,zh}[-glass]` | 900x600 | both | the whole window at the floor `MainWindowController` sets |
-| `overview-{light,dark}-{en,zh}` | 1200x800 | standard | the Overview screen |
-| `review-{light,dark}-{en,zh}` | 1200x800 | standard | the Review screen |
-| `observations-{light,dark}-{en,zh}` | 1200x800 | standard | the Observations screen |
+| `overview-{light,dark}-{en,zh}` | 1200x1500 | standard | Overview A: cards, stacked bars, lines, heat strip |
+| `review-{light,dark}-{en,zh}` | 1200x2600 | standard | Review B: every chart with its table open under it |
+| `observations-{light,dark}-{en,zh}` | 1200x1500 | standard | Observations C: paired bars, grouped by behaviour |
 | `settings-{light,dark}-{en,zh}` | 620x470 | standard | Settings B, the General tab |
 | `settings-data-{light,dark}-{en,zh}` | 620x470 | standard | Settings B, the Data tab |
 
@@ -99,10 +99,23 @@ photographing them twice would produce two identical files. The harness draws a 
 behind everything, so a frosted surface has something to be frosted about; Standard covers it
 completely, which is the honest Standard look.
 
-The three screen shots are of scrolling views, so a long review runs past the bottom of its
-PNG; that is the screen, not the shot. `PRUDENCE_SHOTS_DUMP=1` also prints the Overview's three
-cards and every week's token totals on standard output, for holding beside
-`prudence usage --last 60d` over the same store.
+The three screen shots are taller than a window because each of them now carries several
+charts, and a shot cut off at the window's height would hide the ones a reviewer is being asked
+about; `window` stays at the 900x600 floor, which is where the layout is under the most
+pressure. The names have not changed since batch 1, so `.github/workflows/mac-ci.yml` needs no
+edit.
+
+`PRUDENCE_SHOTS_DUMP=1` also prints the Overview's three cards and every week's token totals on
+standard output, for holding beside `prudence usage --last 60d` over the same store.
+
+`PRUDENCE_SHOTS_REVIEW` is the payload the `review` shot draws, and `shots.sh` points it at
+`Fixtures/review-sections.json`. `tests/mac_fixture.py` writes a review with two sections and
+one purpose row — enough for the decoding tests, far too thin to photograph, since the donut
+would have one slice and the comparison, the observations and the suggestions would not appear
+at all. That JSON is one real payload copied off the founder's own store, which the decoding
+tests already read; the row's own columns are still the fixture's, and the screen is the
+shipping screen either way. Set the variable to an empty string to photograph the fixture's own
+payload instead. A `mac_fixture.py` that wrote a five-section review would make it unnecessary.
 
 ## Design
 
@@ -128,11 +141,15 @@ apps/mac/
     Sources/PrudenceModels/   view models and formatting
       Overview.swift               weekly buckets, outcome series, the three cards
       ReviewPayload.swift          the sections JSON as typed Swift
+      ReviewCharts.swift           a stored review's sections, as the shapes the charts draw
       WindowModel.swift            what the window read, and the one thing it can do
     Sources/PrudenceUI/       the design system; see DESIGN.md
-      Theme.swift                  every token, light and dark
+      Theme.swift                  every token, light and dark, plus the project colour scale
       Glass.swift                  glassEffect on macOS 26, NSVisualEffectView before it
       Components.swift, Controls.swift, MiniStack.swift, FlowLayout.swift
+      Charts/                      the seven chart types, one file each:
+                                   StackedBarsChart, DonutChart, PairedBarsChart,
+                                   ShareWithCoverageBar, LinesWithGaps, HeatStrip, CompareCard
       Localization.swift, Fmt.swift   the String Catalog's keys, and Locale-aware numbers
       ObservationText.swift, ReviewText.swift   sentences composed per language
       Brand.swift                  the mark, from the package's copy of assets/brand
@@ -147,32 +164,42 @@ A `NavigationSplitView` with four entries, and one screen at a time. The window 
 size (`setFrameAutosaveName`) and will not go below 900x600. The Dock icon appears while it is
 open and goes away when it closes (M3 plan, open question 1).
 
-**Overview.** Three cards, then two charts, for the chosen project and range (8 weeks by
-default, or 90 days, or all). The cards are sessions in range from `app_session_list`, active
-hours from `app_usage_by_purpose_day`, and commits in range from `app_commits_by_day` with its
-fact and inferred split, which is the view that counts a commit once. The first chart is
-stacked bars, one per ISO week, of tokens by purpose, with a colour per purpose fixed in a
-table so two screenshots a week apart are comparable; hovering a bar gives that week's totals.
-The second is, per project, the share still alive at 30 days and the share reworked later, with
-that week's mean coverage as a pale wide line behind them. **A week whose 30-day mark has not
+**Overview** (variant A: one column, cards first). Three cards, then three charts, for the
+chosen project and range (8 weeks by default, or 90 days, or all). The cards are sessions in
+range from `app_session_list`, active hours from `app_usage_by_purpose_day`, and commits in
+range from `app_commits_by_day` with its fact and inferred split, which is the view that counts
+a commit once. Then stacked bars, one per ISO week, of tokens by purpose, with a colour per
+purpose fixed in a table so two screenshots a week apart are comparable: pointing at a bar
+prints that week's totals and its breakdown under the chart, and **clicking one filters the
+three cards to that week**, says so above them, and offers one button to put the range back.
+Then, per project, the share still alive at 30 days and the share reworked later, with that
+week's mean coverage as a pale wide line behind them. **A week whose 30-day mark has not
 arrived is a gap, never a zero**: each project's line is cut into runs of measured weeks so
-Swift Charts cannot join across the hole. Every share on hover carries the number it is over.
+Swift Charts cannot join across the hole. Every share carries the number it is over. Last, a
+heat strip of active hours, one cell per local day, seven rows.
 
-**Review.** The newest stored review from `app_review`, or any earlier one from the picker.
-The header, then each section drawn from the sections JSON: the purpose table with the
-whole-range figures as cards, the outcome figures as cards each carrying its coverage, the
-observations as sentence-plus-caveat rows, the comparison as a table with its change column,
-the suggestions as rows, and the model segment last under "What this means" with the model that
-wrote it named beneath. Five section kinds are laid out by hand and **anything else is drawn as
-the table it brought with it**, so a section the engine grows later appears here rather than
-crashing the screen or being silently dropped. "Review now" runs `prudence review --json`; a
-not-ready answer shows the engine's own reason with a "Write anyway" button that adds
-`--force`.
+**Review** (variant B: charts with their tables open under them). The newest stored review from
+`app_review`, or any earlier one from the picker. The header carries the headline, both ranges,
+the coverage stored on the row, and the day it was written in the reader's own language. Then
+each section from the sections JSON: "what you did" as four figure cards, a donut of the tokens
+by purpose and the purpose table under it; "what became of earlier work" as a share bar per
+figure over its own pale coverage underlay, with the table under them; the observations as
+paired bars with the sentence above and the coverage and method line below; the comparison as
+one card per figure with the previous value, a neutral delta chip and two mini bars; the
+suggestions as rows; and the model segment last under "What this means", with the model that
+wrote it and the language it is in. Five section kinds are laid out by hand and **anything else
+is drawn as the table it brought with it**, so a section the engine grows later appears here
+rather than crashing the screen or being silently dropped. "Review now" runs
+`prudence review --json`, with `--language` when this machine's engine takes it; a not-ready
+answer shows the engine's own reason with a "Write anyway" button that adds `--force`.
 
-**Observations.** The `app_observation` rows for the chosen scope, biggest gap between the two
-medians first, each with its sentence and the coverage and method line under it. Under "All
-projects" only the pooled rows appear, labelled as such: a row about one project under a
-heading that says every project would read as a statement about all of them.
+**Observations** (variant C: grouped by behaviour). One card per behaviour fact, biggest gap
+first, carrying the threshold that made the split and then one paired-bars row per outcome:
+the two medians, **`n` on each bar**, the gap in points under them, and the coverage and method
+line beside. Survival and rework of the same split share a card, because they are two readings
+of the same two groups of sessions. Under "All projects" only the pooled rows appear, labelled
+"across your projects": a row about one project under a heading that says every project would
+read as a statement about all of them.
 
 **Settings.** The same screen the menu bar opens, hosted in the sidebar.
 
@@ -236,7 +263,11 @@ bump the version fails in `swift test` rather than in front of the user.
 **Open against contract 2:** the Overview has no figure it wanted and could not have. The one
 thing the app still assembles itself is an observation's caveat line, `(coverage: 90%, method:
 4 fact, 3 inferred)`, which is three columns of the same row in a fixed shape rather than a
-restated rule; a `caveat` column beside `sentence` would remove even that.
+restated rule; a `caveat` column beside `sentence` would remove even that. Batch 2's four
+requests, all of them about a stored review rather than about a view, are listed under
+"Contract requests" in [DESIGN.md](DESIGN.md): `with_n` and `without_n` on a review's
+observation numbers, a `value` on its `compared.*` numbers, a `segment_language` column, and a
+structured threshold beside `app_observation.threshold_text`.
 
 ## Bundle identifier
 

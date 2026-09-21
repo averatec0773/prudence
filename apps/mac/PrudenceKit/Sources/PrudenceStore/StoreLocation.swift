@@ -20,11 +20,19 @@ public enum StoreLocation {
     public static let databaseName = "prudence.db"
 
     /// How the path in hand was arrived at, so the Settings screen can say so.
-    public enum Source: Equatable, Sendable {
+    public enum Source: Equatable, Sendable, CaseIterable {
         case environment
         case settings
         case standard
 
+        /// The English wording, and the fallback for anything that has no interface layer.
+        ///
+        /// The **screen does not print this**: `PrudenceUI.Fmt.storeSource` turns the case into
+        /// the reader's own language, because a store target is a sentence on a settings page
+        /// and not a figure that has to match the CLI. This stays as the value a log line, a
+        /// test or a crash report can carry, and as the thing the translation is checked
+        /// against. Batch 1 left it on screen in English inside a Chinese window (M4 plan,
+        /// "Batch 2 inputs"); batch 2 moved the wording and kept the case.
         public var label: String {
             switch self {
             case .environment: return "from \(StoreLocation.dataDirectoryVariable)"

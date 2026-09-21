@@ -32,6 +32,10 @@ public enum Str: String, CaseIterable, Sendable {
     case commonNone = "common.none"
     /// `-`
     case commonDash = "common.dash"
+    /// `Dismiss`
+    case commonDismiss = "common.dismiss"
+    /// `%1$@ (%2$@)` — a date and how long ago it was.
+    case commonDateWithRelative = "common.dateWithRelative"
     /// `development`
     case purposeDevelopment = "purpose.development"
     /// `research`
@@ -303,6 +307,173 @@ public enum Str: String, CaseIterable, Sendable {
     /// `Nothing is drawn from a schema this build does not understand.`
     case contractNote = "contract.note"
 
+    // --- the charts ----------------------------------------------------------------
+    //
+    // The first seven are the names a mark's dimensions carry. They are never printed in
+    // the layout, but Swift Charts puts them in the accessibility tree, so a screen reader
+    // reads them and they are translated like everything else.
+
+    /// `Period`
+    case chartPeriod = "chart.period"
+    /// `Value`
+    case chartValue = "chart.value"
+    /// `Purpose`
+    case chartPurpose = "chart.purpose"
+    /// `Side`
+    case chartSide = "chart.side"
+    /// `Series`
+    case chartSeries = "chart.series"
+    /// `Day of the week`
+    case chartWeekday = "chart.weekday"
+    /// `Active hours`
+    case chartHours = "chart.hours"
+    /// `n=%1$@`, the count behind one side of a paired-bars comparison.
+    case chartSampleSize = "chart.sampleSize"
+    /// `coverage %1$@`
+    case chartCoverageIs = "chart.coverageIs"
+    /// `%1$@ of %2$@` — a share and the number it is over. Never one without the other.
+    case chartShareOver = "chart.shareOver"
+    /// `sessions`, the word under a donut's middle.
+    case chartSessionsShort = "chart.sessionsShort"
+    /// What the stacked bars' readout says with nothing under the pointer.
+    case chartHintWeeks = "chart.hint.weeks"
+    /// The same for the lines.
+    case chartHintLines = "chart.hint.lines"
+    /// `Mon`
+    case weekdayMon = "weekday.mon"
+    /// `Tue`
+    case weekdayTue = "weekday.tue"
+    /// `Wed`
+    case weekdayWed = "weekday.wed"
+    /// `Thu`
+    case weekdayThu = "weekday.thu"
+    /// `Fri`
+    case weekdayFri = "weekday.fri"
+    /// `Sat`
+    case weekdaySat = "weekday.sat"
+    /// `Sun`
+    case weekdaySun = "weekday.sun"
+    /// `previous %1$@`
+    case comparePrevious = "compare.previous"
+    /// `change %1$@`
+    case compareChange = "compare.change"
+    /// `prev`
+    case comparePreviousShort = "compare.previousShort"
+    /// `now`
+    case compareNowShort = "compare.nowShort"
+
+    // --- where the store is ---------------------------------------------------------
+
+    /// `from %1$@`
+    case settingsSourceEnvironment = "settings.source.environment"
+    /// `from Settings`
+    case settingsSourceSettings = "settings.source.settings"
+    /// `the standard location`
+    case settingsSourceStandard = "settings.source.standard"
+
+    // --- the Overview's third chart --------------------------------------------------
+
+    /// `Where the hours went`
+    case overviewWhereTime = "overview.whereTime"
+    /// `Active minutes per local day ...`
+    case overviewWhereTimeNote = "overview.whereTime.note"
+    /// `No active time in this range`
+    case overviewNoHoursTitle = "overview.noHours.title"
+    /// `No session in this range recorded any active minutes. ...`
+    case overviewNoHoursDetail = "overview.noHours.detail"
+    /// `The cards above are the week of %1$@: %2$@ tokens.`
+    case overviewWeekFilter = "overview.weekFilter"
+    /// `Show the whole range`
+    case overviewShowAllWeeks = "overview.showAllWeeks"
+    /// `alive at 30 days`, the series name inside a readout.
+    case overviewLegendAliveName = "overview.legend.aliveName"
+    /// `reworked later`
+    case overviewLegendReworkName = "overview.legend.reworkName"
+    /// `coverage`
+    case overviewLegendCoverageName = "overview.legend.coverageName"
+
+    // --- the Review page --------------------------------------------------------------
+
+    /// `scope`
+    case reviewTagScope = "review.tag.scope"
+    /// `coverage`
+    case reviewTagCoverage = "review.tag.coverage"
+    /// `written`
+    case reviewTagWritten = "review.tag.written"
+    /// `figures`
+    case reviewTagFigures = "review.tag.figures"
+    /// `Mean coverage`, the heading of the fourth card of "What you did".
+    case reviewCardCoverage = "review.card.coverage"
+    /// The tooltip on the coverage tag.
+    case reviewCoverageHelp = "review.coverageHelp"
+    /// The tooltip on the figures tag.
+    case reviewFiguresHelp = "review.figuresHelp"
+    /// `Every figure above is computed from your own record: %1$@ numbers ...`
+    case reviewProvenance = "review.provenance"
+    /// `Not ready for a review yet`
+    case reviewNotReadyTitle = "review.notReady.title"
+    /// `Write anyway`
+    case reviewWriteAnyway = "review.writeAnyway"
+    /// `This review's sections cannot be read`
+    case reviewUnreadableTitle = "review.unreadable.title"
+    /// `The stored JSON is not in a shape this build understands. ...`
+    case reviewUnreadableDetail = "review.unreadable.detail"
+    /// `No review yet`
+    case reviewEmptyTitle = "review.empty.title"
+    /// `A review is written on demand and kept. ...`
+    case reviewEmptyDetail = "review.empty.detail"
+    /// `A section this version of the app does not lay out; here it is as stored.`
+    case reviewUnknownSection = "review.unknownSection"
+    /// `What this means`
+    case reviewWhatThisMeans = "review.whatThisMeans"
+    /// `Written by %1$@`
+    case reviewWrittenBy = "review.writtenBy"
+    /// `Every number in it was checked against the review's own figures.`
+    case reviewSegmentChecked = "review.segment.checked"
+    /// `every project`
+    case reviewScopeEveryProject = "review.scope.everyProject"
+    /// `The pale underlay behind each bar is that figure's coverage.`
+    case reviewCoverageUnderlay = "review.coverageUnderlay"
+    /// `This review's coverage is %1$@.`
+    case reviewCoverageOfRow = "review.coverageOfRow"
+
+    // --- the Observations page ---------------------------------------------------------
+
+    /// `Threshold: %1$@`
+    case observationThreshold = "observations.threshold"
+    /// `still at head` — and in Chinese **仍留在当前版本**, never the English word "head".
+    case observationOutcomeAlive = "observation.outcome.alive"
+    /// `reworked later`
+    case observationOutcomeRework = "observation.outcome.rework"
+    /// `did`, the with-side of a paired-bars row where the behaviour has no short name.
+    case observationSideDid = "observation.side.did"
+    /// `did not`, the without-side of every paired-bars row.
+    case observationSideDidNot = "observation.side.didNot"
+    /// `3+ sittings`
+    case observationShortSittings = "observation.short.sittings"
+    /// `edited before read`
+    case observationShortFilesEditedUnread = "observation.short.files_edited_unread"
+    /// `ran a formatter`
+    case observationShortFormatterRuns = "observation.short.formatter_runs"
+    /// `ran tests`
+    case observationShortTestRuns = "observation.short.test_runs"
+    /// `tests before commit`
+    case observationShortTestsBeforeCommit = "observation.short.tests_before_commit"
+    /// `3+ commit attempts`
+    case observationShortCommitAttempts = "observation.short.commit_attempts_per_commit"
+    /// `same error 3 times`
+    case observationShortRepeatedErrors = "observation.short.repeated_errors"
+    /// `used a subagent`
+    case observationShortSubagentUsed = "observation.short.subagent_used"
+    /// `compacted context`
+    case observationShortCompactions = "observation.short.compactions"
+    /// `replayed records`
+    case observationShortContextResets = "observation.short.context_resets"
+    /// `above your median`
+    case observationShortPromptsPerHour = "observation.short.prompts_per_active_hour"
+    /// `hand edits`
+    case observationShortHandEdits = "observation.short.hand_edits_between_turns"
+
     // --- plurals -------------------------------------------------------------------
     //
     // These five carry a count, so they are plural entries in the catalog rather than
@@ -360,6 +531,16 @@ extension Str {
     ]
 
     public var isPlural: Bool { Self.plurals.contains(self) }
+
+    /// The seven rows of a heat strip, Monday first, by the key `HeatStrip.weekdayKeys` uses.
+    /// A key outside the seven is answered with itself, which is visible and not a crash.
+    public static func weekday(_ key: String) -> String {
+        let table: [String: Str] = [
+            "mon": .weekdayMon, "tue": .weekdayTue, "wed": .weekdayWed, "thu": .weekdayThu,
+            "fri": .weekdayFri, "sat": .weekdaySat, "sun": .weekdaySun,
+        ]
+        return table[key]?.text ?? key
+    }
 
     /// A plural entry, filled with the count the rule chooses on.
     ///

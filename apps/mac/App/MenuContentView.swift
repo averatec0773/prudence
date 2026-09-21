@@ -92,9 +92,14 @@ struct MenuContentView: View {
 
     private var blocks: some View {
         VStack(alignment: .leading, spacing: Space.popoverGap) {
+            // The caption size, not a 20 pt headline. Variant C put today at headline weight
+            // and the founder read it as heavy (M4 plan, "Batch 2 inputs"): "no session
+            // recorded today" set in a title is a statement about the day rather than a line
+            // in a status glance. Every block in this popover now reads at the same weight,
+            // which is what the caption on each of them was for.
             StatRow(Str.menuToday.text) {
-                Text(todayLine)
-                    .font(Type.figure(20, weight: .semibold))
+                Text(verbatim: todayLine)
+                    .font(Type.footnote.monospacedDigit())
                     .foregroundStyle(Ink.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }

@@ -6,15 +6,21 @@
 #
 #   menu-{light,dark}-{en,zh}[-glass].png          the dropdown, variant C with captions
 #   window-{light,dark}-{en,zh}[-glass].png        the whole window at its 900x600 floor
-#   overview-{light,dark}-{en,zh}.png              the Overview screen, 1200x800
-#   review-{light,dark}-{en,zh}.png                the Review screen, 1200x800
-#   observations-{light,dark}-{en,zh}.png          the Observations screen, 1200x800
+#   overview-{light,dark}-{en,zh}.png              Overview A: cards, stacked bars, lines, heat
+#   review-{light,dark}-{en,zh}.png                Review B: every chart with its table open
+#   observations-{light,dark}-{en,zh}.png          Observations C: paired bars, grouped
 #   settings-{light,dark}-{en,zh}.png              Settings B, the General tab
 #   settings-data-{light,dark}-{en,zh}.png         Settings B, the Data tab
 #
-# Thirty-six PNGs. The `-glass` pair is the popover and the window because those are the
-# control and navigation layer; the screens inside the window are content and are opaque under
-# either material, so photographing them twice would produce two identical files.
+# Thirty-six PNGs, and the names have not changed since batch 1, so `.github/workflows/
+# mac-ci.yml` needs no edit. The `-glass` pair is the popover and the window because those are
+# the control and navigation layer; the screens inside the window are content and are opaque
+# under either material, so photographing them twice would produce two identical files.
+#
+# The three screen shots are taller than a window on purpose (batch 2): each of them now
+# carries several charts, and a shot cut off at 800 px would hide the ones a reviewer is being
+# asked about. `window` stays at the 900x600 floor, which is where the layout is under the most
+# pressure.
 #
 # The harness compiles the app's own view files rather than copies of them: they are copied in
 # here, built, and the copies are thrown away afterwards, so a PNG can never show a view that
@@ -45,6 +51,12 @@ done
 
 export PRUDENCE_SHOTS_FIXTURE="${PRUDENCE_SHOTS_FIXTURE:-$PWD/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db}"
 export PRUDENCE_SHOTS_DIR="${PRUDENCE_SHOTS_DIR:-$PWD/shots}"
+# The body of the review the `review` shot draws. `tests/mac_fixture.py` writes a review with
+# two sections and one purpose row, which is enough for the decoding tests and too thin to
+# photograph; this is one real payload copied off the founder's own store, which the decoding
+# tests already read. Everything else about that review row is still the fixture's. Set it to
+# an empty string to photograph the fixture's own payload instead.
+export PRUDENCE_SHOTS_REVIEW="${PRUDENCE_SHOTS_REVIEW:-$PWD/PrudenceKit/Tests/PrudenceKitTests/Fixtures/review-sections.json}"
 
 swift run --package-path Render PrudenceRender
 

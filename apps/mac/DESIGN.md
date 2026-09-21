@@ -55,6 +55,67 @@ screenshots taken a week apart cannot be compared across.
 rework are two readings of the same lines, so they share a warm-cool pair everywhere and
 differ by line style in a time chart. They are not "good" and "bad".
 
+### The project colour scale
+
+`ProjectPalette`, for the one chart that draws more than one project at a time. A project's
+colour is its place in the **sorted** list of project names, so it does not move when the range
+picker changes which projects have a row and two screenshots of different ranges agree about
+which line is which.
+
+| Index | Light | Dark |
+|---|---|---|
+| 0 | `#3E6AE1` | `#6E9BFF` |
+| 1 | `#A2845E` | `#C8A579` |
+| 2 | `#B3358C` | `#E36FC4` |
+| 3 | `#00786F` | `#2FB3A6` |
+| 4 | `#7A5AF8` | `#A68BFF` |
+| 5 | `#6E6E73` | `#98989D` |
+
+None of the six is a purpose colour or one of the outcome pair, and a test asserts it: a
+project drawn in the colour of `development` would read as a purpose in a window where every
+other chart is coloured by purpose, and red or green would read as a verdict on a project.
+Past the sixth the colours repeat, which is honest about a chart that has stopped being one
+anybody can read. Batch 1 indexed into a slice of the purpose palette as a stand-in; this
+replaced it.
+
+## Charts
+
+`PrudenceUI/Charts/`, one file per data shape in the M4 plan's table. Every one of them is
+Swift Charts, reads **one** view or one stored row, carries an `.accessibilityLabel` with the
+same numbers the picture has, prints every number through `Type.figure` (`.monospacedDigit()`),
+and keeps every share next to the denominator it is over.
+
+| Chart | Data shape | Reads | Marks | Interaction | Accessibility |
+|---|---|---|---|---|---|
+| `StackedBarsChart` | composition of a whole, over time | `app_usage_by_purpose_day`, summed into ISO weeks by `WeeklyUsageModel` | `BarMark` stacked, fixed purpose order and palette, width capped at 46 pt | hover prints the week's totals and its per-purpose breakdown under the chart; click selects that week and click again clears it | every bar with its total and its slices |
+| `DonutChart` | composition of a whole, one period | one review's `did` section (`did.tokens.<purpose>`) | `SectorMark`, inner radius 0.62, the count in the middle | none | the middle figure, then every slice's share and value |
+| `PairedBarsChart` | two groups compared — **the core Prudence chart** | one `app_observation` row, or one review's `observation.<key>.with`/`.without` | two horizontal `BarMark`s over a sunken track, scale stepped to 25/50/75/100 % | none | both labels, both medians, both `n`, and the gap |
+| `ShareWithCoverageBar` | a share with its coverage | one row of a review's `became` section | two `BarMark`s in one horizontal chart, the coverage 24 pt and pale underneath, the share 14 pt over it | none | the label, the share with its denominator, and the coverage |
+| `LinesWithGaps` | over time, with holes | `app_outcomes_by_week` through `OutcomeChartModel` | `LineMark` plus `PointMark`, one `series:` per run so a hole cannot be joined across; a 6 pt translucent line for coverage | hover prints every project's shares at that week with the lines behind them | every measured point, with its denominator |
+| `HeatStrip` | where the hours went | `app_usage_by_purpose_day.active_minutes`, bucketed by `ActiveHoursHeat` | `RectangleMark`, seven rows Monday first, one cell per day, single-hue scale `Surface.sunken` → `Ink.accent` | none | every day that measured anything, with its hours |
+| `CompareCard` | this period against the last | one row of a review's `compared` section | `StatCard` shape, previous value, neutral `DeltaChip`, two vertical `BarMark`s | none | the figure, the previous figure and the change |
+
+Three rules hold across all seven:
+
+- **`n` and the denominator are printed, never hovered.** A screenshot has no pointer, and the
+  founder judges screenshots.
+- **A hole is a hole.** `LinesWithGaps` takes an *optional* value and cuts the line at every
+  nil. Swift Charts has no `Optional: Plottable` conformance (checked against the macOS 27 SDK,
+  not against memory), so the break is made with one `series:` value per run, which Charts will
+  not join across.
+- **Colour is identity, never judgement.** Purpose, project and outcome are the three scales; a
+  delta chip's ink is a constant and a test pins it.
+
+### What the app parses and why
+
+`CompareCard.numeric` reads the leading figure out of a cell the engine printed (`4.3`,
+`71% (1180)`, `43k`) to set the length of its two mini bars. It is the one place the app looks
+inside a stored string, and it is a rendering rather than a computation: the figure on the card
+is still the engine's own text, and a cell that will not parse gets **no** bars rather than
+bars of zero. It exists because `reviews/build._compared` writes `Number(key, label, text)`
+with no `value`; the moment it writes one, `ReviewChartTests.theComparisonIsFourStringsAndNoStoredValue`
+fails and says so.
+
 ### Surfaces and ink
 
 | Token | Light | Dark |
@@ -106,7 +167,8 @@ right ink without anybody checking `colorScheme`.
 | `EmptyState` | Nothing to draw, and why | every screen |
 | `ContractMismatchState` | The store said no, in `StoreError`'s own words | the window, behind every screen |
 | `MiniStack` | A one-row stacked bar, Swift Charts, 8 pt | the popover's week line |
-| `PurposeLegend` | Swatch and label per purpose, in the fixed order, wrapping | the popover, Overview |
+| `Charts/` | The seven chart types; see **Charts** above | Overview, Review, Observations |
+| `PurposeLegend` | Swatch and label per purpose, in the fixed order, wrapping | the popover, Overview, the stacked bars |
 | `FlowLayout` | A row that wraps | `PurposeLegend`, and anything else that lines chips up |
 | `ControlStrip` | A frosted cluster of controls | the window's toolbar, Settings' tabs, the popover's footer |
 
@@ -242,32 +304,60 @@ The product is named in exactly two places: `CFBundleDisplayName` in `App/Info.p
 `Product.name` in `PrudenceUI`. The name research is still open (M4 plan), so renaming is two
 edits.
 
+## The language the CLI writes in
+
+The model segment and an `ask` answer are prose, and prose follows the reader. The app passes
+`--language <code>` to every command that writes some, with the code taken straight from the
+language setting: `system`, `en` or `zh-Hans`, the three values the picker offers and the three
+`prudence review --language` accepts. `system` is passed on rather than resolved, because it is
+the CLI's own word for "use `model.language` from the config": a user who has not chosen a
+language in the app keeps whatever they configured for the terminal.
+
+The flag is **probed, not assumed** (`PrudenceEngine.Engine.supportsLanguage`). The app ships
+separately from the engine, so a user can have a `prudence` that predates the flag, and an
+unknown option would turn "write me a review" into an error about a word they never typed.
+`prudence review --help` is run once, its text is searched for `--language`, and the answer is
+cached for the life of the process — so upgrading the CLI under a running app needs a relaunch
+before the flag is used, which is the same thing an `AppleLanguages` change needs. A probe that
+cannot run at all answers false, and the review is written in the engine's configured language.
+
 ## Screens
 
-| Screen | Variant | State after batch 1 |
+| Screen | Variant | State after batch 2 |
 |---|---|---|
-| Menu bar popover | **C with captions** | rebuilt: today as a headline, the week as a `MiniStack` with its top-three legend, the observation composed in the interface language, the two stamps, and C's button layout |
-| Settings | **B** | rebuilt: General and Data tabs, grouped boxes, the language setting |
-| Overview | A | tokens adopted; the charts are batch 2 |
-| Review | B | tokens adopted; the change column's green and red removed; the charts are batch 2 |
-| Observations | C | tokens adopted; the sentence now composed; paired bars are batch 2 |
+| Menu bar popover | **C with captions** | today back at caption weight (it read heavy as a headline), the week as a `MiniStack` with its top-three legend, the observation composed in the interface language, the two stamps, C's button layout |
+| Settings | **B** | General and Data tabs, grouped boxes, the language setting; the store's location now in the reader's language |
+| Overview | **A** | one column, cards first: the three totals, `StackedBarsChart` with hover and week selection, `LinesWithGaps` with coverage, `HeatStrip` |
+| Review | **B** | charts with their tables open under them: `DonutChart` + the purpose table, `ShareWithCoverageBar` rows, `PairedBarsChart` rows, `CompareCard`s, the model segment last with its model and its language |
+| Observations | **C** | grouped by behaviour: one card per fact, the threshold, one `PairedBarsChart` per outcome with `n` on each bar, the coverage and method line |
 
-## What batch 2 still owes
+## Contract requests
 
-- **The six chart types.** Only `stackedBars` (Overview), `lines` (Overview) and `miniStack`
-  (the popover) exist. Still to build: `donut`, `pairedBars` (the core Prudence chart, which
-  Observations is really meant to be), `shareWithCoverage`, `heatStrip`, and the compare card
-  with its twin mini bars.
-- **Observations as paired bars**, and Review's tables as cards and charts first.
-- **Overview as variant A proper** and the dropdown's chart treatment carried into the window.
-- **A project colour scale of its own.** `OutcomesByWeekChart` currently indexes into a small
-  palette borrowed from the purpose colours, which is a stand-in.
-- **The strings the model layer owns.** A review's scope ("all projects") and its section
-  titles come from the stored payload and stay the engine's English, which is the rule. Two
-  that could move to the interface layer and have not:
-  `PrudenceStore.StoreLocation.Source.label` ("the standard location", on the Settings > Data
-  note) and `ReviewModel.createdAt`'s stored form. The interface-layer ones (`Fmt.range`,
-  `Fmt.rangeDescription`) are done.
-- **`app_review.coverage` stored on the row**, and the richer fixture that lets the four
-  skipped Swift tests run (both batch 3 in the plan, both blocking a real Review screenshot).
-- **Hover, selection and the week readout** on every chart, as `charts.js` shows them.
+Four figures a screen wants and the `app_*` views do not carry. None of them is computed in
+Swift; each one is shown as a placeholder, a reading, or not at all, and each is a small
+addition on the Python side.
+
+1. **`with_n` and `without_n` on a review's observation numbers.** `reviews/build._observations`
+   stores the sentence, the caveat and the two medians; the counts live on `app_observation`
+   and not in the payload, so the Review screen's paired bars carry no `n`. The sentence above
+   them carries both in words. Reading them off the live observation rows instead would put
+   this range's prose beside another range's counts.
+2. **A `value` on the `compared.*` numbers.** They are stored as text alone, so `CompareCard`
+   reads the leading figure out of the printed cell to size its mini bars (above).
+3. **`app_review.segment_language`.** `--language` reaches the prompt and the answer is stored
+   as prose, so the only record of which language was asked for is the text.
+   `ReviewText.segmentLanguage` reads it off the words, which is exact for the two languages
+   this app ships and is still a reading rather than a read.
+4. **A structured threshold on `app_observation`.** `threshold_text` is the engine's English
+   ("more than 0", "at least 3"), so an Observations card in Chinese shows one English clause.
+   A rule and a value beside the text would let the interface word it.
+
+## Still open
+
+- **Observations at scale** (the founder's reservation, M4 plan). The screen sorts by the
+  largest absolute gap and shows everything above the engine's floors, which is honest at two
+  projects and will not be at twenty: at that size the list becomes a ranking, and a ranking is
+  a score by another name. The reservation is written into `App/ObservationsView.swift` as a
+  comment so that nobody adds a filter or a "top N" here without deciding the question first.
+- **The dropdown's icon** carrying a live number, deferred from M3 and still deferred.
+- **Empty and error states, window memory and keyboard**, which are batch 3.

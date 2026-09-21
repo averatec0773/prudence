@@ -49,6 +49,8 @@ public final class Engine: @unchecked Sendable {
     private let locator: EngineLocator
     private let settingsOverride: () -> String?
     private let environment: [String: String]
+    private let lock = NSLock()
+    private var languageSupport: Bool?
 
     public init(
         locator: EngineLocator = EngineLocator(),
@@ -58,6 +60,66 @@ public final class Engine: @unchecked Sendable {
         self.locator = locator
         self.environment = environment
         self.settingsOverride = settingsOverride
+    }
+
+    // MARK: - the language flag
+
+    /// The flag every command that writes prose takes: `review`, its `--explain` segment, and
+    /// `ask`. `system|en|zh-Hans`, the same three values the app's own picker offers.
+    public static let languageFlag = "--language"
+
+    /// Whether the `prudence` on this machine understands `--language`, asked once.
+    ///
+    /// The app ships separately from the engine and a user can have an older one, so the flag
+    /// is **probed rather than assumed**: `prudence review --help` is run once and its text is
+    /// searched for the flag. An engine that has never heard of it would exit 2 on an unknown
+    /// option, which would turn "write me a review" into an error about a word the user never
+    /// typed. A probe that cannot run at all answers false, which is the safe direction: the
+    /// review is written, in the engine's configured language.
+    ///
+    /// The answer is cached for the life of the process. Upgrading the CLI under a running app
+    /// therefore needs a relaunch before the flag is used, which is the same thing an
+    /// `AppleLanguages` change needs and is written down in `apps/mac/DESIGN.md`.
+    public func supportsLanguage() -> Bool {
+        lock.lock()
+        if let cached = languageSupport {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        let answer: Bool
+        do {
+            let help = try run(arguments: ["review", "--help"], appendJSON: false)
+            answer = Self.helpMentionsLanguage(help.stdout + help.stderr)
+        } catch {
+            answer = false
+        }
+        lock.lock()
+        languageSupport = answer
+        lock.unlock()
+        return answer
+    }
+
+    /// The one string test the probe is. Split out so a test can pin it against real help text
+    /// without running anything.
+    public static func helpMentionsLanguage(_ help: String) -> Bool {
+        help.contains(languageFlag)
+    }
+
+    /// `["--language", "zh-Hans"]`, or nothing at all.
+    ///
+    /// Nothing when the code is nil, when it is empty, or when this engine has never heard of
+    /// the flag. `system` is passed through rather than swallowed: it is a value the CLI
+    /// accepts and it means "use `model.language` from the config", so a user who has not
+    /// chosen a language in the app keeps whatever they configured for the CLI.
+    public func languageArguments(_ code: String?) -> [String] {
+        guard let code, !code.isEmpty, supportsLanguage() else { return [] }
+        return [Self.languageFlag, code]
+    }
+
+    /// The same command with the language flag appended when it is available.
+    public func runJSON(_ arguments: [String], language: String?) throws -> EngineResult {
+        try runJSON(arguments + languageArguments(language))
     }
 
     /// The executable path, or nil. Runs the login-shell probe, so keep it off the main thread.

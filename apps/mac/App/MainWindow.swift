@@ -168,7 +168,11 @@ struct MainWindowContentView: View {
 
     private var reviewSubtitle: String {
         guard let review = model.review else { return Str.reviewNoneYet.text }
-        return Str.reviewScopeWritten(review.scope, review.createdAt)
+        // Both halves through the interface layer: `ReviewModel.scope` is the app's own
+        // English for "every project" and `createdAt` is a stored `yyyy-MM-dd` that a reader
+        // writes their own way (M4 plan, "Batch 2 inputs").
+        return Str.reviewScopeWritten(
+            ReviewText.scope(review.project), ReviewText.written(review.createdAt, now: model.now))
     }
 
     private var observationsSubtitle: String {

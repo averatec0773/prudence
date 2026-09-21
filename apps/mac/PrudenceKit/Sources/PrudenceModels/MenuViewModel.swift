@@ -88,8 +88,11 @@ public final class MenuViewModel: ObservableObject {
         }
     }
 
+    /// The dropdown's Review now. Same command and same `--language` guard as the window's
+    /// button (`WindowModel.reviewNow`), so a review written from either place is written in
+    /// the language the reader chose.
     public func reviewNow() {
-        run(["review"], startedMessage: "Writing a review...") { result in
+        run(["review"], language: settings.storedLanguageCode(), startedMessage: "Writing a review...") { result in
             guard let json = result.json else { return "Review written." }
             // `prudence review` answers `ready: false` with the reason rather than failing,
             // and the reason is the whole point of the button in that case.
@@ -103,6 +106,7 @@ public final class MenuViewModel: ObservableObject {
 
     private func run(
         _ arguments: [String],
+        language: String? = nil,
         startedMessage: String,
         describe: @escaping (EngineResult) -> String
     ) {
@@ -112,7 +116,8 @@ public final class MenuViewModel: ObservableObject {
         let engine = self.engine
         Task { [weak self] in
             let message = await Self.background { () -> String in
-                do { return describe(try engine.runJSON(arguments)) } catch let error as EngineError
+                do { return describe(try engine.runJSON(arguments, language: language)) }
+                catch let error as EngineError
                 {
                     return error.message
                 } catch { return String(describing: error) }

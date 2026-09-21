@@ -149,9 +149,17 @@ public struct WindowFilter: Sendable {
 public final class WindowModel: ObservableObject {
 
     @Published public var section: MainSection = .overview
-    @Published public var range: ChartRange = .eightWeeks
+    @Published public var range: ChartRange = .eightWeeks {
+        didSet { if range != oldValue { selectedWeek = nil } }
+    }
     /// nil is "All projects".
-    @Published public var project: String?
+    @Published public var project: String? {
+        didSet { if project != oldValue { selectedWeek = nil } }
+    }
+    /// The ISO week a bar on the Overview's stacked chart was clicked on, or nil for the whole
+    /// range. Cleared whenever the scope changes, because a week that is no longer in the
+    /// range would filter the cards down to nothing with no visible reason.
+    @Published public var selectedWeek: String?
     /// Which stored review the Review screen is showing. nil is the newest.
     @Published public var selectedReview: Int?
 
@@ -187,6 +195,12 @@ public final class WindowModel: ObservableObject {
 
     public var filtered: WindowData { filter.apply(to: data) }
 
+    /// The filtered rows narrowed to the week a bar was clicked on, when one was.
+    ///
+    /// The charts read `filtered` so that clicking a bar does not reduce the chart to one bar;
+    /// the cards read this, so that the three totals answer for the week the reader picked.
+    public var scoped: WindowData { WeekSlice.apply(selectedWeek, to: filtered) }
+
     /// Every project with a session, plus the "All projects" entry the picker starts on.
     public var projects: [String] { ProjectFilter.projects(in: data.sessions) }
 
@@ -194,9 +208,18 @@ public final class WindowModel: ObservableObject {
 
     public var outcomes: OutcomeChartModel { OutcomeChartModel(rows: filtered.outcomes) }
 
+    /// Active hours per day, as whole weeks of seven. Reads the whole range whatever week is
+    /// selected: the strip is the shape of the range, and a one-week strip is not a shape.
+    public var heat: ActiveHoursHeat { ActiveHoursHeat(rows: filtered.usage) }
+
     public var cards: SummaryCards {
-        let rows = filtered
+        let rows = scoped
         return SummaryCards(sessions: rows.sessions, usage: rows.usage, commits: rows.commits)
+    }
+
+    /// The tokens the cards' scope measured, a sum of one view column.
+    public var scopedTokens: Int {
+        scoped.usage.reduce(0) { $0 + ($1.totalTokens ?? 0) }
     }
 
     /// The observation rows for the chosen scope, biggest gap first.
@@ -259,16 +282,24 @@ public final class WindowModel: ObservableObject {
     /// reason, and the screen shows the reason with a button that runs it again with
     /// `--force`. That is the whole of the readiness rule as far as the app is concerned; the
     /// engine owns it.
+    ///
+    /// `--language` is appended when this machine's `prudence` understands it, so the model
+    /// segment is written in the language the reader chose in Settings. The probe and the
+    /// reason for it are in `PrudenceEngine.Engine.supportsLanguage`.
     public func reviewNow(force: Bool = false) {
         guard !isBusy else { return }
         isBusy = true
         notReadyReason = nil
         actionMessage = force ? "Writing a review anyway..." : "Writing a review..."
         let engine = self.engine
+        let language = settings.storedLanguageCode()
         let arguments = force ? ["review", "--force"] : ["review"]
         Task { [weak self] in
             let answer = await Self.background { () -> ReviewAnswer in
-                do { return ReviewAnswer(result: try engine.runJSON(arguments)) } catch let
+                do {
+                    return ReviewAnswer(
+                        result: try engine.runJSON(arguments, language: language))
+                } catch let
                     error as EngineError
                 {
                     return ReviewAnswer(failure: error.message)
@@ -299,6 +330,7 @@ public final class WindowModel: ObservableObject {
         section: MainSection = .overview,
         project: String? = nil,
         range: ChartRange = .eightWeeks,
+        selectedWeek: String? = nil,
         storeError: String? = nil,
         actionMessage: String? = nil,
         notReadyReason: String? = nil,
@@ -312,6 +344,8 @@ public final class WindowModel: ObservableObject {
         model.section = section
         model.project = project
         model.range = range
+        // After the range and the project, because both clear a week selection.
+        model.selectedWeek = selectedWeek
         model.storeError = storeError
         model.actionMessage = actionMessage
         model.notReadyReason = notReadyReason

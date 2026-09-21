@@ -1,6 +1,227 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "chart.coverageIs": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "coverage %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖率 %1$@"
+          }
+        }
+      }
+    },
+    "chart.hint.lines": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point at a week to read each project's shares with the number of lines behind them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把指针移到某一周，可以读出每个项目的比例，以及它们所基于的代码行数。"
+          }
+        }
+      }
+    },
+    "chart.hint.weeks": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point at a week to read its totals; click one to filter the cards above."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把指针移到某一周可以读出它的总量；点击某一周可以筛选上方的卡片。"
+          }
+        }
+      }
+    },
+    "chart.hours": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active hours"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "活跃小时"
+          }
+        }
+      }
+    },
+    "chart.period": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Period"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时段"
+          }
+        }
+      }
+    },
+    "chart.purpose": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Purpose"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用途"
+          }
+        }
+      }
+    },
+    "chart.sampleSize": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "n=%1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 个会话"
+          }
+        }
+      }
+    },
+    "chart.series": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Series"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系列"
+          }
+        }
+      }
+    },
+    "chart.sessionsShort": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sessions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会话"
+          }
+        }
+      }
+    },
+    "chart.shareOver": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@，基于 %2$@"
+          }
+        }
+      }
+    },
+    "chart.side": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Side"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分组"
+          }
+        }
+      }
+    },
+    "chart.value": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Value"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数值"
+          }
+        }
+      }
+    },
+    "chart.weekday": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Day of the week"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "星期"
+          }
+        }
+      }
+    },
     "common.cancel": {
       "extractionState": "manual",
       "localizations": {
@@ -69,6 +290,40 @@
         }
       }
     },
+    "common.dateWithRelative": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ (%2$@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@（%2$@）"
+          }
+        }
+      }
+    },
+    "common.dismiss": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dismiss"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭"
+          }
+        }
+      }
+    },
     "common.listSeparator": {
       "extractionState": "manual",
       "localizations": {
@@ -116,6 +371,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "重试"
+          }
+        }
+      }
+    },
+    "compare.change": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "change %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "变化 %1$@"
+          }
+        }
+      }
+    },
+    "compare.nowShort": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "now"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本期"
+          }
+        }
+      }
+    },
+    "compare.previous": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "previous %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一期 %1$@"
+          }
+        }
+      }
+    },
+    "compare.previousShort": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "prev"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上期"
           }
         }
       }
@@ -699,6 +1022,40 @@
         }
       }
     },
+    "observation.outcome.alive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "still at head"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仍留在当前版本"
+          }
+        }
+      }
+    },
+    "observation.outcome.rework": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "reworked later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "后来被返工"
+          }
+        }
+      }
+    },
     "observation.pooledTag": {
       "extractionState": "manual",
       "localizations": {
@@ -728,7 +1085,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@，你有 %2$@ 个会话%3$@，它们的代码行中位数有 %4$@ 仍留在 head；%6$@的 %5$@ 个会话为 %7$@。"
+            "value": "%1$@，你有 %2$@ 个会话%3$@，它们的代码行中位数有 %4$@ 仍留在当前版本；%6$@的 %5$@ 个会话为 %7$@。"
           }
         }
       }
@@ -763,6 +1120,244 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@ 做了，%2$@ 个没做"
+          }
+        }
+      }
+    },
+    "observation.short.commit_attempts_per_commit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3+ commit attempts"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提交尝试 3 次以上"
+          }
+        }
+      }
+    },
+    "observation.short.compactions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "compacted context"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "压缩了上下文"
+          }
+        }
+      }
+    },
+    "observation.short.context_resets": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "replayed records"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重放了记录"
+          }
+        }
+      }
+    },
+    "observation.short.files_edited_unread": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "edited before read"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先改后读"
+          }
+        }
+      }
+    },
+    "observation.short.formatter_runs": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ran a formatter"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跑了格式化"
+          }
+        }
+      }
+    },
+    "observation.short.hand_edits_between_turns": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hand edits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动改动"
+          }
+        }
+      }
+    },
+    "observation.short.prompts_per_active_hour": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "above your median"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高于你的中位数"
+          }
+        }
+      }
+    },
+    "observation.short.repeated_errors": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "same error 3 times"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同一错误 3 次"
+          }
+        }
+      }
+    },
+    "observation.short.sittings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3+ sittings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分三次以上"
+          }
+        }
+      }
+    },
+    "observation.short.subagent_used": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "used a subagent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用了子代理"
+          }
+        }
+      }
+    },
+    "observation.short.test_runs": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ran tests"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跑了测试"
+          }
+        }
+      }
+    },
+    "observation.short.tests_before_commit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tests before commit"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提交前跑测试"
+          }
+        }
+      }
+    },
+    "observation.side.did": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "did"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这样做了"
+          }
+        }
+      }
+    },
+    "observation.side.didNot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "did not"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有这样做"
           }
         }
       }
@@ -1226,6 +1821,23 @@
         }
       }
     },
+    "observations.threshold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Threshold: %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "阈值：%1$@"
+          }
+        }
+      }
+    },
     "overview.activeHours": {
       "extractionState": "manual",
       "localizations": {
@@ -1328,6 +1940,23 @@
         }
       }
     },
+    "overview.legend.aliveName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "alive at 30 days"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 天后仍存活"
+          }
+        }
+      }
+    },
     "overview.legend.coverage": {
       "extractionState": "manual",
       "localizations": {
@@ -1345,6 +1974,23 @@
         }
       }
     },
+    "overview.legend.coverageName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "coverage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖率"
+          }
+        }
+      }
+    },
     "overview.legend.rework": {
       "extractionState": "manual",
       "localizations": {
@@ -1358,6 +2004,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "虚线：后来被返工"
+          }
+        }
+      }
+    },
+    "overview.legend.reworkName": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "reworked later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "后来被返工"
+          }
+        }
+      }
+    },
+    "overview.noHours.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No session in this range recorded any active minutes. A Claude Code version that writes no usage fields leaves this empty, which is not the same as no work."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个范围内没有会话记录到活跃分钟数。有些 Claude Code 版本不写用量字段，会让这里空着，这和没有工作并不是一回事。"
+          }
+        }
+      }
+    },
+    "overview.noHours.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No active time in this range"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个范围内没有活跃时间"
           }
         }
       }
@@ -1447,6 +2144,23 @@
         }
       }
     },
+    "overview.showAllWeeks": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the whole range"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示整个范围"
+          }
+        }
+      }
+    },
     "overview.sittingsNote": {
       "extractionState": "manual",
       "localizations": {
@@ -1498,6 +2212,23 @@
         }
       }
     },
+    "overview.weekFilter": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The cards above are the week of %1$@: %2$@ tokens."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上方的卡片只统计 %1$@ 那一周：%2$@ tokens。"
+          }
+        }
+      }
+    },
     "overview.weekOf": {
       "extractionState": "manual",
       "localizations": {
@@ -1545,6 +2276,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "alive_30d / measured_30d 与 reworked / lines，都来自 app_outcomes_by_week。30 天标记尚未到达的周是断口，不是零。浅色宽线是该周的平均覆盖率：计入的提交所新增的代码行中，由会话自己写下的比例。"
+          }
+        }
+      }
+    },
+    "overview.whereTime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where the hours went"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间花在了哪里"
+          }
+        }
+      }
+    },
+    "overview.whereTime.note": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active minutes per local day, summed off app_usage_by_purpose_day. A day with no session has no row at all, so an empty cell is not a measured zero."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按本地日期汇总 app_usage_by_purpose_day 的活跃分钟数。没有会话的那一天在视图里根本没有行，所以空白格并不表示测得的零。"
           }
         }
       }
@@ -1736,6 +2501,125 @@
         }
       }
     },
+    "review.card.coverage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mean coverage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "平均覆盖率"
+          }
+        }
+      }
+    },
+    "review.coverageHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The mean share of a counted commit's added lines the session itself wrote, over the commits in the outcome window."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在结果窗口内的提交中，会话自己写下的新增代码行所占比例的平均值。"
+          }
+        }
+      }
+    },
+    "review.coverageOfRow": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This review's coverage is %1$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这份回顾的覆盖率是 %1$@。"
+          }
+        }
+      }
+    },
+    "review.coverageUnderlay": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The pale underlay behind each bar is that figure's coverage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每根条形背后的浅色底衬就是这个数字的覆盖率。"
+          }
+        }
+      }
+    },
+    "review.empty.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A review is written on demand and kept. Press Review now, or run `prudence review` in a terminal; it needs a few new sessions and one commit that has crossed seven days."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回顾是按需写入并保存下来的。点「现在回顾」，或者在终端里运行 `prudence review`；它需要几个新的会话，以及至少一个已经过了七天的提交。"
+          }
+        }
+      }
+    },
+    "review.empty.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No review yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有回顾"
+          }
+        }
+      }
+    },
+    "review.figuresHelp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every number on this page, each one re-derivable from the CLI."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这一页上的每一个数字，都可以用命令行重新算出来。"
+          }
+        }
+      }
+    },
     "review.headline": {
       "extractionState": "manual",
       "localizations": {
@@ -1804,6 +2688,23 @@
         }
       }
     },
+    "review.notReady.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not ready for a review yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还不到写回顾的时候"
+          }
+        }
+      }
+    },
     "review.option": {
       "extractionState": "manual",
       "localizations": {
@@ -1817,6 +2718,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "回顾 %1$@ - %2$@"
+          }
+        }
+      }
+    },
+    "review.provenance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every figure above is computed from your own record: %1$@ numbers, each re-derivable with `prudence usage`, `prudence outcomes` or `prudence observations` over the same range."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上面的每个数字都来自你自己的记录：共 %1$@ 个数字，每一个都可以在同一范围上用 `prudence usage`、`prudence outcomes` 或 `prudence observations` 重新算出来。"
+          }
+        }
+      }
+    },
+    "review.scope.everyProject": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every project"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有项目"
+          }
+        }
+      }
+    },
+    "review.segment.checked": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every number in it was checked against the review's own figures."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其中的每个数字都与这份回顾自己的数字核对过。"
           }
         }
       }
@@ -1855,6 +2807,159 @@
         }
       }
     },
+    "review.tag.coverage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "coverage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖率"
+          }
+        }
+      }
+    },
+    "review.tag.figures": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "figures"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "数字"
+          }
+        }
+      }
+    },
+    "review.tag.scope": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "scope"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "范围"
+          }
+        }
+      }
+    },
+    "review.tag.written": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "written"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写于"
+          }
+        }
+      }
+    },
+    "review.unknownSection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A section this version of the app does not lay out; here it is as stored."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个版本的应用还没有为这个区块排版，下面是它存储时的样子。"
+          }
+        }
+      }
+    },
+    "review.unreadable.detail": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The stored JSON is not in a shape this build understands. The row above is still true; only its body is unreadable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储的 JSON 不是这个版本能理解的结构。上面那一行仍然成立，只是正文读不出来。"
+          }
+        }
+      }
+    },
+    "review.unreadable.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This review's sections cannot be read"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这份回顾的区块读不出来"
+          }
+        }
+      }
+    },
+    "review.whatThisMeans": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What this means"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这意味着什么"
+          }
+        }
+      }
+    },
+    "review.writeAnyway": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write anyway"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仍然写入"
+          }
+        }
+      }
+    },
     "review.writing": {
       "extractionState": "manual",
       "localizations": {
@@ -1868,6 +2973,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在写入..."
+          }
+        }
+      }
+    },
+    "review.writtenBy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Written by %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由 %1$@ 写成"
           }
         }
       }
@@ -2297,6 +3419,57 @@
         }
       }
     },
+    "settings.source.environment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 %1$@"
+          }
+        }
+      }
+    },
+    "settings.source.settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "from Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自「设置」"
+          }
+        }
+      }
+    },
+    "settings.source.standard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the standard location"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "标准位置"
+          }
+        }
+      }
+    },
     "settings.store": {
       "extractionState": "manual",
       "localizations": {
@@ -2569,6 +3742,125 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@ token"
+          }
+        }
+      }
+    },
+    "weekday.fri": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fri"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "五"
+          }
+        }
+      }
+    },
+    "weekday.mon": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mon"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一"
+          }
+        }
+      }
+    },
+    "weekday.sat": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sat"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "六"
+          }
+        }
+      }
+    },
+    "weekday.sun": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sun"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日"
+          }
+        }
+      }
+    },
+    "weekday.thu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thu"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "四"
+          }
+        }
+      }
+    },
+    "weekday.tue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "二"
+          }
+        }
+      }
+    },
+    "weekday.wed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "三"
           }
         }
       }

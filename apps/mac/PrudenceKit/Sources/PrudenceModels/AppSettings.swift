@@ -14,6 +14,12 @@ public final class AppSettings: ObservableObject {
         public static let enginePath = "enginePath"
         public static let databasePath = "databasePath"
         public static let timedIngest = "timedIngestEnabled"
+        /// The interface language. Written by `PrudenceUI.Localization.store`, which owns the
+        /// picker and the `AppleLanguages` override beside it; this module only reads it, to
+        /// hand the CLI a `--language` for the prose it writes. The two constants are the same
+        /// string and a test in `PrudenceKitTests` asserts they stay that way: `PrudenceUI`
+        /// depends on this target, so the constant cannot simply be imported from there.
+        public static let language = "language"
     }
 
     /// Open question 2 of the M3 plan, accepted default: on, every 30 minutes.
@@ -52,6 +58,17 @@ public final class AppSettings: ObservableObject {
     public nonisolated func storedEngineOverride() -> String? {
         let value = defaults.string(forKey: Key.enginePath) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    /// The language code to hand the CLI for the prose it writes: `system`, `en` or `zh-Hans`,
+    /// exactly the three values `prudence review --language` accepts.
+    ///
+    /// `system` is passed on rather than resolved here, because that is the CLI's own word for
+    /// "use `model.language` from the config". A user who has not chosen a language in the app
+    /// keeps whatever they configured for the terminal; one who has chosen overrides it.
+    public nonisolated func storedLanguageCode() -> String {
+        let value = defaults.string(forKey: Key.language) ?? ""
+        return value.isEmpty ? "system" : value
     }
 
     /// Where the app will actually read, and why, for the Settings screen to print.

@@ -327,6 +327,125 @@ public struct OutcomeChartModel: Equatable, Sendable {
     }
 }
 
+// MARK: - the heat strip
+
+/// Active minutes per local day, laid out as whole ISO weeks of seven days.
+///
+/// A sum of one view column (`app_usage_by_purpose_day.active_minutes`) into a bucket, which is
+/// the only arithmetic rule 8 allows a screen, and then a shape: every week between the first
+/// and the last is present whether or not it has a row, and every week has exactly seven days
+/// Monday first, so the strip has no missing columns and no short rows.
+///
+/// A day with no row at all is nil rather than zero. The strip cannot tell "did not work" from
+/// "was not recorded" — the view has no row for either — and the screen says so rather than
+/// drawing a confident zero.
+public struct ActiveHoursHeat: Equatable, Sendable {
+
+    public struct Day: Equatable, Sendable {
+        public let day: String
+        public let minutes: Double?
+
+        public init(day: String, minutes: Double?) {
+            self.day = day
+            self.minutes = minutes
+        }
+    }
+
+    public struct Week: Equatable, Sendable, Identifiable {
+        public let weekStart: String
+        /// Exactly seven, Monday first.
+        public let days: [Day]
+        public var id: String { weekStart }
+
+        public init(weekStart: String, days: [Day]) {
+            self.weekStart = weekStart
+            self.days = days
+        }
+
+        public var label: String { Formatting.shortDay(weekStart) }
+        public var minutes: Double { days.reduce(0) { $0 + ($1.minutes ?? 0) } }
+    }
+
+    public let weeks: [Week]
+    /// The busiest single day, which the shade scale tops out at.
+    public let peakMinutes: Double
+
+    public init(weeks: [Week], peakMinutes: Double) {
+        self.weeks = weeks
+        self.peakMinutes = peakMinutes
+    }
+
+    public var isEmpty: Bool { peakMinutes <= 0 }
+
+    /// Every day with a measurement, for a caller that wants to check the buckets.
+    public var measuredDays: [Day] {
+        weeks.flatMap(\.days).filter { ($0.minutes ?? 0) > 0 }
+    }
+
+    public init(rows: [AppUsageByPurposeDayRow], calendar: Calendar = .current) {
+        var byDay: [String: Double] = [:]
+        for row in rows {
+            guard let minutes = row.activeMinutes else { continue }
+            byDay[row.day, default: 0] += minutes
+        }
+        guard let first = byDay.keys.min(), let last = byDay.keys.max(),
+            let firstWeek = Formatting.isoWeekStart(of: first, calendar: calendar),
+            let lastWeek = Formatting.isoWeekStart(of: last, calendar: calendar),
+            let firstMonday = Formatting.date(firstWeek, calendar: calendar)
+        else {
+            self.init(weeks: [], peakMinutes: 0)
+            return
+        }
+        var weeks: [Week] = []
+        var monday = firstMonday
+        while true {
+            let weekStart = Formatting.day(monday, calendar: calendar)
+            let days = (0..<7).map { offset -> Day in
+                let date =
+                    calendar.date(byAdding: .day, value: offset, to: monday) ?? monday
+                let key = Formatting.day(date, calendar: calendar)
+                return Day(day: key, minutes: byDay[key])
+            }
+            weeks.append(Week(weekStart: weekStart, days: days))
+            if weekStart >= lastWeek { break }
+            guard let next = calendar.date(byAdding: .day, value: 7, to: monday) else { break }
+            monday = next
+        }
+        self.init(weeks: weeks, peakMinutes: byDay.values.max() ?? 0)
+    }
+}
+
+// MARK: - one week out of the range
+
+/// The rows of one ISO week, for when a bar on the stacked chart has been clicked.
+///
+/// A filter and nothing else, exactly like `WindowFilter`: it decides which rows the cards
+/// below the chart see, and nothing about what they say. Passing nil is "every week in the
+/// range", which is what the screen starts on and what the reset button puts back.
+public enum WeekSlice {
+
+    public static func apply(
+        _ week: String?, to data: WindowData, calendar: Calendar = .current
+    ) -> WindowData {
+        guard let week else { return data }
+        var sliced = data
+        sliced.usage = data.usage.filter { isIn(week, day: $0.day, calendar: calendar) }
+        sliced.commits = data.commits.filter { isIn(week, day: $0.day, calendar: calendar) }
+        sliced.outcomes = data.outcomes.filter { $0.weekStart == week }
+        sliced.sessions = data.sessions.filter { row in
+            guard let started = row.startedAt, let date = Formatting.timestamp(started) else {
+                return false
+            }
+            return isIn(week, day: Formatting.day(date, calendar: calendar), calendar: calendar)
+        }
+        return sliced
+    }
+
+    static func isIn(_ week: String, day: String, calendar: Calendar) -> Bool {
+        Formatting.isoWeekStart(of: day, calendar: calendar) == week
+    }
+}
+
 // MARK: - the three cards
 
 /// Sessions, active hours and commits in the range. Three sums of view columns, no more.

@@ -1,5 +1,6 @@
 import Foundation
 import PrudenceModels
+import PrudenceStore
 
 /// Numbers and dates on their way to a screen, through `Locale`.
 ///
@@ -119,6 +120,9 @@ public enum Fmt {
 
     // MARK: - phrases built from a count
 
+    /// The seven rows of the heat strip, Monday first, in the reader's own language.
+    public static func weekday(_ key: String) -> String { Str.weekday(key) }
+
     /// The four that carry a count go through the catalog's plural entries, so English says
     /// "1 session" and "3 sessions" and Chinese says "1 个会话" either way.
     public static func sessions(_ value: Int) -> String { Str.unitSessions.plural(value) }
@@ -166,6 +170,44 @@ public enum Fmt {
         case "unknown": return Str.purposeUnknown.text
         default: return key
         }
+    }
+
+    /// Where the app is reading its store from, in the reader's own language.
+    ///
+    /// `StoreLocation.Source.label` is the English of the same three cases and stays as the
+    /// value a log line carries; the screen prints this. Batch 1 left the English on a Chinese
+    /// settings page, which is what the M4 plan's "two model-layer strings" note was about.
+    public static func storeSource(_ source: StoreLocation.Source) -> String {
+        switch source {
+        case .environment:
+            return Str.settingsSourceEnvironment(StoreLocation.dataDirectoryVariable)
+        case .settings: return Str.settingsSourceSettings.text
+        case .standard: return Str.settingsSourceStandard.text
+        }
+    }
+
+    /// A day the engine stamped, as the reader writes it plus how long ago it was.
+    ///
+    /// `20 Sep 2026 (yesterday)`. Both halves go through `Locale`: the date through
+    /// `DateFormatter` and the distance through `RelativeDateTimeFormatter`, which is the rule
+    /// for every number and date outside an observation sentence.
+    public static func writtenOn(
+        _ day: String, now: Date = Date(), locale: Locale = Localization.locale
+    ) -> String {
+        let absolute = self.day(day, locale: locale)
+        guard let date = Formatting.date(day) else { return absolute }
+        // A day is midnight; "0 hours ago" for something written this morning is noise, so the
+        // relative half is in days and the absolute half carries the precision.
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = locale
+        formatter.unitsStyle = .full
+        formatter.dateTimeStyle = .named
+        let calendar = Calendar.current
+        let days = calendar.dateComponents(
+            [.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)
+        ).day ?? 0
+        let relative = formatter.localizedString(from: DateComponents(day: -days))
+        return Str.commonDateWithRelative(absolute, relative)
     }
 
     /// The purpose as it appears **inside an observation sentence**.

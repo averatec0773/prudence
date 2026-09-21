@@ -58,6 +58,50 @@ public enum ObservationText {
     private static let byFact = Dictionary(
         uniqueKeysWithValues: splitPhrases.map { ($0.fact, $0.phrase) })
 
+    /// The same twelve facts, each in the two or three words a bar can be labelled with.
+    ///
+    /// The long phrase ("that edited more files before reading them than your median here")
+    /// is a clause in a sentence; a bar needs a noun. These are the mockups' `SHORT_SPLIT`
+    /// table, which is wording the founder has already seen. A fact this build has never heard
+    /// of falls back to the engine's own key, which is ugly and readable, never blank.
+    public static let shortPhrases: [(fact: String, phrase: Str)] = [
+        ("sittings", .observationShortSittings),
+        ("files_edited_unread", .observationShortFilesEditedUnread),
+        ("formatter_runs", .observationShortFormatterRuns),
+        ("test_runs", .observationShortTestRuns),
+        ("tests_before_commit", .observationShortTestsBeforeCommit),
+        ("commit_attempts_per_commit", .observationShortCommitAttempts),
+        ("repeated_errors", .observationShortRepeatedErrors),
+        ("subagent_used", .observationShortSubagentUsed),
+        ("compactions", .observationShortCompactions),
+        ("context_resets", .observationShortContextResets),
+        ("prompts_per_active_hour", .observationShortPromptsPerHour),
+        ("hand_edits_between_turns", .observationShortHandEdits),
+    ]
+
+    private static let shortByFact = Dictionary(
+        uniqueKeysWithValues: shortPhrases.map { ($0.fact, $0.phrase) })
+
+    /// A behaviour in the two or three words a card heading or a bar label has room for.
+    public static func shortLabel(for fact: String) -> String {
+        if fact.hasPrefix(purposePrefix) {
+            return Str.observationSplitPurpose(
+                Fmt.purpose(String(fact.dropFirst(purposePrefix.count))))
+        }
+        return shortByFact[fact]?.text ?? fact
+    }
+
+    /// The outcome the two medians are of, named: survival at head, or rework.
+    ///
+    /// The Chinese for `alive_head` says **当前版本** rather than the English word "head". The
+    /// mockups' `i18n.js` left "head" untranslated and the M4 plan's batch 2 inputs asked for a
+    /// Chinese term; this is it, and `observation.sentence.alive` uses the same words, so the
+    /// card heading and the sentence under it cannot say two different things.
+    public static func outcomeLabel(_ outcome: String) -> String {
+        outcome == "rework"
+            ? Str.observationOutcomeRework.text : Str.observationOutcomeAlive.text
+    }
+
     /// The columns a sentence is built from, and nothing else. A value type so a test can
     /// build one by hand and the render harness can draw a row with no database behind it.
     public struct Input: Equatable, Sendable {

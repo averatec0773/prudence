@@ -2,12 +2,19 @@ import PrudenceModels
 import PrudenceUI
 import SwiftUI
 
-/// One stored review, section by section.
+/// One stored review, section by section: **variant B**, charts with their tables open under
+/// them.
+///
+/// The founder's choice on 2026-09-20, and the reason is principle 2: a review has to be
+/// checkable. The chart carries the shape and the table under it lets a figure be held beside
+/// `prudence usage` without a disclosure having to be opened first. Nothing is hidden behind a
+/// triangle and nothing is redrawn.
 ///
 /// The screen prints the texts `reviews/build.py` already wrote and nothing else numeric,
-/// exactly as `reviews/render.py` does for the terminal. That is what makes the window and
-/// `prudence show --review <id>` incapable of disagreeing: there is one arithmetic, it
-/// happened in Python, and both surfaces are layout over the same strings.
+/// exactly as `reviews/render.py` does for the terminal, which is what makes the window and
+/// `prudence show --review <id>` incapable of disagreeing. Where a chart needs a magnitude
+/// rather than a printed cell it takes `ReviewNumber.value`, the unrounded figure the engine
+/// stored beside the text for exactly that purpose (`PrudenceModels/ReviewCharts.swift`).
 ///
 /// Five section kinds are laid out by hand. Anything else the engine grows later is drawn as
 /// the table it brought with it, or as labelled fields when it brought no headers, so a new
@@ -26,10 +33,8 @@ struct ReviewView: View {
                 if review.payloadUnreadable {
                     EmptyState(
                         symbol: "doc.questionmark",
-                        title: "This review's sections cannot be read",
-                        detail:
-                            "The stored JSON is not in a shape this build understands. The row "
-                            + "above is still true; only its body is unreadable."
+                        title: Str.reviewUnreadableTitle.text,
+                        detail: Str.reviewUnreadableDetail.text
                     )
                 } else {
                     ForEach(review.sections) { section in
@@ -45,11 +50,8 @@ struct ReviewView: View {
                 else if let message = model.actionMessage { banner(message) }
                 EmptyState(
                     symbol: "doc.text",
-                    title: "No review yet",
-                    detail:
-                        "A review is written on demand and kept. Press Review now, or run "
-                        + "`prudence review` in a terminal; it needs a few new sessions and one "
-                        + "commit that has crossed seven days."
+                    title: Str.reviewEmptyTitle.text,
+                    detail: Str.reviewEmptyDetail.text
                 )
             }
         }
@@ -57,24 +59,28 @@ struct ReviewView: View {
 
     // MARK: - the head of the page
 
+    /// The headline, the two ranges, and the four things every figure below is qualified by.
+    ///
+    /// `coverage` is read off the row rather than off a section: contract 2 stores it on
+    /// `app_review`, which is what batch 1 added and what lets this tag exist for a review
+    /// whose outcome window had not yet matured. `written` is localised through `Locale`, both
+    /// the date and how long ago it was.
     private func header(_ review: ReviewModel) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(review.headline).font(Type.title3)
+            Text(verbatim: review.headline).font(Type.title3)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(review.rangeLine).font(Type.footnote).foregroundStyle(Ink.secondary)
+            Text(verbatim: review.rangeLine).font(Type.footnote).foregroundStyle(Ink.secondary)
             if let outcomeLine = review.outcomeLine {
-                Text(outcomeLine).font(Type.caption).foregroundStyle(Ink.secondary)
+                Text(verbatim: outcomeLine).font(Type.caption).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 14) {
-                tag("scope", review.scope)
-                tag("coverage", review.coverageText)
-                    .help(
-                        "The mean share of a counted commit's added lines the session itself "
-                        + "wrote, over the commits in the outcome window.")
-                tag("written", review.createdAt)
-                tag("figures", "\(review.numbers.count)")
-                    .help("Every number on this page, each one re-derivable from the CLI.")
+            HStack(alignment: .top, spacing: 18) {
+                tag(Str.reviewTagScope.text, ReviewText.scope(review.project))
+                tag(Str.reviewTagCoverage.text, review.coverageText)
+                    .help(Str.reviewCoverageHelp.text)
+                tag(Str.reviewTagWritten.text, ReviewText.written(review.createdAt, now: model.now))
+                tag(Str.reviewTagFigures.text, Fmt.count(review.numbers.count))
+                    .help(Str.reviewFiguresHelp.text)
             }
         }
         .padding(Space.s4)
@@ -87,20 +93,18 @@ struct ReviewView: View {
 
     private func tag(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(Type.caption2).foregroundStyle(Ink.tertiary)
-            Text(value).font(Type.figure(13, weight: .regular)).foregroundStyle(Ink.primary)
+            Text(verbatim: label).font(Type.caption2).foregroundStyle(Ink.tertiary)
+            Text(verbatim: value).font(Type.figure(13, weight: .regular))
+                .foregroundStyle(Ink.primary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func provenance(_ review: ReviewModel) -> some View {
-        Text(
-            "Every figure above is computed from your own record: \(review.numbers.count) "
-            + "numbers, each re-derivable with `prudence usage`, `prudence outcomes` or "
-            + "`prudence observations` over the same range."
-        )
-        .font(Type.caption)
-        .foregroundStyle(Ink.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: Str.reviewProvenance(Fmt.count(review.numbers.count)))
+            .font(Type.caption)
+            .foregroundStyle(Ink.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - what the button said
@@ -112,15 +116,15 @@ struct ReviewView: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: "clock.badge.exclamationmark").foregroundStyle(Outcome.rework)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Not ready for a review yet").font(Type.footnoteStrong)
-                Text(reason).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(.reviewNotReadyTitle).font(Type.footnoteStrong)
+                Text(verbatim: reason).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Button("Write anyway") { model.reviewNow(force: true) }
+            Button(Str.reviewWriteAnyway.text) { model.reviewNow(force: true) }
                 .buttonStyle(.prudence)
                 .disabled(model.isBusy)
-            Button("Dismiss") { model.dismissMessage() }
+            Button(Str.commonDismiss.text) { model.dismissMessage() }
                 .buttonStyle(.prudencePlain)
         }
         .padding(Space.s3)
@@ -131,10 +135,11 @@ struct ReviewView: View {
     private func banner(_ message: String) -> some View {
         HStack(spacing: 10) {
             if model.isBusy { ProgressView().controlSize(.small) }
-            Text(message).font(Type.footnote).foregroundStyle(Ink.secondary)
+            Text(verbatim: message).font(Type.footnote).foregroundStyle(Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
-            Button("Dismiss") { model.dismissMessage() }.buttonStyle(.prudencePlain)
+            Button(Str.commonDismiss.text) { model.dismissMessage() }
+                .buttonStyle(.prudencePlain)
         }
         .padding(Space.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,7 +152,7 @@ struct ReviewView: View {
 struct SectionView: View {
 
     let section: ReviewSection
-    /// The review's own coverage, shown on the outcome section's cards.
+    /// The review's own coverage, shown where a section's rows do not carry one.
     let coverage: String
 
     var body: some View {
@@ -164,29 +169,67 @@ struct SectionView: View {
         }
     }
 
-    // What you did: the purpose table, and the whole-range figures as cards above it.
+    // MARK: - what you did
+
+    /// Four cards, a donut of the tokens by purpose, and the engine's own table under it.
     private var didBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !cards.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(cards) { number in
                         StatCard(
-                            title: number.label,
+                            title: cardTitle(number),
                             value: number.text,
-                            detail: number.coverage.map { "coverage \(Fmt.percent($0))" },
+                            detail: number.coverage.map { Str.chartCoverageIs(Fmt.percent($0)) },
                             help: helpFor(number),
                             compact: true
                         )
                     }
                 }
             }
+            if !slices.isEmpty {
+                DonutChart(
+                    // The engine's own text beside each share: this page prints `713938k`
+                    // in the table under the ring and must not print `713.9M` in the ring's
+                    // legend for the same figure.
+                    slices: slices.map {
+                        DonutChart.Slice(
+                            purpose: $0.purpose, value: $0.tokens, text: $0.tokensText)
+                    },
+                    centreValue: sessionsText,
+                    centreLabel: Str.chartSessionsShort.text,
+                    valueText: { Fmt.tokens(Int($0.rounded())) }
+                )
+            }
             if section.hasTable {
                 StringTable(headers: section.headers, rows: section.rows)
             } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var slices: [ReviewCharts.PurposeSlice] { ReviewCharts.purposeSlices(of: section) }
+
+    /// The sessions figure the donut's middle is over, as the engine printed it, or nil.
+    ///
+    /// `did.sessions` first; failing that, the sessions cell of the engine's own total row,
+    /// which is the row `purposeSlices` leaves out because it has no token number of its own.
+    /// Failing both, the middle of the ring stays empty: a review written by an engine that
+    /// stored no session count has no figure here, and `0` would be a number nobody measured.
+    private var sessionsText: String? {
+        if let stored = section.numbers.first(where: { $0.key == "did.sessions" }) {
+            return stored.text
+        }
+        let purposes = Set(slices.map(\.purpose))
+        guard
+            let total = section.rows.first(where: { row in
+                guard let label = row.first else { return false }
+                return !purposes.contains(label) && row.count > 1
+            })
+        else { return nil }
+        return total[1]
     }
 
     /// The four whole-range figures, not the per-purpose ones that are already in the table.
@@ -195,117 +238,149 @@ struct SectionView: View {
         return wanted.compactMap { key in section.numbers.first { $0.key == key } }
     }
 
-    // What became of earlier work: one card per figure, each carrying its own coverage.
+    /// The four cards' own headings, in the reader's language. The engine's `label` stays as
+    /// the detail under the figure, because it is the sentence that says what was counted.
+    private func cardTitle(_ number: ReviewNumber) -> String {
+        switch number.key {
+        case "did.sessions": return Str.overviewSessionsInRange.text
+        case "did.hours": return Str.overviewActiveHours.text
+        case "did.commits": return Str.overviewCommitsInRange.text
+        // Sentence case, like the other three. The header's own `coverage` tag is lower case
+        // because it is a tag; a card heading is a heading.
+        case "did.coverage": return Str.reviewCardCoverage.text
+        default: return number.label
+        }
+    }
+
+    // MARK: - what became of earlier work
+
+    /// One `ShareWithCoverageBar` per share, with the engine's own table under them.
+    ///
+    /// A row that is a count rather than a share ("lines followed") gets no bar: a bar needs a
+    /// denominator to be a fraction of, and that row is the denominator.
     private var becameBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             if section.hasTable {
-                let columns = [GridItem(.adaptive(minimum: 138), spacing: 10)]
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                    ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
-                        StatCard(
-                            title: row.first ?? "",
-                            value: row.count > 1 ? row[1] : "-",
-                            detail: row.count > 2 ? "coverage \(row[2])" : "coverage \(coverage)",
-                            help: row.count > 3
-                                ? "Method: \(row[3]). The share is printed with the number of "
-                                    + "lines it is over."
-                                : nil,
-                            compact: true
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(shares) { row in
+                        ShareWithCoverageBar(
+                            label: row.label,
+                            value: row.value ?? 0,
+                            coverage: row.coverage,
+                            valueText: row.valueText,
+                            denominator: row.coverageText.isEmpty
+                                ? nil : Str.chartCoverageIs(row.coverageText),
+                            tint: row.isRework ? Outcome.rework : Outcome.alive
                         )
                     }
                 }
-            } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(.reviewCoverageUnderlay)
+                    .font(Type.caption)
+                    .foregroundStyle(Ink.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                StringTable(headers: section.headers, rows: section.rows)
+            } else if let empty = section.empty {
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: Str.reviewCoverageOfRow(coverage))
+                    .font(Type.caption).foregroundStyle(Ink.tertiary)
             }
         }
     }
 
-    // Observations: the sentence, then the small line of coverage and method under it.
+    private var shares: [ReviewCharts.ShareRow] {
+        ReviewCharts.shareRows(of: section).filter(\.isShare)
+    }
+
+    // MARK: - observations
+
+    /// The sentence, the two medians as paired bars, and the coverage and method line.
+    ///
+    /// The bars carry no `n`: `reviews/build._observations` stores the sentence, the caveat and
+    /// the two medians, and `with_n` / `without_n` live on `app_observation` rather than in the
+    /// payload. The sentence above the bars carries both counts in words, and a `with_n` and
+    /// `without_n` on the section's numbers is a contract request (`apps/mac/DESIGN.md`).
+    /// Reading them off the live observation rows instead would put this range's prose beside
+    /// another range's counts, which is worse than not drawing them.
     private var observationsBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if section.hasTable {
-                ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(row.first ?? "").font(Type.footnote)
+        VStack(alignment: .leading, spacing: 14) {
+            if !pairs.isEmpty {
+                ForEach(pairs) { pair in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(verbatim: pair.sentence)
+                            .font(Type.footnote)
+                            .foregroundStyle(Ink.primary)
                             .fixedSize(horizontal: false, vertical: true)
-                        if row.count > 1 {
-                            Text(row[1]).font(Type.caption).foregroundStyle(Ink.secondary)
-                        }
+                        PairedBarsChart(
+                            with: .init(
+                                label: Str.observationSideDid.text, value: pair.withValue, n: nil),
+                            without: .init(
+                                label: Str.observationSideDidNot.text, value: pair.withoutValue,
+                                n: nil),
+                            tint: pair.isRework ? Outcome.rework : Outcome.alive,
+                            labelWidth: 130
+                        )
+                        MethodLine(pair.caveat)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    if index < section.rows.count - 1 { Divider().opacity(0.4) }
                 }
+            }
+            if section.hasTable {
+                StringTable(headers: section.headers, rows: section.rows)
             } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    // Compared with the previous period: the table, with the change column picked out.
+    private var pairs: [ReviewCharts.ObservationPair] {
+        ReviewCharts.observationPairs(of: section)
+    }
+
+    // MARK: - compared with the previous period
+
+    /// One `CompareCard` per figure, and the engine's own table under them.
     private var comparedBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if section.hasTable {
-                VStack(alignment: .leading, spacing: 0) {
-                    comparedRow(section.headers, isHeader: true)
-                    Divider()
-                    ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
-                        comparedRow(row, isHeader: false)
-                        if index < section.rows.count - 1 { Divider().opacity(0.4) }
+                let columns = [GridItem(.adaptive(minimum: 196), spacing: 12)]
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                    ForEach(ReviewCharts.compareRows(of: section)) { row in
+                        CompareCard(
+                            title: row.label,
+                            value: row.now,
+                            previous: row.previous,
+                            change: row.change
+                        )
                     }
                 }
+                StringTable(headers: section.headers, rows: section.rows)
             } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private func comparedRow(_ cells: [String], isHeader: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
-                Text(cell)
-                    .font(
-                        isHeader
-                            ? .caption.weight(.semibold)
-                            : (index == 3 ? .callout.monospacedDigit().weight(.medium)
-                                : .callout.monospacedDigit())
-                    )
-                    .foregroundStyle(cellStyle(cell, index: index, isHeader: isHeader))
-                    .frame(maxWidth: index == 0 ? .infinity : 140, alignment: .leading)
-            }
-        }
-        .padding(.vertical, 5)
-    }
+    // MARK: - last time's suggestions
 
-    /// **The change column is never coloured by its sign.**
-    ///
-    /// It used to read green up and red down. That is the one thing principle 3 forbids: more
-    /// sessions is not better and less rework is not a score, and a colour that says otherwise
-    /// is a grade the engine never computed. The sign stays in the text, where it came from,
-    /// and the ink is `DeltaChip.tint` whichever way the number went (`PrudenceUI`'s delta
-    /// rule; a test pins it).
-    private func cellStyle(_ cell: String, index: Int, isHeader: Bool) -> Color {
-        if isHeader { return Ink.secondary }
-        return index == 3 ? DeltaChip.tint : Ink.primary
-    }
-
-    // Last time's suggestions: one row each, with what moved under it.
+    /// One row each, with what moved under it.
     private var suggestionsBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             if section.hasTable {
                 ForEach(Array(section.rows.enumerated()), id: \.offset) { index, row in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(row.first ?? "").font(Type.footnote)
+                        Text(verbatim: row.first ?? "").font(Type.footnote)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(trailing(of: row)).font(Type.caption).foregroundStyle(Ink.secondary)
+                        Text(verbatim: trailing(of: row)).font(Type.caption)
+                            .foregroundStyle(Ink.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if index < section.rows.count - 1 { Divider().opacity(0.4) }
                 }
             } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -322,7 +397,7 @@ struct SectionView: View {
     // A section this build has never heard of. Drawn, not dropped.
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("A section this version of the app does not lay out; here it is as stored.")
+            Text(.reviewUnknownSection)
                 .font(Type.caption)
                 .foregroundStyle(Ink.secondary)
             if section.hasTable {
@@ -333,9 +408,10 @@ struct SectionView: View {
                         ForEach(Array(section.pairs(of: row).enumerated()), id: \.offset) {
                             _, pair in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(pair.0).font(Type.caption).foregroundStyle(Ink.secondary)
+                                Text(verbatim: pair.0).font(Type.caption)
+                                    .foregroundStyle(Ink.secondary)
                                     .frame(width: 130, alignment: .leading)
-                                Text(pair.1).font(Type.footnote)
+                                Text(verbatim: pair.1).font(Type.footnote)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -343,7 +419,7 @@ struct SectionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if let empty = section.empty {
-                Text(empty).font(Type.footnote).foregroundStyle(Ink.secondary)
+                Text(verbatim: empty).font(Type.footnote).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -354,7 +430,7 @@ struct SectionView: View {
         if !section.notes.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(section.notes.enumerated()), id: \.offset) { _, note in
-                    Text(note).font(Type.caption).foregroundStyle(Ink.secondary)
+                    Text(verbatim: note).font(Type.caption).foregroundStyle(Ink.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -375,20 +451,36 @@ struct SectionView: View {
 /// Last on purpose: a reader reaches it having already seen every number it may use, and a
 /// review that stops before it is still a whole review (M3 rule 10). Every number in it was
 /// checked against the review's own numbers list before it was stored.
+///
+/// The credit names the model, the day, and **the language the segment is in**, which
+/// `ReviewText.segmentLanguage` reads off the prose because `app_review` has no column for it.
 struct SegmentCard: View {
 
     let segment: ReviewSegment
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("What this means", systemImage: "text.quote")
+            Label(Str.reviewWhatThisMeans.text, systemImage: "text.quote")
                 .font(Type.headline)
-            Text(segment.text)
+            Text(verbatim: segment.text)
                 .font(Type.body)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(credit)
-                .font(Type.caption)
-                .foregroundStyle(Ink.secondary)
+            HStack(spacing: Space.s2) {
+                Text(verbatim: ReviewText.credit(model: segment.model))
+                    .font(Type.caption)
+                    .foregroundStyle(Ink.secondary)
+                if let createdAt = segment.createdAt {
+                    Text(verbatim: Fmt.day(createdAt))
+                        .font(Type.caption.monospacedDigit())
+                        .foregroundStyle(Ink.tertiary)
+                }
+                CoverageChip(ReviewText.segmentLanguage(of: segment.text).label)
+                Spacer(minLength: 0)
+            }
+            Text(.reviewSegmentChecked)
+                .font(Type.caption2)
+                .foregroundStyle(Ink.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(Space.s4)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,11 +489,5 @@ struct SegmentCard: View {
             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
                 .strokeBorder(Ink.accent.opacity(0.35), lineWidth: 1)
         )
-    }
-
-    private var credit: String {
-        guard let createdAt = segment.createdAt else { return segment.credit + "." }
-        return "\(segment.credit), \(createdAt). Every number in it was checked against the "
-            + "review's own figures."
     }
 }

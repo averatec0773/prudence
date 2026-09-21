@@ -172,7 +172,9 @@ struct SettingsView: View {
 
     private var databaseNote: String {
         let located = settings.resolvedStore
-        return Str.settingsDatabasePathNote(located.url.path, located.source.label)
+        // `Fmt.storeSource`, not `Source.label`: the enum's English is the value a log line
+        // carries, and this is a sentence on a settings page (M4 plan, "Batch 2 inputs").
+        return Str.settingsDatabasePathNote(located.url.path, Fmt.storeSource(located.source))
     }
 
     /// What the store says about itself, read from `app_status` and not computed here.

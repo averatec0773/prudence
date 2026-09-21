@@ -135,6 +135,54 @@ public enum Outcome {
     public static let rework = Color.dynamic(light: "#8A5A00", dark: "#E0A33A")
 }
 
+// MARK: - projects
+
+/// A colour per project, for the one chart that draws more than one project at a time.
+///
+/// Three rules, and the third is why this table exists at all rather than an index into the
+/// purpose palette, which is what batch 1 used as a stand-in:
+///
+/// 1. **Stable.** The colour is the project's place in the *sorted* list of project names, so
+///    it does not move when the range picker changes which projects have a row, and two
+///    screenshots of different ranges agree about which line is which.
+/// 2. **Not a purpose.** None of these six is in `Purpose`'s table. A project drawn in the
+///    colour of "development" would read as a purpose in a window where every other chart is
+///    coloured by purpose.
+/// 3. **Not a verdict.** No red and no green: `Outcome` already owns the warm-cool pair that
+///    survival and rework are drawn in, and a project is not a result. Identity only.
+///
+/// Six is enough for the lines chart to stay readable; beyond that the colours repeat, which is
+/// honest about a chart that has stopped being one anybody can read.
+public enum ProjectPalette {
+
+    static let table: [(light: String, dark: String)] = [
+        ("#3E6AE1", "#6E9BFF"),
+        ("#A2845E", "#C8A579"),
+        ("#B3358C", "#E36FC4"),
+        ("#00786F", "#2FB3A6"),
+        ("#7A5AF8", "#A68BFF"),
+        ("#6E6E73", "#98989D"),
+    ]
+
+    public static var count: Int { table.count }
+
+    /// The colour of a project, by its place in the sorted list of names.
+    public static func colour(_ project: String, in projects: [String]) -> Color {
+        colour(index: index(of: project, in: projects))
+    }
+
+    /// The index the scale assigns a project: its position once the names are sorted, so the
+    /// caller's own ordering cannot change anybody's colour.
+    public static func index(of project: String, in projects: [String]) -> Int {
+        projects.sorted().firstIndex(of: project) ?? 0
+    }
+
+    public static func colour(index: Int) -> Color {
+        let pair = table[((index % table.count) + table.count) % table.count]
+        return .dynamic(light: pair.light, dark: pair.dark)
+    }
+}
+
 // MARK: - surfaces and text
 
 /// The interface colours. Elevation is a 0.5 pt hairline ring, not a shadow; only the

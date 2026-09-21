@@ -41,7 +41,7 @@ func renderEverything() {
     }
 
     let snapshot: Snapshot
-    let data: WindowData
+    var data: WindowData
     do {
         let store = try Store(url: URL(fileURLWithPath: fixture))
         snapshot = try Snapshot.read(from: store, now: renderedAt)
@@ -49,6 +49,25 @@ func renderEverything() {
     } catch {
         FileHandle.standardError.write(Data("could not read \(fixture): \(error)\n".utf8))
         exit(1)
+    }
+
+    // `PRUDENCE_SHOTS_REVIEW` puts a different `sections` payload on the newest review row
+    // before the Review screen is drawn. `Scripts/shots.sh` points it at
+    // `Fixtures/review-sections.json`, one real payload copied off the founder's own store.
+    //
+    // It exists because of a gap between the two fixtures: `tests/mac_fixture.py` writes a
+    // review with two sections and one purpose row, which is enough for the decoding tests and
+    // far too thin to photograph — the donut would have one slice and the comparison, the
+    // observations and the suggestions would not appear at all, so a shot of it could not show
+    // the sections batch 2 drew. The row's own columns (the ranges, the scope, the coverage,
+    // the model segment) are still the fixture's; only the body is this payload. The screen is
+    // the shipping screen either way.
+    if let payload = environment["PRUDENCE_SHOTS_REVIEW"],
+        let text = try? String(contentsOfFile: payload, encoding: .utf8)
+    {
+        data.reviews = data.reviews.enumerated().map { index, row in
+            index == 0 ? (replacingSections(of: row, with: text) ?? row) : row
+        }
     }
 
     let model = MenuViewModel.preview(
@@ -93,7 +112,14 @@ func renderEverything() {
             ))
     }
 
-    let big = CGSize(width: 1200, height: 800)
+    // Tall enough for the whole screen rather than for a window. Batch 2 put three charts on
+    // the Overview and a chart on every section of the Review, and a screen the founder has to
+    // scroll is a screen a PNG cannot show: these shots are for judging a layout, so they are
+    // the layout's own height. `window` stays at the 900x600 floor, which is where the layout
+    // is under the most pressure and is the thing that shot is for.
+    let overviewSize = CGSize(width: 1200, height: 1500)
+    let reviewSize = CGSize(width: 1200, height: 2600)
+    let observationsSize = CGSize(width: 1200, height: 1500)
 
     /// The six screens. `materials` says which of them have one: the popover and the window
     /// are the control and navigation layer, so they are photographed under both Standard and
@@ -104,9 +130,9 @@ func renderEverything() {
         // The window at the floor `MainWindowController` sets, which is where the layout is
         // under the most pressure.
         ("window", CGSize(width: 900, height: 600), true, { window(.overview) }),
-        ("overview", big, false, { window(.overview) }),
-        ("review", big, false, { window(.review) }),
-        ("observations", big, false, { window(.observations) }),
+        ("overview", overviewSize, false, { window(.overview) }),
+        ("review", reviewSize, false, { window(.review) }),
+        ("observations", observationsSize, false, { window(.observations) }),
         // Both tabs of Settings B. The Data tab holds the two path rows and the line the
         // store says about itself, which is half the screen; a shot of General alone would
         // leave the founder judging the half that has no numbers in it.
@@ -153,6 +179,25 @@ func renderEverything() {
             }
         }
     }
+}
+
+/// The same row with another `sections` payload on it.
+///
+/// A JSON round trip rather than a second initialiser on `AppReviewRow`: the row is `Codable`
+/// with the view's own column names, so encoding it, replacing one value and decoding it back
+/// cannot get a key wrong, and nothing in the shipping store layer grows an entry point that
+/// exists only for a screenshot.
+func replacingSections(of row: AppReviewRow, with sections: String) -> AppReviewRow? {
+    guard
+        let data = try? JSONEncoder().encode(row),
+        var fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else { return nil }
+    fields["sections"] = sections
+    // `app_review.numbers` is the same list flattened; dropping it makes the screen read the
+    // numbers out of the payload, which is where this one's are.
+    fields.removeValue(forKey: "numbers")
+    guard let patched = try? JSONSerialization.data(withJSONObject: fields) else { return nil }
+    return try? JSONDecoder().decode(AppReviewRow.self, from: patched)
 }
 
 /// The three Overview cards, in the default scope, on standard output.

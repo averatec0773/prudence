@@ -1,30 +1,62 @@
-import Charts
 import PrudenceModels
 import PrudenceUI
 import SwiftUI
 
-/// The Overview: three cards, then two charts.
+/// The Overview, **variant A**: one column, cards first.
+///
+/// The founder's choice on 2026-09-20. The three totals set the scale, then each chart takes
+/// the full width in turn: the composition of the weeks, what became of them, and where the
+/// hours went. Nothing is two-up, because a 900 pt window is one column's worth of room once a
+/// chart has an axis and a legend.
 ///
 /// Every number is a sum or a ratio of columns of one `app_*` view, computed in
-/// `PrudenceModels/Overview.swift` and only drawn here. Swift Charts throughout, one chart per
-/// view, which is the rule task 8 set: the bars read `app_usage_by_purpose_day`, the lines
-/// read `app_outcomes_by_week`, the cards read those two plus `app_session_list` and
-/// `app_commits_by_day`. Nothing joins anything.
+/// `PrudenceModels/Overview.swift` and only drawn here (M3 rule 8). The bars read
+/// `app_usage_by_purpose_day`, the lines read `app_outcomes_by_week`, the strip reads
+/// `active_minutes` off the usage view, and the cards read those two plus `app_session_list`
+/// and `app_commits_by_day`. Nothing joins anything.
 ///
-/// Batch 1 gave this screen the tokens: the same palette, spacing, card and type scale as the
-/// popover, so the two do not look like two apps. The charts themselves are batch 2 work
-/// (`apps/mac/DESIGN.md`, "What batch 2 still owes").
+/// **Clicking a bar filters the cards to that week** and says so above them, with one button to
+/// put it back. The charts themselves keep the whole range: a chart reduced to the bar you
+/// clicked has stopped being a comparison.
 struct OverviewView: View {
 
     @ObservedObject var model: WindowModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.cardGap) {
+            if model.selectedWeek != nil { weekFilter }
             cards
-            UsageByWeekChart(model: model.weeklyUsage, range: model.range)
-            OutcomesByWeekChart(model: model.outcomes)
+            UsageByWeekChart(model: model)
+            OutcomesByWeekChart(model: model.outcomes, projects: model.projects)
+            ActiveHoursCard(heat: model.heat)
         }
     }
+
+    // MARK: - the week a bar was clicked on
+
+    /// What the cards below are now about, and the one button that puts the range back.
+    private var weekFilter: some View {
+        HStack(spacing: Space.s3) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .foregroundStyle(Ink.accent)
+            Text(verbatim: Str.overviewWeekFilter(
+                Fmt.shortDay(model.selectedWeek ?? ""), Fmt.tokens(model.scopedTokens)))
+                .font(Type.footnote.monospacedDigit())
+                .foregroundStyle(Ink.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: Space.s3)
+            Button(Str.overviewShowAllWeeks.text) {
+                withAnimation(Motion.state) { model.selectedWeek = nil }
+            }
+            .buttonStyle(.prudence)
+        }
+        .padding(.horizontal, Space.s4)
+        .padding(.vertical, Space.s2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Ink.accentSoft, in: RoundedRectangle(cornerRadius: Radius.card))
+    }
+
+    // MARK: - the three cards
 
     private var cards: some View {
         let cards = model.cards
@@ -60,26 +92,30 @@ struct OverviewView: View {
 
 // MARK: - tokens by purpose, per ISO week
 
-/// Stacked bars, one per ISO week, split by purpose.
+/// `StackedBarsChart` over `app_usage_by_purpose_day`, summed into ISO weeks by purpose.
 ///
-/// The week is a category on the x axis rather than a date, which buys two things: the bars
-/// are evenly spaced whether or not a week had any work, and `chartXSelection` hands back the
-/// exact week under the pointer instead of a moment that has to be snapped to one. On macOS
-/// that selection is driven by hover, which is the right gesture for a desktop chart.
+/// The week is a category on the x axis rather than a date, which buys two things: the bars are
+/// evenly spaced whether or not a week had any work, and the value under the pointer is the
+/// exact week rather than a moment that has to be snapped to one.
 struct UsageByWeekChart: View {
 
-    let model: WeeklyUsageModel
-    let range: ChartRange
+    @ObservedObject var model: WindowModel
 
-    @State private var hovered: String?
+    private var usage: WeeklyUsageModel { model.weeklyUsage }
 
-    private var scale: (domain: [String], range: [Color]) {
-        Purpose.scale(for: model.purposes)
-    }
-
-    private var selected: UsageWeek? {
-        guard let hovered else { return nil }
-        return model.weeks.first { $0.label == hovered }
+    private var columns: [StackedBarsChart.Column] {
+        usage.weeks.map { week in
+            StackedBarsChart.Column(
+                key: week.weekStart,
+                // `Fmt.shortDay`, not `UsageWeek.label`: the model's own formatter is the
+                // engine-facing one and answers in `Locale.current`, which prints an English
+                // axis inside a Chinese window.
+                label: Fmt.shortDay(week.weekStart),
+                slices: week.slices.map {
+                    StackedBarsChart.Slice(purpose: $0.purpose, value: $0.tokens)
+                }
+            )
+        }
     }
 
     var body: some View {
@@ -87,101 +123,94 @@ struct UsageByWeekChart: View {
             title: Str.overviewTokensByPurpose.text,
             note: Str.overviewTokensByPurposeNote.text
         ) {
-            if model.isEmpty {
+            if usage.isEmpty {
                 EmptyState(
                     symbol: "chart.bar",
                     title: Str.overviewNoTokensTitle.text,
                     detail: Str.overviewNoTokensDetail.text
                 )
             } else {
-                chart
-                PurposeLegend(purposes: scale.domain)
+                StackedBarsChart(
+                    columns: columns,
+                    valueText: { Fmt.tokens($0) },
+                    hint: Str.chartHintWeeks.text,
+                    selection: $model.selectedWeek
+                )
             }
-        }
-    }
-
-    private var chart: some View {
-        Chart {
-            ForEach(model.weeks) { week in
-                ForEach(week.slices) { slice in
-                    BarMark(
-                        x: .value("Week", week.label),
-                        y: .value("Tokens", slice.tokens)
-                    )
-                    .foregroundStyle(by: .value("Purpose", slice.purpose))
-                    .opacity(hovered == nil || hovered == week.label ? 1 : 0.45)
-                }
-            }
-        }
-        .chartForegroundStyleScale(domain: scale.domain, range: scale.range)
-        .chartLegend(.hidden)
-        .chartXSelection(value: $hovered)
-        .chartYAxis {
-            AxisMarks { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let tokens = value.as(Int.self) {
-                        Text(Fmt.tokens(tokens)).font(Type.caption2.monospacedDigit())
-                    }
-                }
-            }
-        }
-        .chartXAxis { AxisMarks { AxisValueLabel(orientation: .horizontal) } }
-        .frame(height: 186)
-        .overlay(alignment: .topTrailing) { hoverCard }
-        .accessibilityLabel("Tokens by purpose for each week in the chosen range")
-    }
-
-    /// What the hovered week holds, per purpose. The totals, not a share: a share of a week
-    /// would need a denominator beside it and the whole point of the card is the raw numbers.
-    @ViewBuilder
-    private var hoverCard: some View {
-        if let selected {
-            Card(padding: Space.s3, radius: Radius.control) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(Str.overviewWeekOf(Fmt.shortDay(selected.label)))
-                        .font(Type.captionStrong)
-                        .foregroundStyle(Ink.primary)
-                    ForEach(selected.slices) { slice in
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Purpose.colour(slice.purpose))
-                                .frame(width: 7, height: 7)
-                            Text(Fmt.purpose(slice.purpose)).font(Type.caption)
-                            Spacer(minLength: 10)
-                            Text(Fmt.tokens(slice.tokens))
-                                .font(Type.figure(12, weight: .regular))
-                        }
-                    }
-                    Divider()
-                    HStack(spacing: 6) {
-                        Text(.overviewAllPurposes).font(Type.captionStrong)
-                        Spacer(minLength: 10)
-                        Text(Fmt.tokens(selected.total)).font(Type.figure(12, weight: .semibold))
-                    }
-                }
-                .foregroundStyle(Ink.primary)
-            }
-            .frame(minWidth: 170)
-            .fixedSize()
-            .padding(6)
         }
     }
 }
 
 // MARK: - survival and rework, per week, per project
 
-/// Two lines per project over the weeks, with the coverage as a translucent band beneath.
+/// `LinesWithGaps` over `app_outcomes_by_week`: two lines per project, with that week's mean
+/// coverage as a wide translucent line beneath them.
 ///
-/// The gaps are the point. A week whose `measured_30d` is zero has not reached its 30-day
-/// mark, and drawing it as zero would say the work died; `OutcomeChartModel` cuts each
-/// project's line into runs of measured weeks and each run is its own series, so Swift Charts
-/// cannot join across the hole.
+/// The gaps are the point. A week whose `measured_30d` is zero has not reached its 30-day mark,
+/// and drawing it as zero would say the work died; `OutcomeMetric.share` answers nil for such a
+/// week and `LinesWithGaps` cuts the line there.
 struct OutcomesByWeekChart: View {
 
     let model: OutcomeChartModel
+    /// Every project the window knows about, so a colour does not move when the range picker
+    /// changes which projects have an outcome row.
+    let projects: [String]
 
-    @State private var hovered: String?
+    private var series: [LinesWithGaps.Series] {
+        var built: [LinesWithGaps.Series] = []
+        for band in model.bands where !band.points.isEmpty {
+            built.append(
+                LinesWithGaps.Series(
+                    id: "coverage|\(band.project)",
+                    label: "\(band.project), \(Str.overviewLegendCoverageName.text)",
+                    colour: colour(band.project),
+                    wide: true,
+                    points: points(of: band.points)
+                )
+            )
+        }
+        for line in model.series where !line.isEmpty {
+            built.append(
+                LinesWithGaps.Series(
+                    id: line.id,
+                    label: "\(line.project), \(metricLabel(line.metric))",
+                    colour: colour(line.project),
+                    dashed: line.metric == .rework,
+                    points: points(of: line.points)
+                )
+            )
+        }
+        return built
+    }
+
+    /// Every week of the range on the axis, measured or not, with the unmeasured ones carrying
+    /// a nil so the line breaks over them.
+    private func points(of measured: [OutcomePoint]) -> [LinesWithGaps.Point] {
+        let byWeek = Dictionary(measured.map { ($0.weekStart, $0) }) { first, _ in first }
+        return model.weeks.map { week in
+            guard let point = byWeek[week] else {
+                return LinesWithGaps.Point(label: Fmt.shortDay(week), value: nil)
+            }
+            return LinesWithGaps.Point(
+                label: Fmt.shortDay(week),
+                value: point.value,
+                detail: Str.chartShareOver(Fmt.percent(point.value), Fmt.count(point.over))
+            )
+        }
+    }
+
+    private var labels: [String] { model.weeks.map { Fmt.shortDay($0) } }
+
+    private func colour(_ project: String) -> Color {
+        ProjectPalette.colour(project, in: projects.isEmpty ? model.projects : projects)
+    }
+
+    private func metricLabel(_ metric: OutcomeMetric) -> String {
+        switch metric {
+        case .aliveAt30Days: return Str.overviewLegendAliveName.text
+        case .rework: return Str.overviewLegendReworkName.text
+        }
+    }
 
     var body: some View {
         Panel(
@@ -195,115 +224,27 @@ struct OutcomesByWeekChart: View {
                     detail: Str.overviewNoOutcomesDetail.text
                 )
             } else {
-                chart
+                LinesWithGaps(
+                    series: series, labels: labels, hint: Str.chartHintLines.text)
                 legend
             }
         }
     }
 
-    private var chart: some View {
-        Chart {
-            // The coverage, as a faint second line rather than a filled band. A band from
-            // zero to the coverage is a lot of ink at the one height the eye should be
-            // reading the two shares at, and with more than one project the overlapping
-            // fills stop being readable as either.
-            ForEach(model.bands) { band in
-                ForEach(band.points) { point in
-                    LineMark(
-                        x: .value("Week", point.label),
-                        y: .value("Coverage", point.value),
-                        series: .value("Series", "coverage|\(band.project)")
-                    )
-                    .foregroundStyle(projectColour(band.project).opacity(0.30))
-                    .lineStyle(StrokeStyle(lineWidth: 6, lineCap: .round))
-                }
-            }
-            ForEach(model.series) { series in
-                ForEach(Array(series.segments.enumerated()), id: \.offset) { index, segment in
-                    ForEach(segment) { point in
-                        LineMark(
-                            x: .value("Week", point.label),
-                            y: .value("Share", point.value),
-                            series: .value("Series", "\(series.id)#\(index)")
-                        )
-                        .foregroundStyle(projectColour(series.project))
-                        .lineStyle(
-                            StrokeStyle(
-                                lineWidth: 2,
-                                dash: series.metric == .rework ? [4, 3] : []
-                            )
-                        )
-                        PointMark(
-                            x: .value("Week", point.label),
-                            y: .value("Share", point.value)
-                        )
-                        .foregroundStyle(projectColour(series.project))
-                        .symbolSize(series.metric == .rework ? 26 : 40)
-                    }
-                }
-            }
-        }
-        .chartYScale(domain: 0...1)
-        .chartYAxis {
-            AxisMarks { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let share = value.as(Double.self) {
-                        Text(Fmt.percent(share)).font(Type.caption2.monospacedDigit())
-                    }
-                }
-            }
-        }
-        .chartXSelection(value: $hovered)
-        .frame(height: 186)
-        .overlay(alignment: .topTrailing) { hoverCard }
-        .accessibilityLabel("Survival at thirty days and rework share for each week")
-    }
-
-    /// Every share with the number it is over, which principle 3 requires and which a
-    /// percentage alone would break.
-    @ViewBuilder
-    private var hoverCard: some View {
-        if let hovered, !rows(at: hovered).isEmpty {
-            Card(padding: Space.s3, radius: Radius.control) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(Str.overviewWeekOf(Fmt.shortDay(hovered)))
-                        .font(Type.captionStrong)
-                    ForEach(rows(at: hovered), id: \.0) { label, point in
-                        HStack(spacing: 6) {
-                            Text(label).font(Type.caption)
-                            Spacer(minLength: 12)
-                            Text(point.withDenominator).font(Type.figure(12, weight: .regular))
-                        }
-                    }
-                }
-                .foregroundStyle(Ink.primary)
-            }
-            .frame(minWidth: 210)
-            .fixedSize()
-            .padding(6)
-        }
-    }
-
-    private func rows(at label: String) -> [(String, OutcomePoint)] {
-        model.series.compactMap { series in
-            guard let point = series.points.first(where: { $0.label == label }) else { return nil }
-            return ("\(series.project), \(series.metric.label)", point)
-        }
-    }
-
     private var legend: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: Space.s3) {
+            FlowLayout(spacing: Space.s3, lineSpacing: Space.s1) {
                 ForEach(model.projects, id: \.self) { project in
                     HStack(spacing: 5) {
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(projectColour(project))
+                            .fill(colour(project))
                             .frame(width: 9, height: 9)
-                        Text(project).font(Type.caption).foregroundStyle(Ink.secondary)
+                        Text(verbatim: project)
+                            .font(Type.caption)
+                            .foregroundStyle(Ink.secondary)
+                            .fixedSize()
                     }
                 }
-                Spacer(minLength: 0)
             }
             HStack(spacing: Space.s3) {
                 Text(.overviewLegendAlive)
@@ -315,22 +256,37 @@ struct OutcomesByWeekChart: View {
             .foregroundStyle(Ink.tertiary)
         }
     }
+}
 
-    /// Stable per project, so two screenshots of different ranges agree about which line is
-    /// which. Index into a fixed palette by the project's place in the sorted list.
-    ///
-    /// Not the purpose palette: these are projects, and a project drawn in the colour of
-    /// "development" would read as a purpose. Batch 2 replaces this with a project scale of
-    /// its own.
-    private func projectColour(_ project: String) -> Color {
-        let palette: [Color] = [
-            Ink.accent, Outcome.alive, Purpose.colour("debugging"),
-            Purpose.colour("conversation"), Purpose.colour("research"),
-            Purpose.colour("mixed"), Outcome.rework,
-        ]
-        guard let index = model.projects.firstIndex(of: project) else {
-            return Purpose.colour("unknown")
+// MARK: - where the hours went
+
+/// `HeatStrip` over the same usage view's `active_minutes`, one cell per day.
+struct ActiveHoursCard: View {
+
+    let heat: ActiveHoursHeat
+
+    var body: some View {
+        Panel(title: Str.overviewWhereTime.text, note: Str.overviewWhereTimeNote.text) {
+            if heat.isEmpty {
+                EmptyState(
+                    symbol: "calendar",
+                    title: Str.overviewNoHoursTitle.text,
+                    detail: Str.overviewNoHoursDetail.text
+                )
+            } else {
+                HeatStrip(
+                    weeks: heat.weeks.map { week in
+                        HeatStrip.Week(
+                            weekStart: week.weekStart,
+                            label: Fmt.shortDay(week.weekStart),
+                            days: week.days.map {
+                                HeatStrip.Day(day: $0.day, minutes: $0.minutes)
+                            }
+                        )
+                    },
+                    peakMinutes: heat.peakMinutes
+                )
+            }
         }
-        return palette[index % palette.count]
     }
 }
