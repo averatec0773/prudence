@@ -33,8 +33,21 @@ Parser version 5 settled who owns a record. A file is not a session: an agent th
 fork a session writes the parent's whole history into the new file before the new
 session's own records, so reading one file as one session gave a fork its parent's start
 time, counted the parent's turns again, and made the owner of a shared record depend on
-which file was read first. The rule is now `_read_file`'s, it is agent-agnostic, and it
-is the reason for the two new `session` columns, `forked_from` and `fork_point`.
+which file was read first. Two rules decide ownership, and both are agent-agnostic.
+
+1. **A record belongs to the session it declares.** That is `_read_file`'s rule, and it
+   is the reason for the two `session` columns `forked_from` and `fork_point`. It covers
+   every copy that keeps the original's session id, which is what Claude Code's fork
+   writes.
+2. **When two sessions each declare the same record as their own, the session whose
+   transcript begins earlier owns it, and a tie breaks on the archive path.** That is
+   `_transcripts_in_order`'s rule: the files are read in that order and the first claim
+   wins, with the later session counting the record in `replayed_records`. It covers the
+   copies rule 1 cannot see, where the agent re-stamped the copied lines with the new
+   session's id and nothing in the file says where they came from. Both halves of the key
+   are read out of the files themselves, so the order files were ingested in cannot
+   change the answer. What it assumes, and what happens when the assumption is false, is
+   written down as a known compromise in ARCHITECTURE.md (rule 17).
 """
 
 from __future__ import annotations
@@ -346,7 +359,18 @@ def counts(connection: sqlite3.Connection) -> dict[str, int]:
 def _transcripts_in_order(
     connection: sqlite3.Connection, adapter: base.Source
 ) -> list[tuple[sqlite3.Row, base.FileHead]]:
-    """Transcripts oldest first, so a resumed session is the one that carries the note."""
+    """Transcripts oldest first: the second ownership rule, in the shape of a sort.
+
+    When two sessions each declare the same record as their own, the session whose
+    transcript begins earlier owns it and the later one counts it in
+    `replayed_records`. Reading the files in this order and letting the first claim win
+    is that rule: no session is ever compared with another, and no second pass is needed.
+
+    Both halves of the key come out of the files themselves, the first timestamp from the
+    file's own head and the path from the archive, so the order the files were ingested in
+    cannot change the answer. A rebuild of one archive therefore always produces the same
+    tables, which `tests/test_derived.py` and `tests/test_forks.py` both assert.
+    """
     rows = [
         (row, adapter.head(archive.head_lines(connection, row["path"])))
         for row in connection.execute(
@@ -426,6 +450,9 @@ def _read_file(
                 ),
             )
         if event.record_id in seen_records:
+            # The second ownership rule: a record two sessions each claim as their own
+            # stays with the one that claimed it first, and the files are read oldest
+            # first (`_transcripts_in_order`), so that is the session that began earlier.
             session.replayed += 1
             session.resumed = True
             continue

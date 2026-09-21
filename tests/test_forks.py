@@ -1,9 +1,17 @@
-"""A forked session: a file that copies its parent's history before writing its own.
+"""A session carried into a second file, in the two shapes the agent writes.
 
-Claude Code's fork (and a resume into a new file) writes a new transcript that repeats
-the parent's whole history record for record, same `uuid`s, the parent's `sessionId`
-still on each copied line, and then appends its own records under its own id. The
-fixture here is that shape, small enough to count by hand.
+A fork (and a resume into a new file) repeats the first session's whole history record
+for record before the new session's own records. Which shape it is decides which
+ownership rule answers it, so both are here, each with its own fixture, small enough to
+count by hand.
+
+- **The fork.** Every copied line keeps the parent's own `sessionId`, so the record says
+  where it came from and the first rule settles it: a record belongs to the session it
+  declares. `PARENT` and `FORK` below.
+- **The re-stamped resume.** The copied lines carry the *new* session's id, so nothing in
+  the file says they are copies: the repeated `uuid` is the only trace. The second rule
+  settles it: the session whose transcript begins earlier owns the record.
+  `FIRST_SITTING` and `SECOND_SITTING` below.
 """
 
 from __future__ import annotations
@@ -19,6 +27,8 @@ from prudence.store import db, derived
 
 PARENT = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 FORK = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+FIRST_SITTING = "cccccccc-3333-4333-8333-cccccccccccc"
+SECOND_SITTING = "dddddddd-4444-4444-8444-dddddddddddd"
 
 
 def _record(
@@ -276,3 +286,102 @@ def test_the_fixture_is_the_shape_this_module_claims(lab: Workspace) -> None:
     parent_lines = (lab.project / f"{PARENT}.jsonl").read_text().splitlines()
     assert fork_lines[: len(_copied_history(cwd))] == parent_lines[: len(_copied_history(cwd))]
     assert Path(lab.project / f"{FORK}.jsonl").stat().st_size > 0
+
+
+# The re-stamped resume: the same records under the new session's id, so only the repeated
+# `uuid` shows that they are copies.
+
+
+def _first_sitting(cwd: str) -> list[dict]:
+    return [
+        _prompt(FIRST_SITTING, "s1", "2026-09-16T09:00:00.000Z", cwd, "sit-1", "Start the work."),
+        _answer(FIRST_SITTING, "s2", "2026-09-16T09:01:00.000Z", cwd, "sit-1", "req_s1"),
+        _prompt(FIRST_SITTING, "s3", "2026-09-16T09:02:00.000Z", cwd, "sit-2", "Keep going."),
+        _answer(FIRST_SITTING, "s4", "2026-09-16T09:03:00.000Z", cwd, "sit-2", "req_s2"),
+    ]
+
+
+def _re_stamped(cwd: str) -> list[dict]:
+    """The first sitting's records with the second sitting's id written over them."""
+    return [{**record, "sessionId": SECOND_SITTING} for record in _first_sitting(cwd)]
+
+
+def _second_sitting_only(cwd: str) -> list[dict]:
+    return [
+        _prompt(SECOND_SITTING, "t1", "2026-09-16T14:00:00.000Z", cwd, "sit-3", "Pick it up."),
+        _answer(SECOND_SITTING, "t2", "2026-09-16T14:01:00.000Z", cwd, "sit-3", "req_t1"),
+    ]
+
+
+def _write_sittings(lab: Workspace) -> None:
+    cwd = str(lab.repo)
+    write_transcript(lab.project, FIRST_SITTING, _first_sitting(cwd))
+    write_transcript(lab.project, SECOND_SITTING, _re_stamped(cwd) + _second_sitting_only(cwd))
+
+
+def test_the_transcript_that_begins_earlier_owns_a_record_both_sessions_claim(
+    lab: Workspace,
+) -> None:
+    """Nothing in a re-stamped copy says it is one, so the earlier session keeps it."""
+    _write_sittings(lab)
+    _ingest()
+    owners = dict(
+        _rows(
+            "SELECT record_id, session_id FROM record WHERE record_id IN"
+            " ('s1', 's2', 's3', 's4', 't1', 't2')"
+        )
+    )
+    assert owners == {
+        "s1": FIRST_SITTING,
+        "s2": FIRST_SITTING,
+        "s3": FIRST_SITTING,
+        "s4": FIRST_SITTING,
+        "t1": SECOND_SITTING,
+        "t2": SECOND_SITTING,
+    }
+    usage = _rows("SELECT session_id, record_id FROM usage ORDER BY record_id")
+    assert usage == [(FIRST_SITTING, "s2"), (FIRST_SITTING, "s4"), (SECOND_SITTING, "t2")]
+
+
+def test_the_later_sitting_counts_the_copies_as_replayed_and_is_not_a_fork(
+    lab: Workspace,
+) -> None:
+    """`forked_from` is for a copy that names its origin. A re-stamped one names none."""
+    _write_sittings(lab)
+    _ingest()
+    rows = dict(
+        (row[0], row[1:])
+        for row in _rows(
+            "SELECT session_id, record_count, replayed_records, forked_from, notes FROM session"
+        )
+    )
+    assert rows[FIRST_SITTING] == (4, 0, None, None)
+    second_count, second_replayed, second_forked, second_notes = rows[SECOND_SITTING]
+    assert (second_count, second_replayed) == (2, 4), "its own two records, four replayed"
+    assert second_forked is None, "the file gives nothing to point `forked_from` at"
+    assert second_notes is not None and "replayed 4 records" in second_notes
+
+
+def test_the_order_the_files_were_ingested_in_does_not_change_the_tables(
+    lab: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read order is the files' own: their first timestamp, then the archive path.
+
+    So archiving the later transcript first, in its own earlier ingest, must produce the
+    same tables as archiving both at once. This is the invariant. Reversing the sort
+    itself is not one: the sort *is* the ownership rule, so turning it round asks a
+    different question.
+    """
+    cwd = str(lab.repo)
+    write_transcript(lab.project, SECOND_SITTING, _re_stamped(cwd) + _second_sitting_only(cwd))
+    _ingest()
+    write_transcript(lab.project, FIRST_SITTING, _first_sitting(cwd))
+    result = CliRunner().invoke(main, ["ingest"])
+    assert result.exit_code == 0, result.output
+    later_file_first = _dump()
+    assert len(later_file_first["session"]) == 2, "both sittings were built"
+
+    monkeypatch.setenv("PRUDENCE_DATA_DIR", str(lab.root / "both-at-once"))
+    _ingest()
+
+    assert _dump() == later_file_first

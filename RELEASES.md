@@ -53,11 +53,14 @@ Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
   they mean the same thing for every agent. Codex is not part of this change;
   `ARCHITECTURE.md` has an "adding a source" section for whoever writes it.
 
-- Known, and separate: some older resumed transcripts in the founder's history carry the
-  copied lines re-stamped with the **new** session's id, so nothing in the file says which
-  session a shared record belongs to. Those records still go to the session whose
-  transcript starts earlier, which is deterministic for a given archive but is not read off
-  the record. 13 sessions on the founder's store are of this shape.
+- Known, and separate: some older resumed transcripts carry the copied lines re-stamped
+  with the **new** session's id, so nothing in the file says which session a shared record
+  belongs to. Those records go to the session whose transcript begins earlier, and a tie
+  breaks on the archive path. Both halves of that key are read out of the files, so the
+  order they were ingested in cannot change the answer, but the answer is timing rather
+  than something the record says. 13 sessions on the founder's store are of this shape.
+  What the rule assumes and when it would be wrong is registered in `ARCHITECTURE.md`
+  under rule 17.
 
 ## 0.4.0 - 2026-09-21
 

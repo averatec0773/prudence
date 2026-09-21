@@ -192,13 +192,37 @@ docs/reference/store-schema.md   every table and column, with its trust level
      or files apart, and which session a record belongs to is a question about all the
      files together, so both are settled in `store/derived.py` over the event stream.
    - **A file is not a session.** A record belongs to the session it declares, which for a
-     record copied into a fork is the parent's. An adapter for an agent with no fork
-     concept simply never reports a foreign session id, and the rule does nothing.
+     record copied into a fork is the parent's. When two sessions each declare the same
+     record as their own, the session whose transcript begins earlier owns it and a tie
+     breaks on the archive path, which is what reading the files in that order does. Both
+     halves of that key are read out of the files, so the order they were ingested in
+     cannot change the answer. An adapter for an agent with no fork concept never reports
+     a foreign session id, and neither rule does anything.
    The one exception today: `store/edits.py` still reads Claude Code's own field names
    (`structuredPatch`, `toolUseResult`, `gitOperation`). It is called from the adapter and
    not from the store, and it stays put because it also holds the `EDIT_FACT_VERSION` and
    `COMMAND_FACT_VERSION` the store writes into rows; splitting the format readers out of
    it belongs with the commit that adds the second adapter.
+
+   **Known compromise: a re-stamped copy is recognised by timing, not by the record.**
+   Some resumed transcripts carry the copied lines with the *new* session's id written
+   over them, so the record itself says nothing about where it came from and the repeated
+   record id is the only trace. The second ownership rule then decides by which
+   transcript begins earlier.
+   - *What it assumes:* the session that originally wrote a record has a transcript that
+     begins before any transcript that copied it. True whenever a resume happens after
+     the sitting it resumes, which is what a resume is.
+   - *What the user sees when the assumption is false:* the copy owns the shared records.
+     The original session then looks shorter than it was and the copy looks longer, the
+     same way round as the fork bug did before parser version 5. Token totals stay
+     correct either way, because a record is still counted once.
+   - *Also out of reach:* a copied record that carries no identifier of its own cannot be
+     recognised as a copy at all, since the id derived for it names the file it sits in.
+   - *Removal condition:* lineage for re-stamped copies, inferred rather than declared
+     (comparing the two transcripts' shared records and their times, and writing the
+     result to `forked_from` like a declared fork). That is a feature of its own, not a
+     parser fix, and it needs the founder's decision on what to do when the inference is
+     ambiguous.
 
 ## Adding a source
 
@@ -255,9 +279,6 @@ A second agent is a new package under `sources/`, and nothing else. What it has 
   than diffs; if a repository is still too large, it samples deterministically by commit
   hash (`store/outcomes.MAX_COMMITS`) so that a rebuild reproduces the same sample, and
   every surface says how much was left out.
-- A new derived fact computed from those tables: one function in `facts/` with a version
-  and its test cases as data. `derived.py` builds the tables; `facts/` reads them.
-  `rev-list`, `notes`, `cat-file`, `blame`, `worktree list`, `patch-id`.
 - A new derived fact computed from those tables: one module in `facts/`, a `Fact` naming
   its version and trust level (high, medium or low, as in the coaching reference), a
   `compute(connection, session_id)` reading only `record`, `turn`, `tool_call`,
