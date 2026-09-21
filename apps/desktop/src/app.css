@@ -1,6 +1,6 @@
 /* What is different between a mockup of the popover and the popover.
 
-   `vendor/tokens.css` is the design system and is not edited here; it draws the popover
+   `design/tokens.css` is the design system and is not edited here; it draws the popover
    as a 360 px card sitting on a fake desktop. In the app the window is the popover, the
    desktop is the machine's own, and the frost comes from AppKit or DWM rather than from
    `backdrop-filter`, which inside a webview can only sample the page itself. */

@@ -11,7 +11,7 @@
 (function (global) {
   "use strict";
 
-  /* Bound in `render`, not here: the vendor scripts are injected once the payload exists
+  /* Bound in `render`, not here: the design scripts are injected once the payload exists
      (see boot.js), so at the time this file is evaluated none of them is loaded yet. */
   var T, I, D, el;
 

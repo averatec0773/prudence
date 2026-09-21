@@ -1,7 +1,7 @@
 /* The one door between the page and the shell.
 
    Every Tauri API call in this app is in this file. Nothing under `panel.js` or
-   `vendor/` knows what a Tauri is. That is deliberate and it is load bearing: if the
+   `design/` knows what a Tauri is. That is deliberate and it is load bearing: if the
    webview under this frontend has to change, the shell is rewritten and this file is
    rewritten with it, and the rest of the frontend moves unchanged.
 

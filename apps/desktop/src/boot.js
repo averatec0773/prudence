@@ -1,7 +1,7 @@
 /* Start-up: ask the shell for the store, hand it to the frontend the mockups already
    speak, draw the panel, then tell the shell how tall it turned out to be.
 
-   The vendor scripts read `window.PRUDENCE_DATA` as they are evaluated, which is the one
+   The design scripts read `window.PRUDENCE_DATA` as they are evaluated, which is the one
    thing that forces an order here: the payload has to exist before they load, so they are
    injected rather than listed in the HTML. That is the whole of the wiring change; the
    files themselves are byte-for-byte the mockups'. */
@@ -9,11 +9,14 @@
 (function (global) {
   "use strict";
 
-  var VENDOR = [
-    "vendor/i18n.js",
-    "vendor/brand.js",
-    "vendor/derive.js",
-    "vendor/charts.js",
+  /* The design system, copied from `docs/design/mockups/` byte for byte. Not `vendor/`:
+     the repository's own .gitignore excludes that name, and a frontend that cannot be
+     checked out is not a frontend. */
+  var DESIGN = [
+    "design/i18n.js",
+    "design/brand.js",
+    "design/derive.js",
+    "design/charts.js",
   ];
 
   function loadScript(src) {
@@ -144,7 +147,7 @@
       })
       .then(function (payload) {
         global.PRUDENCE_DATA = payload;
-        return loadAll(VENDOR);
+        return loadAll(DESIGN);
       })
       .then(function () {
         if (info && info.language) global.I18N.setLang(info.language);

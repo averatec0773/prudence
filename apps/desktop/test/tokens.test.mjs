@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, "..");
 
-const tokensCss = readFileSync(join(app, "src/vendor/tokens.css"), "utf8");
+const tokensCss = readFileSync(join(app, "src/design/tokens.css"), "utf8");
 const appCss = readFileSync(join(app, "src/app.css"), "utf8");
 
 /** Custom properties declared in one selector's block, by exact selector text. */

@@ -65,7 +65,7 @@ apps/desktop/
     boot.js            ask the shell for the store, then draw
     panel.js           the dropdown, variant C with a caption on every block
     app.css            what differs between a mockup of the popover and the popover
-    vendor/            copied unchanged from docs/design/mockups/:
+    design/            copied unchanged from docs/design/mockups/:
                        tokens.css, i18n.js, brand.js, derive.js, charts.js
   src-tauri/
     tauri.conf.json    one window, transparent, frameless, hidden from the Dock
@@ -98,7 +98,7 @@ end up in the page, which is what closes the door on Windows.
 
 ## Where the design lives
 
-`src/vendor/tokens.css` is the design system, copied from `docs/design/mockups/` byte for
+`src/design/tokens.css` is the design system, copied from `docs/design/mockups/` byte for
 byte, and `apps/mac/DESIGN.md` still describes it. `src/app.css` says where things go and
 never declares a token; `test/tokens.test.mjs` asserts both, and asserts the palette
 against the table `DESIGN.md` prints.
