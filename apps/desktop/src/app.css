@@ -1,0 +1,144 @@
+/* What is different between a mockup of the popover and the popover.
+
+   `vendor/tokens.css` is the design system and is not edited here; it draws the popover
+   as a 360 px card sitting on a fake desktop. In the app the window is the popover, the
+   desktop is the machine's own, and the frost comes from AppKit or DWM rather than from
+   `backdrop-filter`, which inside a webview can only sample the page itself. */
+
+html,
+body {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* A frameless window is dragged by its background unless something says otherwise;
+     this one is a popover and is not dragged at all. */
+  user-select: none;
+  cursor: default;
+}
+
+#root {
+  min-height: 100%;
+}
+
+.popover {
+  width: 100%;
+  min-height: 100vh;
+  border-radius: 0; /* the window's own layer carries the radius */
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.pop-body {
+  flex: 1;
+}
+
+/* The material rule, with the one difference a real window makes.
+
+   `data-material="glass"` is the mockups' own attribute, so every control keeps the frost
+   `tokens.css` already draws for it: that is the control layer, and it stays CSS on both
+   platforms. What changes is the surface under them. In a mockup the popover paints its
+   own tint over a painted wallpaper; here the window is frosted by AppKit or DWM over the
+   real desktop, so the page has to get out of the way or there are two materials stacked. */
+:root[data-material="glass"] body {
+  background-image: none;
+}
+
+:root[data-material="glass"] .popover {
+  background-color: transparent;
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* No material: the honest opaque look, the same one `prefers-reduced-transparency` gets. */
+:root[data-material="standard"] .popover {
+  background: var(--surface);
+}
+
+/* A block: its caption, then the content full width under it. `pop-line`'s caption column
+   stays in `tokens.css` unused here, because the mockup set still shows the variants that
+   were considered and this app shows only the one that was chosen. */
+.pop-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pop-block > .k {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.headline-sub {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+/* The observation is the one sentence on this surface worth reading at body size. */
+.obs-sentence {
+  font-size: var(--t-body);
+  line-height: 1.4;
+}
+
+/* The plain button is quiet ink, and the accent only under the pointer.
+
+   `tokens.css` colours it with the accent outright, which is the mockups' reading; batch
+   3 settled the shipping one ("`.prudencePlain`: `Ink.secondary`, the accent under the
+   pointer", DESIGN.md), and a popover with two blue words in its footer reads as two
+   links rather than as two quiet actions. */
+.btn.plain {
+  color: var(--text-2);
+}
+
+.btn.plain:hover {
+  color: var(--accent);
+}
+
+/* From `dropdown.html`'s own <style> block: the four classes variant C adds. */
+.obs-line {
+  font-size: var(--t-footnote);
+  line-height: 1.4;
+}
+
+.buttons-row {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.buttons-row .btn {
+  flex: 1;
+}
+
+.week-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.week-figures {
+  display: flex;
+  gap: var(--s3);
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+
+.headline {
+  font-size: var(--t-title3);
+  font-weight: 640;
+  letter-spacing: -0.02em;
+}
+
+.btn[disabled] {
+  opacity: 0.55;
+}
+
+.startup-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s5) var(--s4);
+}

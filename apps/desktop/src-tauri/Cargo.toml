@@ -1,0 +1,51 @@
+[package]
+name = "prudence-desktop"
+version = "0.0.1"
+description = "Prudence desktop app"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[lib]
+name = "prudence_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["config-json"] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "0.8"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", features = [
+  "std",
+  "NSApplication",
+  "NSButton",
+  "NSCell",
+  "NSControl",
+  "NSResponder",
+  "NSScreen",
+  "NSStatusBar",
+  "NSStatusBarButton",
+  "NSStatusItem",
+  "NSView",
+  "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = ["std", "NSString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+window-vibrancy = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
