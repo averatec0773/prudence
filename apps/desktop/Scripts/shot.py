@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -58,6 +59,21 @@ TARGETS = {
     "panel": {"min_width": 200, "max_width": 500, "env": {"PRUDENCE_PANEL_OPEN": "1"}},
     "main": {"min_width": 880, "max_width": 4000, "env": {"PRUDENCE_WINDOW_OPEN": "1"}},
 }
+
+
+ANCHOR = re.compile(
+    r"\[harness\] status item at "
+    r"center_x=([\d.-]+) bottom=([\d.-]+) min_x=([\d.-]+) max_x=([\d.-]+)"
+)
+
+
+def anchor_from(log: Path) -> dict | None:
+    """Where the app says its own status item settled. Harness-only, so not in a release."""
+    found = ANCHOR.search(log.read_text(errors="replace")) if log.exists() else None
+    if not found:
+        return None
+    center_x, bottom, min_x, max_x = (float(v) for v in found.groups())
+    return {"center_x": center_x, "bottom": bottom, "min_x": min_x, "max_x": max_x}
 
 
 def on_screen() -> list[dict]:
@@ -269,6 +285,27 @@ def main() -> int:
         else:
             print(f"refusing to capture: {reason}", file=sys.stderr)
             return 1
+
+        # A panel that anchored to the wrong place still photographs perfectly, because
+        # the region is read back from the window list: whatever the panel's bounds are,
+        # the picture is of them. That is how a status item reported at x = 18 went
+        # unnoticed until 2026-09-21. The anchor the app settled on is in the log, so the
+        # one thing the picture cannot show gets asserted instead.
+        if args.window == "panel":
+            settled = anchor_from(log)
+            if settled is None:
+                print(f"the app never reported a status item; see {log}", file=sys.stderr)
+                return 1
+            centre = window["x"] + window["w"] / 2
+            if abs(centre - settled["center_x"]) > 1.0 and not (
+                window["x"] <= settled["min_x"] or window["x"] + window["w"] >= settled["max_x"]
+            ):
+                print(
+                    f"the panel is centred on {centre:.1f} but the status item is at "
+                    f"{settled['center_x']:.1f}; refusing to capture",
+                    file=sys.stderr,
+                )
+                return 1
 
         target = out / f"{args.name}.png"
         region = f"{int(window['x'])},{int(window['y'])},{int(window['w'])},{int(window['h'])}"
