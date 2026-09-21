@@ -14,7 +14,17 @@ import {
   projectColour,
   weeks as readWeeks,
 } from "../store/overview.js";
-import { count, day as formatDay, hours as formatHours, list, percent, purpose, sessions, tokens } from "../text/fmt.js";
+import {
+  count,
+  day as formatDay,
+  hourPhrase,
+  hours as formatHours,
+  list,
+  percent,
+  purpose,
+  sessions,
+  tokens,
+} from "../text/fmt.js";
 import { t } from "../text/strings.js";
 
 /** A figure with its caption above and its qualification below. */
@@ -91,6 +101,7 @@ export function overview(state) {
   /* --- the three totals ---------------------------------------------------------- */
 
   const totals = readCards(data, { project, range, week });
+  const weeks = readWeeks(data, { project, range });
   const cardRow = el("div", { class: "card-row" }, [
     statCard(
       t("overview.sessionsInRange"),
@@ -113,7 +124,15 @@ export function overview(state) {
   // Clicking a week filters the three cards, and says so, with one way back.
   if (week) {
     const note = el("div", { class: "filter-note" }, [
-      el("span", { text: t("overview.weekFilter", formatDay(week), tokens(totals.commits)) }),
+      // The week's own token total, which is what the bar the user clicked represents.
+      // This printed `totals.commits` through the token abbreviator and called it tokens.
+      el("span", {
+        text: t(
+          "overview.weekFilter",
+          formatDay(week),
+          tokens(weeks.find((one) => one.week === week)?.total ?? 0)
+        ),
+      }),
     ]);
     const back = el("button", { class: "btn", type: "button", text: t("overview.showAllWeeks") });
     back.addEventListener("click", () => state.onWeek(null));
@@ -123,7 +142,6 @@ export function overview(state) {
 
   /* --- tokens by purpose, per week ------------------------------------------------ */
 
-  const weeks = readWeeks(data, { project, range });
   const hover = el("div", { class: "hover-value", text: t("chart.hint.weeks") });
 
   if (!weeks.length) {
@@ -146,7 +164,12 @@ export function overview(state) {
       const parts = [...present]
         .filter((key) => found.byPurpose[key] > 0)
         .map((key) => `${purpose(key)} ${tokens(found.byPurpose[key])}`);
-      hover.textContent = `${t("overview.weekOf", formatDay(found.week))}: ${tokens(found.total)}. ${list(parts)}`;
+      hover.textContent = t(
+        "overview.weekReading",
+        t("overview.weekOf", formatDay(found.week)),
+        tokens(found.total),
+        list(parts)
+      );
     };
 
     const chart = stackedBars({
@@ -173,7 +196,12 @@ export function overview(state) {
 
   const series = readOutcomes(data, { project, range });
   const allWeeks = [...new Set(series.flatMap((s) => s.points.map((p) => p.week)))].sort();
-  const names = data.projects.map((row) => String(row.name));
+  // Every project that appears anywhere, not only those with a usage row: `data.projects`
+  // comes from `app_usage_by_purpose_day`, so a repository with counted commits and no
+  // session usage fell through `indexOf` to -1 and drew in the first project's colour.
+  const names = [
+    ...new Set([...data.projects.map((row) => String(row.name)), ...series.map((one) => one.project)]),
+  ];
 
   if (!series.length || !allWeeks.length) {
     screen.appendChild(
@@ -191,10 +219,11 @@ export function overview(state) {
         colour: projectColour(one.project, names),
         runs: one.runs.alive.map((run) => run.map((p) => ({ week: p.week, value: p.alive }))),
       })),
+      // Cut on coverage, not on alive. Filtering the nulls out of an alive run removed
+      // the hole instead of honouring it, and the pale line was drawn straight across a
+      // week whose coverage the engine never produced.
       coverage: series.flatMap((one) =>
-        one.runs.alive.map((run) =>
-          run.filter((p) => p.coverage !== null).map((p) => ({ week: p.week, value: p.coverage }))
-        )
+        one.runs.coverage.map((run) => run.map((p) => ({ week: p.week, value: p.coverage })))
       ),
       caption: outcomeCaption(series, "alive"),
     });
@@ -254,10 +283,16 @@ export function overview(state) {
         heatStrip({
           weeks: strip.weeks,
           max: strip.max,
+          // With the unit: the figcaption is the only place a screenshot reader can get
+          // these values, and "Sep 16, 2026 1.5" does not say 1.5 of what.
           title: (dayKey, hours) =>
-            `${formatDay(dayKey)}: ${hours === null ? t("common.dash") : formatHours(hours)}`,
+            t(
+              "overview.dayHours",
+              formatDay(dayKey),
+              hours === null ? t("common.dash") : hourPhrase(hours)
+            ),
           caption: list(
-            measured.map((cell) => `${formatDay(cell.day)} ${formatHours(cell.hours)}`)
+            measured.map((cell) => t("overview.dayHours", formatDay(cell.day), hourPhrase(cell.hours)))
           ),
         })
       )
@@ -274,7 +309,9 @@ function outcomeCaption(series, key) {
     for (const point of one.points) {
       if (point[key] === null) continue;
       const over = key === "alive" ? point.measured30d : point.lines;
-      parts.push(`${one.project} ${formatDay(point.week)} ${percent(point[key])} ${t("chart.sampleSize", count(over))}`);
+      parts.push(
+        t("chart.pointReading", one.project, formatDay(point.week), percent(point[key]), count(over))
+      );
     }
   }
   return list(parts);

@@ -281,7 +281,7 @@ a:hover {
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-.segmented button[aria-selected="true"] {
+.segmented button[aria-checked="true"] {
   background: var(--control);
   box-shadow: var(--shadow-raised);
   font-weight: 590;
@@ -1164,14 +1164,14 @@ figcaption.sr {
   border-radius: calc(var(--r-control) - 2px);
 }
 
-:root[data-material="glass"] .segmented button[aria-selected="true"] {
+:root[data-material="glass"] .segmented button[aria-checked="true"] {
   background-color: var(--glass-pill);
   background-image: none;
   box-shadow: none;
   font-weight: 590;
 }
 
-:root[data-material="glass"] .segmented button:hover[aria-selected="false"] {
+:root[data-material="glass"] .segmented button:hover[aria-checked="false"] {
   background-color: var(--glass-control-hover);
 }
 

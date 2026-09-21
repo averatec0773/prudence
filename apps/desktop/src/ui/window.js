@@ -97,6 +97,9 @@ function show(section, { remember = true } = {}) {
 /** Redraw the current screen in place, keeping the scroll position. */
 function redraw() {
   const where = nodes.screen.scrollTop;
+  // The pickers carry the state that was just changed. Without this the range buttons
+  // kept whatever `aria-checked` they were built with at start-up.
+  fillScope();
   show(state.section, { remember: false });
   nodes.screen.scrollTop = where;
 }
@@ -200,7 +203,14 @@ function titlebar() {
   ]);
 }
 
+/** `render` runs again on every store change, and `container.innerHTML = ""` clears the
+ *  DOM, not listeners on `document`. Once is once. */
+let listening = false;
+let firstDraw = true;
+
 function keyboard() {
+  if (listening) return;
+  listening = true;
   document.addEventListener("keydown", (event) => {
     if (!event.metaKey) return;
     const index = ["1", "2", "3", "4"].indexOf(event.key);
@@ -265,9 +275,12 @@ export const page = {
 
     fillScope();
     keyboard();
-    show(state.section === "overview" && info?.section ? info.section : state.section, {
-      remember: false,
-    });
+    // Only on the first draw. `render` runs again on every store change with the same
+    // `info` captured at boot, so this line used to throw the reader back to the section
+    // the *previous* launch ended on, every time an ingest landed.
+    const restore = firstDraw && info?.section ? info.section : state.section;
+    firstDraw = false;
+    show(restore, { remember: false });
 
     // A screenshot of a screen taller than the window. Never set in a release build.
     if (info?.scroll) nodes.screen.scrollTop = info.scroll;

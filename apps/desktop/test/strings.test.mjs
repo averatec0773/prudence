@@ -39,7 +39,7 @@ function placeholders(template) {
 
 test("every key is translated in both languages", () => {
   const en = Object.keys(strings.en);
-  assert.equal(en.length, 227, "the catalog has 227 keys");
+  assert.equal(en.length, 230, "the catalog has 230 keys");
   for (const language of LANGUAGES) {
     assert.deepEqual(
       Object.keys(strings[language]).sort(),
@@ -75,6 +75,9 @@ const SHARED_TEXT = {
     ["menu.noReview", "review.empty.title"],
     ["observation.outcome.rework", "overview.legend.reworkName"],
     ["observation.where.pooled", "observations.group.pooled"],
+    // A heat cell labelled with its hours, and a review's section labelled with its
+    // finding. Same punctuation, two unrelated decisions.
+    ["overview.dayHours", "review.headline.section"],
     ["overview.legend.coverageName", "review.tag.coverage"],
     ["section.settings", "settings.title"],
   ],
@@ -84,6 +87,9 @@ const SHARED_TEXT = {
     ["menu.noReview", "review.empty.title"],
     ["observation.didNot", "observation.side.didNot"],
     ["observation.outcome.rework", "overview.legend.reworkName"],
+    // A heat cell labelled with its hours, and a review's section labelled with its
+    // finding. Same punctuation, two unrelated decisions.
+    ["overview.dayHours", "review.headline.section"],
     ["overview.legend.coverageName", "review.tag.coverage"],
     ["review.tag.scope", "scope.range"],
     ["section.settings", "settings.title"],

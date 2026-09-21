@@ -111,6 +111,22 @@ export async function boot(page) {
 
   setLang(chooseLanguage(info));
 
+  /* An ingest that lands while the app is open redraws the page. A failure here is not
+     a failure of the app: the store was readable a moment ago and will be again, so the
+     old numbers stay on screen and the shell's log says what happened.
+
+     **Subscribed before the first draw, not after it.** This used to sit below the early
+     return, so the one case the watcher exists for was the one case it was not listening
+     for: no store yet, the page shows "Run `prudence ingest` first", the founder runs it
+     in a terminal, and nothing happens until they relaunch. */
+  Bridge.onStoreChanged(() => {
+    draw(page, root, info).catch((error) => {
+      Bridge.log(`${page.name} could not follow the store: ${message(error)}`);
+    });
+  });
+
+  globalThis.addEventListener("focus", dropFocus);
+
   try {
     await draw(page, root, info);
   } catch (error) {
@@ -120,17 +136,6 @@ export async function boot(page) {
     Bridge.log(`${page.name} failed to draw: ${message(error)}`);
     return;
   }
-
-  globalThis.addEventListener("focus", dropFocus);
-
-  /* An ingest that lands while the app is open redraws the page. A failure here is not
-     a failure of the app: the store was readable a moment ago and will be again, so the
-     old numbers stay on screen and the shell's log says what happened. */
-  Bridge.onStoreChanged(() => {
-    draw(page, root, info).catch((error) => {
-      Bridge.log(`${page.name} could not follow the store: ${message(error)}`);
-    });
-  });
 
   // The shell's log is the only place an agent or a founder can see that the page got
   // all the way to the end, since a menu-bar app has no console anybody is watching.

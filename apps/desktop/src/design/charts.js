@@ -164,6 +164,19 @@ export function linesWithGaps(options) {
   // above it, not a series to read against them.
   for (const run of options.coverage ?? []) {
     if (run.length < 1) continue;
+    if (run.length === 1) {
+      // Same reason as the series below: a one-point path is a lone moveto and draws
+      // nothing, so the one week whose coverage was measured would vanish.
+      marks.push(
+        svgEl("circle", {
+          cx: at(run[0].week),
+          cy: y(run[0].value),
+          r: 3,
+          fill: "var(--coverage)",
+        })
+      );
+      continue;
+    }
     marks.push(
       svgEl("path", {
         d: path(run, at, y),

@@ -139,6 +139,12 @@ function footer() {
   ]);
 }
 
+/** Attached once: `render` runs again on every store change, and clearing the DOM does
+ *  not clear listeners on `document` and `window`. */
+let listening = false;
+/** @type {(() => void) | null} */
+let arriving = null;
+
 export const page = {
   name: "panel",
   /** @param {HTMLElement} container */
@@ -178,14 +184,14 @@ export const page = {
     };
     refit();
 
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") Bridge.hidePanel();
-    });
-
     /* The shell focuses the panel when it shows it, which is the only signal the page
        gets that it went from hidden to visible. The class is removed when the animation
-       ends so the next show replays it. */
-    const arrive = () => {
+       ends so the next show replays it.
+
+       `arrive` is re-bound each render because it closes over this render's `pop`; the
+       listeners are attached once, because `render` runs again on every store change and
+       `document` and `window` outlive the DOM this function just replaced. */
+    arriving = () => {
       pop.classList.remove("is-arriving");
       // Reading a layout property between the two lines is what makes the browser start
       // the animation again instead of treating it as unchanged.
@@ -193,7 +199,14 @@ export const page = {
       pop.classList.add("is-arriving");
     };
     pop.addEventListener("animationend", () => pop.classList.remove("is-arriving"));
-    globalThis.addEventListener("focus", arrive);
-    arrive();
+
+    if (!listening) {
+      listening = true;
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") Bridge.hidePanel();
+      });
+      globalThis.addEventListener("focus", () => arriving?.());
+    }
+    arriving();
   },
 };

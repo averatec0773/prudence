@@ -50,7 +50,13 @@ test("weeks come out oldest first, in the fixed purpose order", () => {
   const out = weeks(data, { range: "8w", now: NOW });
   assert.deepEqual(out.map((w) => w.week), ["2026-09-14", "2026-09-21"]);
   assert.equal(out[0].total, 25, "the two days of one week are summed");
-  assert.deepEqual(Object.keys(out[0].byPurpose).slice(0, 2), ["development", "research"]);
+  // The buckets, not the key order of `byPurpose`: that order is `emptyBuckets()`
+  // whatever the data is, so asserting it could not fail. The order the legend and the
+  // table walk is `PURPOSES`, which `purposes.test.mjs` pins against the engine.
+  assert.equal(out[0].byPurpose.development, 25);
+  assert.equal(out[0].byPurpose.research, 0);
+  assert.equal(out[1].byPurpose.research, 10);
+  assert.equal(out[1].byPurpose.development, 0);
 });
 
 test("a week outside the range is not in the answer", () => {
@@ -232,4 +238,34 @@ test("a project keeps its colour whatever order it arrives in", () => {
 test("the scale wraps rather than running out", () => {
   const many = Array.from({ length: 9 }, (_, i) => `p${i}`);
   assert.equal(projectColour("p6", many), projectColour("p0", many));
+});
+
+
+test("the coverage series is cut where coverage is missing, not where alive is", () => {
+  // A week can have a measured thirty-day mark and no coverage at all: the view's
+  // `coverage` is `AVG(b.coverage)` and is null when every counted commit arrived without
+  // one. Reusing the alive runs there drew the pale line straight over the hole.
+  const rows = [
+    { project: "alpha", week_start: "2026-08-31", measured_30d: 10, alive_30d: 9, lines: 10, reworked: 1, coverage: 0.9 },
+    { project: "alpha", week_start: "2026-09-07", measured_30d: 10, alive_30d: 8, lines: 10, reworked: 1, coverage: null },
+    { project: "alpha", week_start: "2026-09-14", measured_30d: 10, alive_30d: 7, lines: 10, reworked: 1, coverage: 0.4 },
+  ];
+  const [one] = outcomes(payload({ outcomes: rows }), { range: "all" });
+
+  assert.equal(one.runs.alive.length, 1, "alive was measured every week, so one run");
+  assert.equal(one.runs.coverage.length, 2, "coverage has a hole, so two runs");
+  assert.deepEqual(
+    one.runs.coverage.map((run) => run.map((point) => point.week)),
+    [["2026-08-31"], ["2026-09-14"]]
+  );
+});
+
+test("a project with no usage row still gets its own colour", () => {
+  // `data.projects` comes from `app_usage_by_purpose_day`. A repository with counted
+  // commits and no session usage is not in it, and `indexOf` returning -1 used to hand it
+  // the first project's colour, so the legend showed two names under one swatch.
+  const known = ["alpha", "beta"];
+  assert.notEqual(projectColour("gamma", [...known, "gamma"]), projectColour("alpha", [...known, "gamma"]));
+  // And the colour a project gets does not depend on which others are present.
+  assert.equal(projectColour("beta", ["alpha", "beta"]), projectColour("beta", ["alpha", "beta", "gamma"]));
 });

@@ -175,7 +175,19 @@ export function outcomes(data, { project = null, range = "8w", now = new Date() 
           coverage: row.coverage === null || row.coverage === undefined ? null : Number(row.coverage),
         };
       });
-      return { project: name, points, runs: { alive: runs(points, "alive"), rework: runs(points, "rework") } };
+      // Coverage is cut on **coverage**, not on alive. A week can have a measured
+      // thirty-day mark and no coverage at all (`app_outcomes_by_week.coverage` is
+      // `AVG(b.coverage)`, null when every counted commit came in without one), and
+      // reusing the alive runs there drew the pale line straight over the hole.
+      return {
+        project: name,
+        points,
+        runs: {
+          alive: runs(points, "alive"),
+          rework: runs(points, "rework"),
+          coverage: runs(points, "coverage"),
+        },
+      };
     });
 }
 
@@ -209,7 +221,7 @@ export function runs(points, key) {
  * measured" is honest where a zero-valued cell would not be.
  */
 export function heat(data, { project = null, range = "8w", now = new Date() } = {}) {
-  const from = firstDay(range, now) ?? earliestDay(data);
+  const from = firstDay(range, now) ?? earliestDay(data, project);
   const to = localDay(now);
   if (!from) return { weeks: [], max: 0 };
 
@@ -246,9 +258,10 @@ export function heat(data, { project = null, range = "8w", now = new Date() } = 
   return { weeks: columns, max };
 }
 
-function earliestDay(data) {
+function earliestDay(data, project = null) {
   let earliest = null;
   for (const row of data.usage) {
+    if (!matchesProject(row, project)) continue;
     const day = String(row.day);
     if (earliest === null || day < earliest) earliest = day;
   }
