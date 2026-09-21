@@ -41,19 +41,26 @@ WITHHELD = "file paths withheld at metadata-only"
 @click.command()
 @click.option("--session", "token", metavar="ID", help="Session id, or a prefix.")
 @click.option("--review", "review_id", type=int, metavar="ID", help="A stored review, by id.")
+@click.option("--question", "question_id", type=int, metavar="ID", help="A stored question, by id.")
 @click.option(
     "--files", "list_files", is_flag=True, help="List every archived file, not a summary."
 )
-def show(token: str | None, review_id: int | None, list_files: bool) -> None:
-    """Show everything recorded about one session, or one stored review."""
-    if (token is None) == (review_id is None):
-        raise click.UsageError("Pass one of --session or --review.")
+def show(
+    token: str | None, review_id: int | None, question_id: int | None, list_files: bool
+) -> None:
+    """Show everything recorded about one session, one stored review, or one question."""
+    chosen = [value for value in (token, review_id, question_id) if value is not None]
+    if len(chosen) != 1:
+        raise click.UsageError("Pass one of --session, --review or --question.")
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
     connection = db.connect()
     try:
         if review_id is not None:
             click.echo(_review(connection, review_id))
+            return
+        if question_id is not None:
+            click.echo(_question(connection, question_id))
             return
         session_id = resolve(connection, str(token))
         click.echo(render(connection, session_id, list_files=list_files))
@@ -76,6 +83,18 @@ def _review(connection: sqlite3.Connection, review_id: int) -> str:
         listed = ", ".join(str(other["id"]) for other in known) or "none yet"
         raise click.UsageError(f"There is no review {review_id}. Stored reviews: {listed}.")
     return review_render.render(row)
+
+
+def _question(connection: sqlite3.Connection, question_id: int) -> str:
+    """One stored question and the answer it was given. Nothing is asked again to print it."""
+    from prudence.ask import schema as ask_schema
+
+    row = ask_schema.by_id(connection, question_id)
+    if row is None:
+        known = ask_schema.recent(connection, limit=5)
+        listed = ", ".join(str(other["id"]) for other in known) or "none yet"
+        raise click.UsageError(f"There is no question {question_id}. Stored questions: {listed}.")
+    return ask_schema.render(row)
 
 
 def resolve(connection: sqlite3.Connection, token: str) -> str:

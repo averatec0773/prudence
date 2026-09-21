@@ -6,9 +6,16 @@ archive; these rows were not built from the archive and could not be rebuilt fro
 so they are outside that promise, exactly as `store/labels.py` is. They travel in
 `export` and come back in `import` (`store/transfer.py`).
 
-`meta` is the small key/value table the surfaces share. Only the keys this package owns
-are written here (the first look's marker); the DDL is `IF NOT EXISTS` so that whoever
-creates the table first wins and the other side finds it already there.
+`meta` is the small key/value table the surfaces share. It belongs to `store/meta.py`;
+this module only writes the keys it owns (the first look's marker) through that module's
+helpers. It used to carry its own `CREATE TABLE IF NOT EXISTS` for the same table, which
+worked and was still a second definition of one schema; the duplicate is gone.
+
+The `review` table grows columns rather than being rebuilt. A review row is the user's
+own history of what they were told, so `rebuild` never drops it and there is nothing to
+recreate a missing column from: `ensure` therefore adds a column when it is absent
+(`_add_missing`), which is the one place in the codebase where a table is migrated, for
+the one table that cannot be built again.
 """
 
 from __future__ import annotations
@@ -17,6 +24,9 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+
+from prudence.store.meta import ensure_meta as _ensure_meta
+from prudence.store.meta import get_meta, set_meta
 
 REVIEW_TABLE = "review"
 SUGGESTION_TABLE = "suggestion"
@@ -58,31 +68,59 @@ CREATE TABLE IF NOT EXISTS suggestion(
 CREATE INDEX IF NOT EXISTS suggestion_status ON suggestion(status, observation_key);
 """
 
-META_SCHEMA = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+# The model segment, stored beside the numbers it was allowed to use (rule 10). Added
+# after the table shipped, so they are columns a `review` row may not have yet.
+SEGMENT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("segment_text", "TEXT"),
+    ("segment_prompt_version", "INTEGER"),
+    ("segment_model", "TEXT"),
+    ("segment_input_hash", "TEXT"),
+    ("segment_numbers", "TEXT"),
+    ("segment_created_at", "TEXT"),
+)
 
 
 def ensure(connection: sqlite3.Connection) -> None:
-    """Create both tables if they are not there. Never drops, never migrates."""
+    """Create both tables if they are not there, and add any column they are missing."""
     connection.executescript(SCHEMA)
+    _add_missing(connection, REVIEW_TABLE, SEGMENT_COLUMNS)
+
+
+def _add_missing(
+    connection: sqlite3.Connection, table: str, columns: tuple[tuple[str, str], ...]
+) -> list[str]:
+    """Add each column the table does not have. Returns the ones that were added.
+
+    `PRAGMA table_info` first rather than catching the error from `ADD COLUMN`, because
+    a caught error is indistinguishable from a real one and this runs inside a
+    transaction the caller may still need.
+    """
+    present = {row["name"] for row in connection.execute(f'PRAGMA table_info("{table}")')}
+    added: list[str] = []
+    for name, kind in columns:
+        if name in present:
+            continue
+        connection.execute(f'ALTER TABLE "{table}" ADD COLUMN {name} {kind}')
+        added.append(name)
+    return added
 
 
 def ensure_meta(connection: sqlite3.Connection) -> None:
-    """Create the shared key/value table if nobody has yet."""
-    connection.execute(META_SCHEMA)
+    """Create the shared key/value table. One definition, in `store/meta.py`.
+
+    Kept as a name here because the callers in this package read markers through this
+    module; it is now a forward to the single DDL rather than a second copy of it.
+    """
+    _ensure_meta(connection)
 
 
 def marker(connection: sqlite3.Connection, key: str) -> str | None:
     """One `meta` value, or None when the table or the key does not exist."""
-    try:
-        row = connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    except sqlite3.OperationalError:
-        return None
-    return row["value"] if row is not None else None
+    return get_meta(connection, key)
 
 
 def set_marker(connection: sqlite3.Connection, key: str, value: str) -> None:
-    ensure_meta(connection)
-    connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+    set_meta(connection, key, value)
 
 
 def now_text(now: datetime | None = None) -> str:
@@ -171,6 +209,66 @@ def reviews(connection: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row
         ).fetchall()
     except sqlite3.OperationalError:
         return []
+
+
+def store_segment(
+    connection: sqlite3.Connection,
+    review_id: int,
+    *,
+    text: str,
+    prompt_version: int,
+    model: str,
+    input_hash: str,
+    numbers: list[dict[str, Any]],
+    created_at: str,
+) -> None:
+    """Attach a model-written segment to a review, with everything needed to judge it.
+
+    The prompt version, the model id, the hash of what was sent and the list of numbers
+    the model was given are stored with the text, so that a segment written months ago
+    can still be checked against the figures it was allowed to use (rule 10).
+    """
+    ensure(connection)
+    connection.execute(
+        "UPDATE review SET segment_text = ?, segment_prompt_version = ?, segment_model = ?,"
+        " segment_input_hash = ?, segment_numbers = ?, segment_created_at = ? WHERE id = ?",
+        (
+            text,
+            prompt_version,
+            model,
+            input_hash,
+            json.dumps(numbers, ensure_ascii=False),
+            created_at,
+            review_id,
+        ),
+    )
+
+
+def segment_of(row: sqlite3.Row) -> dict[str, Any] | None:
+    """The stored segment of one review row, or None when it has none.
+
+    A row from a store written before the columns existed raises on the lookup rather
+    than returning NULL, and a review without a segment is the normal case, so both are
+    the same answer here: there is no segment.
+    """
+    try:
+        text = row["segment_text"]
+    except (IndexError, KeyError):
+        return None
+    if not text:
+        return None
+    try:
+        numbers = json.loads(row["segment_numbers"] or "[]")
+    except (TypeError, ValueError):
+        numbers = []
+    return {
+        "text": text,
+        "prompt_version": row["segment_prompt_version"],
+        "model": row["segment_model"],
+        "input_hash": row["segment_input_hash"],
+        "numbers": numbers if isinstance(numbers, list) else [],
+        "created_at": row["segment_created_at"],
+    }
 
 
 def sections_of(row: sqlite3.Row) -> dict[str, Any]:

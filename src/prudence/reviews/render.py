@@ -44,9 +44,31 @@ def render(row: sqlite3.Row) -> str:
     lines.append(
         f"Every figure above is computed from your own record: {len(payload.get('numbers', []))} "
         "numbers, each re-derivable with `prudence usage`, `prudence outcomes` or "
-        "`prudence observations` over the same range. Nothing here was written by a model."
+        "`prudence observations` over the same range. Nothing above this line was written "
+        "by a model."
     )
+    lines.extend(_segment(row))
     return "\n".join(lines)
+
+
+def _segment(row: sqlite3.Row) -> list[str]:
+    """The optional model segment, last, under its own heading and its own credit line.
+
+    Last on purpose: a reader reaches it having already seen every number it may use,
+    and a review that stops before it is still a whole review (rule 10).
+    """
+    segment = schema.segment_of(row)
+    if segment is None:
+        return []
+    return [
+        "",
+        "## What this means",
+        "",
+        str(segment["text"]).strip(),
+        "",
+        f"Written by {segment['model']}; every number checked against the review's "
+        f"{len(segment['numbers'])} numbers.",
+    ]
 
 
 def headline(row: sqlite3.Row) -> str:

@@ -153,10 +153,26 @@ docs/reference/store-schema.md   every table and column, with its trust level
    file under `reports/` and the app's review screen all read the same row. A review is
    complete without a model; a model segment, when one exists, is stored beside the
    numbers list and may use no figure that is not in it.
+16. **The model writes prose over numbers it was given, and two guards prove it.** The
+   whole vendor dependency is `model/anthropic_backend.py`; every other backend
+   (`recorded`, `none`) satisfies the same one-method protocol, and `select_model` is
+   the only chooser. A model never computes and never grades: `numbers.check_numbers`
+   flags a figure that was not in the input (principle 2) and `tone.check_tone` flags a
+   word that judges the work (principle 3). A draft that fails either is sent back once
+   with its offending tokens named (`model/guard.py`); if it fails again it is
+   **discarded unprinted and unstored**, and the user is told which numbers or words
+   were wrong, never what the draft said. Showing a rejected draft under a disclaimer
+   would still leave its invented figures with the reader. A figure the prose wants and
+   the rows lack is the engine's job to compute, not the model's, which is why `ask`
+   sends a `totals` block. Every call prints the whole request shape before it is sent,
+   and transcript content is sent only for a `full` project with `--with-content`.
 
 ## Adding things
 
 - A new agent: one module in `sources/` that finds the agent's files and yields records.
+- A new model backend: one file in `model/` with a `complete(request) -> Completion`, a
+  name in `model.BACKENDS`, and its prices in `model/prices.py`. No other module imports
+  a vendor SDK, and no command branches on which backend is in use.
 - A new derived table or column: `store/derived.py`, then bump `PARSER_VERSION` and
   document the change in `docs/reference/store-schema.md`. Never write a migration.
 - A new table harvested from git rather than from the archive: its own module under

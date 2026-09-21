@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 menubar = ["rumps>=0.4"]
 mcp = ["mcp>=1.2,<2"]
+model = ["anthropic>=0.40"]
 
 [project.scripts]
 prudence = "prudence.cli:main"
@@ -28,6 +29,7 @@ packages = ["src/prudence"]
 
 [dependency-groups]
 dev = [
+    "anthropic>=0.40",
     "pytest",
     "ruff",
 ]

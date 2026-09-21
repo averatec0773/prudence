@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from prudence import __version__
+from prudence.ask import schema as ask_schema
 from prudence.facts import registry as facts_registry
 from prudence.reviews import schema as review_schema
 from prudence.store import (
@@ -72,9 +73,10 @@ HARVESTED_TABLES = (
 ARCHIVE_TABLES = ("archive_file", "archive_chunk")
 
 # Rows a person's own history produced rather than the archive: the reviews they have
-# been given and the suggestions those left open. They are never rebuilt, so an export
-# that left them out would lose them for good.
-USER_TABLES = review_schema.TABLES
+# been given, the suggestions those left open, and the questions they asked with the
+# answers they got. They are never rebuilt, so an export that left them out would lose
+# them for good.
+USER_TABLES = review_schema.TABLES + ask_schema.TABLES
 
 BLOB_COLUMNS = {("archive_chunk", "data")}
 
@@ -240,6 +242,7 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
     connection.executescript(outcomes.SCHEMA)
     connection.executescript(observations.SCHEMA)
     review_schema.ensure(connection)
+    ask_schema.ensure(connection)
 
 
 def _occupied(connection: sqlite3.Connection) -> dict[str, int]:

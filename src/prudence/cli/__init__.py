@@ -6,7 +6,9 @@ from __future__ import annotations
 import click
 
 from prudence import __version__
+from prudence.cli.ask import ask
 from prudence.cli.classify import classify
+from prudence.cli.explain import explain
 from prudence.cli.export import export, import_bundle
 from prudence.cli.facts import facts
 from prudence.cli.forget import forget
@@ -21,6 +23,7 @@ from prudence.cli.rebuild import rebuild
 from prudence.cli.review import review
 from prudence.cli.sample import sample
 from prudence.cli.sessions import sessions
+from prudence.cli.settings import config
 from prudence.cli.show import show
 from prudence.cli.status import status
 from prudence.cli.suggestions import suggestions
@@ -41,7 +44,10 @@ main.add_command(sessions)
 main.add_command(outcomes)
 main.add_command(observations)
 main.add_command(review)
+main.add_command(explain)
+main.add_command(ask)
 main.add_command(suggestions)
+main.add_command(config)
 main.add_command(usage)
 main.add_command(facts)
 main.add_command(classify)

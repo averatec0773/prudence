@@ -1,0 +1,59 @@
+name: Mac app
+
+# Builds and tests the menu bar app, and renders the screens the founder judges.
+#
+# It never signs, notarises, uploads or publishes. A Developer ID certificate in GitHub
+# secrets is real exposure for a solo founder, so a tagged release is signed from the
+# founder's own machine (research note, section 6). `CODE_SIGNING_ALLOWED=NO` here is what
+# makes that split hold.
+#
+# `macos-26` is pinned deliberately: `macos-latest` moves under you, `macos-14` is fully
+# unsupported from 2026-11-02, and `xcode-27` is a preview image.
+
+on:
+  push:
+    paths:
+      - "apps/mac/**"
+      - ".github/workflows/mac-ci.yml"
+      - "src/prudence/store/app_views.py"
+      - "src/prudence/store/meta.py"
+  pull_request:
+    paths:
+      - "apps/mac/**"
+      - ".github/workflows/mac-ci.yml"
+      - "src/prudence/store/app_views.py"
+      - "src/prudence/store/meta.py"
+
+jobs:
+  build:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: apps/mac
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the project
+        run: xcodegen generate
+
+      - name: Test PrudenceKit
+        run: swift test --package-path PrudenceKit
+
+      - name: Build the app, unsigned
+        run: |
+          xcodebuild -project Prudence.xcodeproj -scheme Prudence \
+            -configuration Release -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Render the screens
+        run: ./Scripts/shots.sh
+
+      - name: Upload the screens
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: apps/mac/shots/
+          if-no-files-found: error

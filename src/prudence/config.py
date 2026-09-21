@@ -23,6 +23,15 @@ from prudence.paths import config_file
 LEVELS = ("full", "metadata-only")
 CONFIG_VERSION = 1
 
+# The model block's defaults. They are named here rather than imported from
+# `prudence.model` so that reading the config never loads a backend, and so that
+# `config.py` keeps its one dependency (`tomllib`).
+BACKENDS = ("anthropic", "none")
+DEFAULT_BACKEND = "anthropic"
+DEFAULT_MODEL_ID = "claude-sonnet-5"
+DEFAULT_KEY_ENV = "ANTHROPIC_API_KEY"
+DEFAULT_MAX_TOKENS = 1024
+
 HEADER = """\
 # Prudence configuration.
 # Nothing is recorded until a repository appears below. Delete a block to stop
@@ -43,11 +52,35 @@ class RepoConfig:
     common_dir: str | None = None
 
 
+@dataclass(frozen=True)
+class ModelSettings:
+    """Which model writes the optional prose, if any. Defaults to writing none.
+
+    The key itself is never here: `api_key_env` names the environment variable to read,
+    so a config file can be copied, printed or committed without carrying a secret. A
+    user who wants the default only has to leave this block out.
+    """
+
+    backend: str = DEFAULT_BACKEND
+    model_id: str = DEFAULT_MODEL_ID
+    api_key_env: str = DEFAULT_KEY_ENV
+    max_tokens: int = DEFAULT_MAX_TOKENS
+
+
+@dataclass(frozen=True)
+class ReviewSettings:
+    """Standing choices for `prudence review`. `explain` is `--explain` without the flag."""
+
+    explain: bool = False
+
+
 @dataclass
 class Config:
     path: Path
     version: int = CONFIG_VERSION
     repositories: dict[str, RepoConfig] = field(default_factory=dict)
+    model: ModelSettings = field(default_factory=ModelSettings)
+    review: ReviewSettings = field(default_factory=ReviewSettings)
 
     @property
     def levels(self) -> dict[str, str]:
@@ -88,7 +121,43 @@ def load(path: Path | None = None) -> Config:
             common_dir=block.get("common_dir") or None,
         )
     version = int(raw.get("version", CONFIG_VERSION))
-    return Config(path=target, version=version, repositories=repositories)
+    return Config(
+        path=target,
+        version=version,
+        repositories=repositories,
+        model=_model_settings(raw.get("model")),
+        review=_review_settings(raw.get("review")),
+    )
+
+
+def _model_settings(block: object) -> ModelSettings:
+    """The `[model]` block, with every unreadable field falling back to its default.
+
+    A typo in a setting must not stop an ingest: an unknown backend name is kept as it
+    was written so that `select_model` can say which name it does not know, but a
+    non-string or a missing field is simply the default (architecture rule 3).
+    """
+    if not isinstance(block, dict):
+        return ModelSettings()
+    backend = block.get("backend")
+    model_id = block.get("model_id")
+    key_env = block.get("api_key_env")
+    max_tokens = block.get("max_tokens")
+    return ModelSettings(
+        backend=backend if isinstance(backend, str) and backend else DEFAULT_BACKEND,
+        model_id=model_id if isinstance(model_id, str) and model_id else DEFAULT_MODEL_ID,
+        api_key_env=key_env if isinstance(key_env, str) and key_env else DEFAULT_KEY_ENV,
+        max_tokens=(
+            max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else DEFAULT_MAX_TOKENS
+        ),
+    )
+
+
+def _review_settings(block: object) -> ReviewSettings:
+    if not isinstance(block, dict):
+        return ReviewSettings()
+    explain = block.get("explain")
+    return ReviewSettings(explain=explain if isinstance(explain, bool) else False)
 
 
 def save(config: Config) -> None:
@@ -102,6 +171,17 @@ def save(config: Config) -> None:
 def dumps(config: Config) -> str:
     """Serialise the config. Only the value shapes used above are supported, on purpose."""
     lines = [HEADER, f"version = {config.version}", ""]
+    if config.model != ModelSettings():
+        lines.append("[model]")
+        lines.append(f"backend = {_string(config.model.backend)}")
+        lines.append(f"model_id = {_string(config.model.model_id)}")
+        lines.append(f"api_key_env = {_string(config.model.api_key_env)}")
+        lines.append(f"max_tokens = {config.model.max_tokens}")
+        lines.append("")
+    if config.review != ReviewSettings():
+        lines.append("[review]")
+        lines.append(f"explain = {'true' if config.review.explain else 'false'}")
+        lines.append("")
     for repo in sorted(config.repositories.values(), key=lambda r: (r.name, r.key)):
         lines.append("[[repository]]")
         lines.append(f"key = {_string(repo.key)}")

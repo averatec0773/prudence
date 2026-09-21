@@ -18,9 +18,11 @@ from datetime import UTC, datetime
 
 import click
 
+from prudence import config as config_module
 from prudence.cli.observations import repo_key_for
 from prudence.paths import database_file, reports_dir
 from prudence.reviews import build as build_module
+from prudence.reviews import explain as explain_module
 from prudence.reviews import ranges, readiness, render, schema
 from prudence.reviews import suggestions as suggestions_module
 from prudence.store import db, derived, views
@@ -35,6 +37,13 @@ from prudence.store import outcomes as outcomes_module
 @click.option("--project", "project", metavar="NAME", help="One repository, by name or key.")
 @click.option("--force", is_flag=True, help="Write the review even when the rule says wait.")
 @click.option("--json", "as_json", is_flag=True, help="The stored row as JSON, not Markdown.")
+@click.option(
+    "--explain/--no-explain",
+    "wants_explain",
+    default=None,
+    help="Add a model-written segment over the computed numbers (config: review.explain).",
+)
+@click.option("--model-id", "model_id", metavar="ID", help="Override the configured model id.")
 def review(
     last: str | None,
     since: str | None,
@@ -43,10 +52,14 @@ def review(
     project: str | None,
     force: bool,
     as_json: bool,
+    wants_explain: bool | None,
+    model_id: str | None,
 ) -> None:
     """Write a review of one range: what you did, what became of it, and what changed."""
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
+    settings = config_module.load()
+    wanted = settings.review.explain if wants_explain is None else wants_explain
     connection = db.connect()
     try:
         repo_key = repo_key_for(connection, project)
@@ -74,7 +87,15 @@ def review(
                 click.echo("Run `prudence review --force` to write one anyway.")
             return
 
-        for line in write(connection, window, as_json=as_json, forced=force and not ready.ready):
+        for line in write(
+            connection,
+            window,
+            as_json=as_json,
+            forced=force and not ready.ready,
+            explain=wanted,
+            settings=settings,
+            model_id=model_id,
+        ):
             click.echo(line)
     except sqlite3.OperationalError as error:
         raise click.ClickException(
@@ -90,8 +111,16 @@ def write(
     as_json: bool = False,
     forced: bool = False,
     now: datetime | None = None,
+    explain: bool = False,
+    settings: config_module.Config | None = None,
+    model_id: str | None = None,
 ) -> list[str]:
-    """Compute, store and render one review. Returns the lines the command prints."""
+    """Compute, store and render one review. Returns the lines the command prints.
+
+    The segment, when asked for, runs after the row exists. That order is the whole of
+    rule 10 in one line of control flow: the review is stored and complete before a
+    model is involved, and a model call that fails costs the user nothing.
+    """
     moment = now or datetime.now(UTC)
     created_at = schema.now_text(moment)
     payload = build_module.build(connection, window, now=moment)
@@ -109,6 +138,8 @@ def write(
         parser_version=derived.PARSER_VERSION,
     )
     stats = suggestions_module.refresh(connection, review_id, window.project, created_at)
+    if explain:
+        add_segment(connection, review_id, payload, settings, model_id, created_at)
     row = schema.review_by_id(connection, review_id)
     if row is None:
         raise click.ClickException("The review row was not stored; nothing was written.")
@@ -153,3 +184,37 @@ def write(
             "Written with --force: the readiness rule said there was not enough new work yet."
         )
     return lines
+
+
+def add_segment(
+    connection: sqlite3.Connection,
+    review_id: int,
+    payload: dict,
+    settings: config_module.Config | None,
+    model_id: str | None,
+    created_at: str,
+) -> explain_module.Segment:
+    """One model call over a stored review, checked and stored. Shared with `prudence explain`.
+
+    A segment that fails either guard, after the one corrective retry `model/guard.py`
+    makes, is refused here: not stored, and not printed either. The review is complete
+    without it, and a rejected draft is a model's impression carrying figures nobody
+    computed, which is exactly the thing a reader should not be shown.
+    """
+    from prudence.cli import modelio
+
+    chosen = settings or config_module.load()
+    model = modelio.choose(chosen, model_id)
+    segment = explain_module.explain(
+        payload, model, max_tokens=chosen.model.max_tokens, call=modelio.run
+    )
+    if not segment.ok:
+        raise click.ClickException(
+            "No segment was written, and the text it returned was discarded unread: "
+            + "; ".join(segment.verdict.reasons())
+            + f". The review itself is written and unchanged, with its "
+            f"{len(segment.numbers)} computed numbers. Run `prudence explain "
+            f"{review_id}` to try again."
+        )
+    explain_module.store(connection, review_id, segment, created_at)
+    return segment
