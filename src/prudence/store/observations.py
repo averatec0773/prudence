@@ -328,6 +328,43 @@ def _fact_values(connection: sqlite3.Connection, ids: list[str]) -> dict[str, di
     return dict(result)
 
 
+def sessions_with_outcomes(connection: sqlite3.Connection) -> list[_Session]:
+    """The very set the join is built from, for a surface that follows one row over time.
+
+    A review's follow-up comparison asks what a behaviour's outcome was before and
+    after a date. It must use these sessions and no others, or it would be comparing a
+    different population with the observation it is following up.
+    """
+    return _sessions(connection)
+
+
+def split_on(fact: str, sessions: list[_Session]) -> tuple[list[_Session], list[_Session]]:
+    """The two sides of one behaviour, by the same threshold `_observe` splits on.
+
+    Returns (did, did not). Empty on both sides for a fact nothing here knows or that
+    no session in the set has a value for; a caller shows nothing rather than guessing.
+    """
+    if fact.startswith(PURPOSE_PREFIX):
+        label = fact[len(PURPOSE_PREFIX) :]
+        labelled = [session for session in sessions if session.purpose]
+        return (
+            [session for session in labelled if session.purpose == label],
+            [session for session in labelled if session.purpose != label],
+        )
+    split = _BY_FACT.get(fact)
+    if split is None:
+        return ([], [])
+    held = [session for session in sessions if fact in session.values]
+    if not held:
+        return ([], [])
+    line, _ = _threshold(split, held)
+    with_side = [session for session in held if _above(split.rule, session.values[fact], line)]
+    without_side = [
+        session for session in held if not _above(split.rule, session.values[fact], line)
+    ]
+    return (with_side, without_side)
+
+
 def _observe(where: str, sessions: list[_Session]) -> list[Observation]:
     """Every observation one set of sessions supports, facts first and then labels."""
     found: list[Observation] = []

@@ -16,7 +16,9 @@ A repository where other people commit prints no outcome row at all; it prints w
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from typing import Any
 
 import click
 
@@ -32,6 +34,20 @@ from prudence.store import outcomes as outcomes_module
 
 DEFAULT_WINDOW = "90d"
 
+# The share keys `views.outcome_shares` adds, all None for a row it declines to compute.
+_NO_SHARES = dict.fromkeys(
+    (
+        "survival_7d",
+        "survival_30d",
+        "survival_90d",
+        "survival_head",
+        "survival_head_anywhere",
+        "blame_head",
+        "reworked_share",
+        "fact_version",
+    )
+)
+
 
 @click.command()
 @click.option(
@@ -43,14 +59,16 @@ DEFAULT_WINDOW = "90d"
     help="How far back to look, by the session's first record.",
 )
 @click.option("--project", "project", metavar="NAME", help="One repository, by name or key.")
-def outcomes(window: str, project: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the same numbers as JSON.")
+def outcomes(window: str, project: str | None, as_json: bool) -> None:
     """Show survival and rework per session, with the coverage behind each figure."""
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
     connection = db.connect()
     try:
         repo_key = _repo_key(connection, project)
-        click.echo(render(connection, window, repo_key))
+        data = summary(connection, window, repo_key)
+        click.echo(json.dumps(data, indent=2) if as_json else render(data))
     except sqlite3.OperationalError as error:
         raise click.ClickException(
             f"The derived tables are not built yet ({error}). Run `prudence ingest`."
@@ -59,8 +77,13 @@ def outcomes(window: str, project: str | None) -> None:
         connection.close()
 
 
-def render(connection: sqlite3.Connection, window: str, repo_key: str | None) -> str:
-    """The per-session table, the per-repository totals, and what the words mean."""
+def summary(connection: sqlite3.Connection, window: str, repo_key: str | None) -> dict[str, Any]:
+    """Everything the page is made of, before any of it is laid out.
+
+    `render` below draws it and `--json` prints it as it is, so a surface reading the
+    JSON sees the same rows the table does, including the withheld repositories, which
+    are part of the answer and not a footnote.
+    """
     since = views.resolve_date(window)
     query = "SELECT session_id, repo_key, first_at FROM session WHERE first_at >= ?"
     parameters: list[str] = [since]
@@ -68,8 +91,18 @@ def render(connection: sqlite3.Connection, window: str, repo_key: str | None) ->
         query += " AND repo_key = ?"
         parameters.append(repo_key)
     rows = list(connection.execute(query + " ORDER BY first_at", parameters))
+    head = {"window": window, "since": since, "repo_key": repo_key}
     if not rows:
-        return f"No session in the last {window}."
+        return {
+            **head,
+            "sessions": 0,
+            "credited_sessions": 0,
+            "withheld": [],
+            "by_session": [],
+            "by_project": [],
+            "observations": [],
+            "notes": [],
+        }
 
     ids = [row["session_id"] for row in rows]
     fates = views.outcomes_map(connection, ids)
@@ -78,47 +111,88 @@ def render(connection: sqlite3.Connection, window: str, repo_key: str | None) ->
     notes = views.suppression_notes(connection)
 
     withheld = sorted(set(notes) & {row["repo_key"] for row in rows})
+    by_session = [
+        {
+            "session_id": row["session_id"],
+            "project": names.get(row["repo_key"], row["repo_key"] or "unassigned"),
+            **_counts(fates[row["session_id"]], credited.get(row["session_id"], {})),
+        }
+        for row in rows
+        if fates.get(row["session_id"])
+    ]
+    per_repo = views.outcomes_by_repository(connection, ids)
+    by_project = [
+        {"repo_key": key, "project": names.get(key, key), **_counts(totals, totals)}
+        for key, totals in sorted(per_repo.items(), key=lambda item: names.get(item[0], item[0]))
+    ]
+    return {
+        **head,
+        "sessions": len(rows),
+        "credited_sessions": len(by_session),
+        "withheld": [
+            {"repo_key": key, "project": names.get(key, key), "note": notes[key]}
+            for key in withheld
+        ],
+        "by_session": by_session,
+        "by_project": by_project,
+        "observations": _observations(
+            connection, repo_key, {row["repo_key"] for row in rows}, names
+        ),
+        "notes": _footer(len(by_session), len(rows), window),
+    }
+
+
+def render(data: dict[str, Any]) -> str:
+    """The per-session table, the per-repository totals, and what the words mean."""
+    if not data["sessions"]:
+        return f"No session in the last {data['window']}."
+
     lines = []
-    for key in withheld:
+    for held in data["withheld"]:
         lines.append(
-            f"{names.get(key, key)}: no outcome facts, because {notes[key]}. Survival there "
+            f"{held['project']}: no outcome facts, because {held['note']}. Survival there "
             "would be about somebody else's code as much as yours. An identity is yours when "
             "it committed inside one of your sessions, or is a repository's majority author."
         )
-    if withheld:
+    if data["withheld"]:
         lines.append("")
     lines.append(_header())
-    shown = 0
-    for row in rows:
-        totals = fates.get(row["session_id"])
-        if not totals:
-            continue
-        shown += 1
-        lines.append(
-            _row(
-                row["session_id"][:8],
-                names.get(row["repo_key"], row["repo_key"] or "unassigned"),
-                totals,
-                credited.get(row["session_id"], {}),
-            )
-        )
-    if not shown:
+    for cell in data["by_session"]:
+        lines.append(_row(cell["session_id"][:8], cell["project"], cell))
+    if not data["by_session"]:
         lines.append("  no session in this window is credited with a line that could be followed")
 
     lines.append("")
     lines.append("per repository")
     lines.append(_header())
-    per_repo = views.outcomes_by_repository(connection, ids)
-    for key, totals in sorted(per_repo.items(), key=lambda item: names.get(item[0], item[0])):
-        lines.append(_row("", names.get(key, key), totals, totals))
-    for key in withheld:
-        lines.append(f"  {names.get(key, key):<16} suppressed, see the note above")
+    for cell in data["by_project"]:
+        lines.append(_row("", cell["project"], cell))
+    for held in data["withheld"]:
+        lines.append(f"  {held['project']:<16} suppressed, see the note above")
     lines.append("")
-    lines.extend(_footer(shown, len(rows), window))
+    lines.extend(data["notes"])
     lines.append("")
     lines.append("observations")
-    lines.extend(_observations(connection, repo_key, {row["repo_key"] for row in rows}, names))
+    rows = data["observations"]
+    lines.extend(observation_block(rows, {row["repo_key"]: row["project"] for row in rows}))
     return "\n".join(lines)
+
+
+def _counts(totals: dict[str, int], counted: dict) -> dict[str, Any]:
+    """One row's fate counters, the shares they make, and the credit behind them.
+
+    The same shape `views.outcome_shares` gives the MCP server, so a surface reading
+    either sees one vocabulary. A row with nothing measured keeps the keys and answers
+    None, because a mark that has not arrived is not a zero.
+    """
+    fate = {key: totals.get(key, 0) for key in views.FATE_KEYS}
+    shares = views.outcome_shares(fate) or {**views.empty_fate(), **_NO_SHARES}
+    return {
+        **shares,
+        "coverage": counted.get("coverage"),
+        "commits_fact": counted.get("fact", 0),
+        "commits_inferred": counted.get("inferred", 0),
+    }
 
 
 def _observations(
@@ -126,7 +200,7 @@ def _observations(
     repo_key: str | None,
     keys: set[str],
     names: dict[str, str],
-) -> list[str]:
+) -> list[dict[str, Any]]:
     """The join, for the repositories this table speaks about.
 
     The observation rows are over the whole store rather than over the window, because a
@@ -141,7 +215,7 @@ def _observations(
             for row in views.observations(connection)
             if row["repo_key"] in keys or row["repo_key"] == observations_module.POOLED
         ]
-    return observation_block(rows, names)
+    return [{**row, "project": names.get(row["repo_key"])} for row in rows]
 
 
 def _header() -> str:
@@ -151,15 +225,15 @@ def _header() -> str:
     )
 
 
-def _row(session: str, repository: str, totals: dict[str, int], counted: dict) -> str:
+def _row(session: str, repository: str, cell: dict[str, Any]) -> str:
     return (
-        f"{session:<9} {repository[:16]:<16} {totals['lines']:>7} "
-        f"{_cell(totals['alive_7d'], totals['measured_7d']):>14} "
-        f"{_cell(totals['alive_30d'], totals['measured_30d']):>14} "
-        f"{_cell(totals['alive_90d'], totals['measured_90d']):>14} "
-        f"{_cell(totals['alive_head'], totals['lines']):>14} "
-        f"{_percent(views.share(totals['reworked'], totals['lines'])):>7} "
-        f"{_percent(counted.get('coverage')):>9}  {_method(counted)}"
+        f"{session:<9} {repository[:16]:<16} {cell['lines']:>7} "
+        f"{_cell(cell['alive_7d'], cell['measured_7d']):>14} "
+        f"{_cell(cell['alive_30d'], cell['measured_30d']):>14} "
+        f"{_cell(cell['alive_90d'], cell['measured_90d']):>14} "
+        f"{_cell(cell['alive_head'], cell['lines']):>14} "
+        f"{_percent(cell['reworked_share']):>7} "
+        f"{_percent(cell['coverage']):>9}  {_method(cell)}"
     )
 
 
@@ -174,10 +248,8 @@ def _percent(value: float | None) -> str:
     return "-" if value is None else f"{value * 100:.0f}%"
 
 
-def _method(counted: dict) -> str:
-    if not counted:
-        return ""
-    return f"{counted.get('fact', 0)} fact, {counted.get('inferred', 0)} inferred"
+def _method(cell: dict[str, Any]) -> str:
+    return f"{cell['commits_fact']} fact, {cell['commits_inferred']} inferred"
 
 
 def _footer(shown: int, total: int, window: str) -> list[str]:

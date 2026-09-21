@@ -23,9 +23,11 @@ with no share and no rank beside it, because that is all it is.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import click
 
@@ -51,7 +53,8 @@ _UNITS = {"h": "hours", "d": "days", "w": "weeks"}
     help="How far back to look.",
 )
 @click.option("--project", "project", metavar="NAME", help="One repository, by name or key.")
-def sessions(window: str, project: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the same rows as JSON.")
+def sessions(window: str, project: str | None, as_json: bool) -> None:
     """List recent sessions with their edits, commands and attributed commits."""
     since = _since(window)
     if not database_file().exists():
@@ -59,7 +62,8 @@ def sessions(window: str, project: str | None) -> None:
     connection = db.connect()
     try:
         repo_key = _repo_key(connection, project)
-        click.echo(render(connection, since, repo_key, window))
+        data = summary(connection, since, repo_key, window)
+        click.echo(json.dumps(data, indent=2) if as_json else render(data))
     except sqlite3.OperationalError as error:
         raise click.ClickException(
             f"The derived tables are not built yet ({error}). Run `prudence ingest`."
@@ -68,8 +72,15 @@ def sessions(window: str, project: str | None) -> None:
         connection.close()
 
 
-def render(connection: sqlite3.Connection, since: str, repo_key: str | None, window: str) -> str:
-    """The table, built from the derived tables alone."""
+def summary(
+    connection: sqlite3.Connection, since: str, repo_key: str | None, window: str
+) -> dict[str, Any]:
+    """One dictionary per session, from the derived tables alone.
+
+    `render` lays these out as the table and `--json` prints them as they are. A count
+    that does not exist is None rather than 0 here as well: no usage row means no token
+    number, and a thirty-day mark still in the future is not a death.
+    """
     names = {row["repo_key"]: row["name"] for row in connection.execute("SELECT * FROM repository")}
     query = (
         "SELECT session_id, repo_key, first_at, capture_level, notes FROM session"
@@ -80,8 +91,9 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
         query += " AND repo_key = ?"
         parameters.append(repo_key)
     rows = list(connection.execute(query + " ORDER BY first_at", parameters))
+    head = {"window": window, "since": since, "repo_key": repo_key}
     if not rows:
-        return f"No session in the last {window}."
+        return {**head, "sessions": [], "notes": []}
 
     ids = [row["session_id"] for row in rows]
     sittings = _sittings(connection, ids)
@@ -93,46 +105,74 @@ def render(connection: sqlite3.Connection, since: str, repo_key: str | None, win
     fates = views.outcomes_map(connection, ids)
     purposes = views.purpose_map(connection, ids)
 
+    listed = []
+    for row in rows:
+        session_id = row["session_id"]
+        counted = credited.get(session_id, EMPTY)
+        totals = fates.get(session_id)
+        listed.append(
+            {
+                "session_id": session_id,
+                "repo_key": row["repo_key"],
+                "project": names.get(row["repo_key"], row["repo_key"] or "unassigned"),
+                "started_at": row["first_at"],
+                "purpose": purposes.get(session_id),
+                "sittings": sittings.get(session_id, 1),
+                "prompts": turns.get(session_id, 0),
+                "edits": edits.get(session_id, 0),
+                "commands": commands.get(session_id, 0),
+                "tokens": tokens.get(session_id),
+                "commits_fact": counted["fact"],
+                "commits_inferred": counted["inferred"],
+                "commits_uncertain": counted["uncertain"],
+                "coverage": counted["coverage"],
+                "survival_30d": (
+                    views.share(totals["alive_30d"], totals["measured_30d"]) if totals else None
+                ),
+                "capture_level": row["capture_level"],
+                "capture_notes": row["notes"],
+            }
+        )
+    return {**head, "sessions": listed, "notes": _footer(len(rows), window)}
+
+
+def render(data: dict[str, Any]) -> str:
+    """The table, from `summary` and nothing else."""
+    if not data["sessions"]:
+        return f"No session in the last {data['window']}."
     lines = [
         f"{'session':<10} {'repository':<20} {'started':<16} {'purpose':<13} {'sit':>4} "
         f"{'prompts':>8} {'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} "
         f"{'coverage':>9} {'alive 30d':>10}  notes"
     ]
-    for row in rows:
-        session_id = row["session_id"]
-        counted = credited.get(session_id, EMPTY)
-        name = names.get(row["repo_key"], row["repo_key"] or "unassigned")
+    for cell in data["sessions"]:
         lines.append(
-            f"{session_id[:8]:<10} {name[:20]:<20} {(row['first_at'] or '')[:16]:<16} "
-            f"{purposes.get(session_id, '-'):<13} "
-            f"{sittings.get(session_id, 1):>4} {turns.get(session_id, 0):>8} "
-            f"{edits.get(session_id, 0):>6} {commands.get(session_id, 0):>5} "
-            f"{thousands(tokens.get(session_id)):>7} {_commits(counted):>13} "
-            f"{_percent(counted['coverage']):>9} {_survival(fates.get(session_id)):>10}  "
-            f"{_notes(row)}"
+            f"{cell['session_id'][:8]:<10} {cell['project'][:20]:<20} "
+            f"{(cell['started_at'] or '')[:16]:<16} "
+            f"{(cell['purpose'] or '-'):<13} "
+            f"{cell['sittings']:>4} {cell['prompts']:>8} "
+            f"{cell['edits']:>6} {cell['commands']:>5} "
+            f"{thousands(cell['tokens']):>7} {_commits(cell):>13} "
+            f"{_percent(cell['coverage']):>9} {_percent(cell['survival_30d']):>10}  "
+            f"{_notes(cell)}"
         )
     lines.append("")
-    lines.append(
-        f"{len(rows)} sessions in the last {window}. Commits are counted as "
+    lines.extend(data["notes"])
+    return "\n".join(lines)
+
+
+def _footer(count: int, window: str) -> list[str]:
+    return [
+        f"{count} sessions in the last {window}. Commits are counted as "
         "fact (+inferred), with (?N) uncertain attributions beside them, which enter no "
         "statistic; coverage is the mean share of a counted commit's added lines that "
         "session wrote. Tokens are input, output and cache tokens together, in thousands. "
         "Alive 30d is the share of the session's counted lines still in the same file "
         "thirty days after the commit; a dash means that mark has not happened yet. "
-        "`prudence outcomes` prints the rest."
-    )
-    lines.append(
+        "`prudence outcomes` prints the rest.",
         "Purpose is a label from rules over the session's tool mix, not from reading the "
-        "conversation; `prudence usage` groups the tokens and the hours by it."
-    )
-    return "\n".join(lines)
-
-
-def _survival(totals: dict[str, int] | None) -> str:
-    """The 30-day survival share, or a dash when that mark has not been reached."""
-    if not totals:
-        return "-"
-    return _percent(views.share(totals["alive_30d"], totals["measured_30d"]))
+        "conversation; `prudence usage` groups the tokens and the hours by it.",
+    ]
 
 
 def _since(window: str) -> str:
@@ -178,13 +218,13 @@ def _sittings(connection: sqlite3.Connection, ids: list[str]) -> dict[str, int]:
     return result
 
 
-def _commits(counted: dict) -> str:
+def _commits(cell: dict[str, Any]) -> str:
     """`7 (+2) (?1)`: seven known, two inferred, one uncertain that is counted nowhere."""
-    text = str(counted["fact"])
-    if counted["inferred"]:
-        text += f" (+{counted['inferred']})"
-    if counted["uncertain"]:
-        text += f" (?{counted['uncertain']})"
+    text = str(cell["commits_fact"])
+    if cell["commits_inferred"]:
+        text += f" (+{cell['commits_inferred']})"
+    if cell["commits_uncertain"]:
+        text += f" (?{cell['commits_uncertain']})"
     return text
 
 
@@ -206,10 +246,10 @@ def _select(
     return rows
 
 
-def _notes(row: sqlite3.Row) -> str:
-    notes = [row["notes"]] if row["notes"] else []
-    if row["capture_level"] and row["capture_level"] != "full":
-        notes.insert(0, row["capture_level"])
+def _notes(cell: dict[str, Any]) -> str:
+    notes = [cell["capture_notes"]] if cell["capture_notes"] else []
+    if cell["capture_level"] and cell["capture_level"] != "full":
+        notes.insert(0, cell["capture_level"])
     return "; ".join(notes)
 
 

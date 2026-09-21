@@ -68,7 +68,7 @@ from prudence.store.views.sessions import (
     tool_calls_by_name,
     turn_ordinals,
 )
-from prudence.store.views.status import status_summary
+from prudence.store.views.status import mapped_by_fallback, status_summary
 from prudence.store.views.usage import (
     TOKEN_COLUMNS,
     _accumulate_usage,
@@ -114,6 +114,7 @@ __all__ = [
     "fate_by_commit",
     "hand_edits",
     "hook_timeline",
+    "mapped_by_fallback",
     "observations",
     "outcome_shares",
     "outcomes_by_repository",

@@ -18,10 +18,12 @@ from prudence.cli.menubar import menubar
 from prudence.cli.observations import observations
 from prudence.cli.outcomes import outcomes
 from prudence.cli.rebuild import rebuild
+from prudence.cli.review import review
 from prudence.cli.sample import sample
 from prudence.cli.sessions import sessions
 from prudence.cli.show import show
 from prudence.cli.status import status
+from prudence.cli.suggestions import suggestions
 from prudence.cli.usage import usage
 
 
@@ -38,6 +40,8 @@ main.add_command(sample)
 main.add_command(sessions)
 main.add_command(outcomes)
 main.add_command(observations)
+main.add_command(review)
+main.add_command(suggestions)
 main.add_command(usage)
 main.add_command(facts)
 main.add_command(classify)

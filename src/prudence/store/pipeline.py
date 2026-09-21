@@ -16,7 +16,9 @@ last of all, because they are the join of the two steps before them: a behaviour
 one side and what became of the lines on the other.
 
 `ingest` runs all nine; `rebuild` runs all but the archive, which is what makes a
-parser change a rebuild rather than a migration.
+parser change a rebuild rather than a migration. After the last step, and counting as
+none of them, `store/app_views.install_app_views` recreates the `app_*` read contract
+over whatever the nine have just written.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from dataclasses import dataclass, field
 from prudence import config as config_module
 from prudence.facts import registry as facts_registry
 from prudence.store import (
+    app_views,
     archive,
     attribution,
     commits,
@@ -59,6 +62,10 @@ class Result:
 def run(connection: sqlite3.Connection, config: config_module.Config, with_archive: bool) -> Result:
     """Build everything the store holds, from the sources each step is allowed to read."""
     result = Result()
+    # The `app_*` read contract comes down before the first step and goes back up after
+    # the last one: `derived.build` renames tables into place, and SQLite refuses a
+    # rename while a view in the schema points at a table the swap has dropped.
+    app_views.drop_app_views(connection)
     resolver = repos.resolver(connection, config)
     repositories = list(resolver.repositories.values())
     result.repositories = len(repositories)
@@ -78,4 +85,9 @@ def run(connection: sqlite3.Connection, config: config_module.Config, with_archi
     result.outcomes = outcomes.build(connection, repositories, key)
     result.facts = facts_registry.build(connection)
     result.observations = observations.build(connection)
+    # Last of all, and not a step: the `app_*` views are a read contract over the tables
+    # the nine steps have just finished writing. They are recreated here rather than
+    # migrated because `derived.build` swaps its tables by renaming, which leaves a view
+    # over the old name pointing at nothing.
+    app_views.install_app_views(connection)
     return result

@@ -41,7 +41,24 @@ src/prudence/
     sampling.py   the precision sample: the hard quarter, drawn, and every method's score
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the seven steps run in, so ingest and rebuild agree
-    views.py      the read queries `cli/show.py` and the MCP server share; no formatting
+    meta.py       the one key/value table a rebuild does not touch; holds the contract
+                   version the app checks before it renders anything
+    app_views.py  the `app_*` SQL views, the only thing a surface other than the CLI
+                   reads: the column lists are the contract, recreated after every
+                   ingest and rebuild
+    views/        the read queries every surface shares; no formatting: sessions.py,
+                   usage.py, outcomes.py, observations.py, search.py, status.py
+  reviews/        the review: stored rows, not a report generator. Beside `store/`
+                  rather than inside it, because a review is the user's own history of
+                  what they were told and is never rebuilt from the archive.
+    schema.py     the `review` and `suggestion` tables, and the shared `meta` markers
+    ranges.py     which range a review covers, and which commits its outcomes are about
+    readiness.py  whether enough has happened since the last review to write another
+    build.py      the sections, from `store/views` and nothing else, with every figure
+                   listed beside them as the `numbers` inventory
+    render.py     one stored review as Markdown; layout only
+    suggestions.py  the rows a review leaves open, their lifecycle and the follow-up
+    first_look.py   the ranked candidate facts printed after the first `ingest`
   facts/          one behaviour fact per module, each versioned, trusted and self-tested:
                   base.py (the `Fact`/`Label`/`Case` dataclasses), registry.py (the
                   explicit lists and the `session_fact` plus `session_label` build step,
@@ -126,6 +143,16 @@ docs/reference/store-schema.md   every table and column, with its trust level
    inside a project's view. An observation states what the two sides did and stops there:
    no advice, no ranking, no score, and no adjective (principle 3). `direction` says
    which side is higher, not which is better.
+14. **The Mac app reads only `app_*` views.** A screen that needs a number the engine
+   does not compute gets a new view in `store/app_views.py`, never a join in Swift;
+   `meta.app_contract_version` changes only when a view's columns change.
+15. **A review is a row, and the page is a rendering of it.** `prudence review` stores
+   the sections as JSON with an inventory of every figure that appears in them
+   (`reviews/build.numbers`), and `reviews/render.py` prints those texts and nothing
+   else numeric. No surface computes a review's arithmetic: the terminal, the Markdown
+   file under `reports/` and the app's review screen all read the same row. A review is
+   complete without a model; a model segment, when one exists, is stored beside the
+   numbers list and may use no figure that is not in it.
 
 ## Adding things
 

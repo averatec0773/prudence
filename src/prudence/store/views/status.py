@@ -11,7 +11,16 @@ from prudence.store.views.usage import purpose_counts, purpose_rule_version, usa
 def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     """What `prudence status` prints, as JSON. Ids, counts and versions only."""
     from prudence import config as config_module
-    from prudence.store import archive, attribution, commits, derived, outcomes, rewritten, spool
+    from prudence.store import (
+        archive,
+        attribution,
+        commits,
+        derived,
+        observations,
+        outcomes,
+        rewritten,
+        spool,
+    )
 
     config = config_module.load()
     repositories = []
@@ -64,6 +73,19 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         "by_label": purpose_counts(connection),
         "rule_version": purpose_rule_version(connection),
     }
+    result["commands_by_class"] = {
+        row["command_class"]: row["n"]
+        for row in connection.execute(
+            "SELECT command_class, COUNT(*) AS n FROM command"
+            " GROUP BY command_class ORDER BY n DESC"
+        )
+    }
+    result["observations"] = {
+        **observations.counts(connection),
+        "min_sessions": observations.MIN_SESSIONS,
+        "min_gap": observations.MIN_GAP,
+        "fact_version": observations.FACT_VERSION,
+    }
 
     harvested, commit_lines = commits.counts(connection)
     result["commits"] = {
@@ -95,6 +117,10 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
     result["unassigned_sessions"] = connection.execute(
         "SELECT COUNT(*) FROM session WHERE repo_key IS NULL"
     ).fetchone()[0]
+    result["mapped_by_fallback"] = mapped_by_fallback(connection)
+    result["resumed_sessions"] = connection.execute(
+        "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
+    ).fetchone()[0]
     result["unknown_record_types"] = [
         dict(row)
         for row in connection.execute(
@@ -102,3 +128,20 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         )
     ]
     return result
+
+
+def mapped_by_fallback(connection: sqlite3.Connection) -> dict[str, int]:
+    """How many sessions needed each fallback rule to find their repository.
+
+    The rule that found it is written into `session.notes` by `derived.build`, which is
+    where `cli/status.py` reads it from too; there is no column for it.
+    """
+    found: dict[str, int] = {}
+    for row in connection.execute(
+        "SELECT notes, COUNT(*) AS n FROM session WHERE notes LIKE '%repository by%' GROUP BY notes"
+    ):
+        for part in row["notes"].split("; "):
+            if part.startswith("repository by "):
+                method = part[len("repository by ") :]
+                found[method] = found.get(method, 0) + row["n"]
+    return found

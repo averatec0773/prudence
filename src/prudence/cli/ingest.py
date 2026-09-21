@@ -7,6 +7,10 @@ functions because only the first is irreversible.
 
 from __future__ import annotations
 
+import dataclasses
+import json
+from collections.abc import Mapping
+
 import click
 
 from prudence import config as config_module
@@ -14,11 +18,13 @@ from prudence import hooks as hooks_module
 from prudence.cli.render import size
 from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
+from prudence.reviews import first_look
 from prudence.store import db, pipeline
 
 
 @click.command()
-def ingest() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print what each step did as JSON.")
+def ingest(as_json: bool) -> None:
     """Record everything new from the enabled repositories."""
     config = config_module.load()
     if not config.repositories:
@@ -27,20 +33,47 @@ def ingest() -> None:
         )
     try:
         with db.ingest_lock():
-            _run(config)
+            _run(config, as_json)
     except db.Locked as error:
         raise click.ClickException(str(error)) from error
 
 
-def _run(config: config_module.Config) -> None:
+def _run(config: config_module.Config, as_json: bool = False) -> None:
     connection = db.connect()
     try:
         result = pipeline.run(connection, config, with_archive=True)
         _refresh_enabled(connection)
-        for line in report(result):
+        if as_json:
+            click.echo(json.dumps(summary(result), indent=2, default=str))
+            return
+        for line in report(result) + first_look.after_ingest(connection):
             click.echo(line)
     finally:
         connection.close()
+
+
+def summary(result: pipeline.Result) -> dict:
+    """Every step's own statistics, as the dataclasses carry them.
+
+    `report` below writes the same numbers as sentences. Nothing is reshaped on the way
+    out: a step's dataclass is its answer, so a new counter reaches the JSON the moment
+    it reaches the text. `dataclasses.asdict` is not used, because it rebuilds a
+    `Counter` from its own items and turns `{'fact': 3}` into `{('fact', 3): 1}`.
+    """
+    return _plain(result)
+
+
+def _plain(value):
+    """A dataclass tree as plain JSON types, with every mapping key a string."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _plain(getattr(value, field.name)) for field in dataclasses.fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _refresh_enabled(connection) -> None:

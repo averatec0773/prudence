@@ -39,17 +39,23 @@ WITHHELD = "file paths withheld at metadata-only"
 
 
 @click.command()
-@click.option("--session", "token", required=True, metavar="ID", help="Session id, or a prefix.")
+@click.option("--session", "token", metavar="ID", help="Session id, or a prefix.")
+@click.option("--review", "review_id", type=int, metavar="ID", help="A stored review, by id.")
 @click.option(
     "--files", "list_files", is_flag=True, help="List every archived file, not a summary."
 )
-def show(token: str, list_files: bool) -> None:
-    """Show everything recorded about one session, fact group by fact group."""
+def show(token: str | None, review_id: int | None, list_files: bool) -> None:
+    """Show everything recorded about one session, or one stored review."""
+    if (token is None) == (review_id is None):
+        raise click.UsageError("Pass one of --session or --review.")
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
     connection = db.connect()
     try:
-        session_id = resolve(connection, token)
+        if review_id is not None:
+            click.echo(_review(connection, review_id))
+            return
+        session_id = resolve(connection, str(token))
         click.echo(render(connection, session_id, list_files=list_files))
     except sqlite3.OperationalError as error:
         raise click.ClickException(
@@ -57,6 +63,19 @@ def show(token: str, list_files: bool) -> None:
         ) from error
     finally:
         connection.close()
+
+
+def _review(connection: sqlite3.Connection, review_id: int) -> str:
+    """One stored review, rendered from its row. Nothing is recomputed to print it."""
+    from prudence.reviews import render as review_render
+    from prudence.reviews import schema as review_schema
+
+    row = review_schema.review_by_id(connection, review_id)
+    if row is None:
+        known = review_schema.reviews(connection, limit=5)
+        listed = ", ".join(str(other["id"]) for other in known) or "none yet"
+        raise click.UsageError(f"There is no review {review_id}. Stored reviews: {listed}.")
+    return review_render.render(row)
 
 
 def resolve(connection: sqlite3.Connection, token: str) -> str:

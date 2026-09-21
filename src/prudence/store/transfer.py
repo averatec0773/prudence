@@ -32,6 +32,7 @@ from pathlib import Path
 
 from prudence import __version__
 from prudence.facts import registry as facts_registry
+from prudence.reviews import schema as review_schema
 from prudence.store import (
     attribution,
     commits,
@@ -69,6 +70,11 @@ HARVESTED_TABLES = (
     "observation",
 )
 ARCHIVE_TABLES = ("archive_file", "archive_chunk")
+
+# Rows a person's own history produced rather than the archive: the reviews they have
+# been given and the suggestions those left open. They are never rebuilt, so an export
+# that left them out would lose them for good.
+USER_TABLES = review_schema.TABLES
 
 BLOB_COLUMNS = {("archive_chunk", "data")}
 
@@ -118,7 +124,7 @@ def export(
     """Write the whole store to one `.tar.gz`. Reads only; changes nothing."""
     started = time.monotonic()
     stats = TransferStats(path=target, with_archive=with_archive)
-    tables = list(DERIVED_TABLES) + list(HARVESTED_TABLES)
+    tables = list(DERIVED_TABLES) + list(HARVESTED_TABLES) + list(USER_TABLES)
     if with_archive:
         tables += list(ARCHIVE_TABLES)
 
@@ -233,11 +239,14 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
     connection.executescript(rewritten.SCHEMA)
     connection.executescript(outcomes.SCHEMA)
     connection.executescript(observations.SCHEMA)
+    review_schema.ensure(connection)
 
 
 def _occupied(connection: sqlite3.Connection) -> dict[str, int]:
     counted: dict[str, int] = {}
-    for table in list(DERIVED_TABLES) + list(HARVESTED_TABLES) + list(ARCHIVE_TABLES):
+    for table in (
+        list(DERIVED_TABLES) + list(HARVESTED_TABLES) + list(USER_TABLES) + list(ARCHIVE_TABLES)
+    ):
         try:
             count = connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
         except sqlite3.OperationalError:

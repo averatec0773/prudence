@@ -15,7 +15,9 @@ the same store print the same page, and so that nothing on the page reads as a r
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from typing import Any
 
 import click
 
@@ -27,14 +29,16 @@ from prudence.store import observations as observations_module
 
 @click.command()
 @click.option("--project", "project", metavar="NAME", help="One repository, by name or key.")
-def observations(project: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the same rows as JSON.")
+def observations(project: str | None, as_json: bool) -> None:
     """Show how your outcomes differ between sessions with and without each behaviour."""
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
     connection = db.connect()
     try:
         repo_key = repo_key_for(connection, project)
-        click.echo(render(connection, repo_key))
+        data = summary(connection, repo_key)
+        click.echo(json.dumps(data, indent=2) if as_json else render(data))
     except sqlite3.OperationalError as error:
         raise click.ClickException(
             f"The derived tables are not built yet ({error}). Run `prudence ingest`."
@@ -43,13 +47,31 @@ def observations(project: str | None) -> None:
         connection.close()
 
 
-def render(connection: sqlite3.Connection, repo_key: str | None) -> str:
-    """Every observation, the projects first and the pooled rows in their own block."""
+def summary(connection: sqlite3.Connection, repo_key: str | None) -> dict[str, Any]:
+    """The rows, each carrying its project's name, and the thresholds they were kept by.
+
+    The sentence a reader sees is built by `store/observations.sentence` from these same
+    columns, so the JSON is the evidence and the text is one rendering of it.
+    """
     names = views.repository_names(connection)
     rows = views.observations(connection, repo_key)
-    lines = block(rows, names)
+    return {
+        "repo_key": repo_key,
+        "observations": [{**row, "project": names.get(row["repo_key"])} for row in rows],
+        "pooled": sum(1 for row in rows if row["repo_key"] == observations_module.POOLED),
+        "min_sessions": observations_module.MIN_SESSIONS,
+        "min_gap": observations_module.MIN_GAP,
+        "fact_version": observations_module.FACT_VERSION,
+        "notes": _footer(rows),
+    }
+
+
+def render(data: dict[str, Any]) -> str:
+    """Every observation, the projects first and the pooled rows in their own block."""
+    rows = data["observations"]
+    lines = block(rows, {row["repo_key"]: row["project"] for row in rows})
     lines.append("")
-    lines.extend(_footer(rows))
+    lines.extend(data["notes"])
     return "\n".join(lines)
 
 

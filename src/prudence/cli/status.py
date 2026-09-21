@@ -7,6 +7,7 @@ recognise: a format change is visible here before it matters anywhere else.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import click
@@ -30,9 +31,13 @@ from prudence.store import (
 
 
 @click.command()
-def status() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print the same numbers as JSON.")
+def status(as_json: bool) -> None:
     """Show what Prudence has recorded so far."""
     config = config_module.load()
+    if as_json:
+        click.echo(json.dumps(summary(), indent=2))
+        return
     lines = [f"prudence {__version__}", f"config: {config.path}", f"data:   {database_file()}", ""]
     if not config.repositories:
         lines.append("No repository is enabled. Run `prudence init` to choose what is recorded.")
@@ -62,6 +67,26 @@ def status() -> None:
         if connection is not None:
             connection.close()
     click.echo("\n".join(lines))
+
+
+def summary() -> dict:
+    """The same counts the text is built from, as `views.status_summary` returns them.
+
+    `views.status_summary` is where the MCP server already reads them, so `--json` is
+    that dictionary plus the two things only a command line shows: which engine wrote it
+    and where the files are.
+    """
+    connection = db.connect() if database_file().exists() else None
+    try:
+        return {
+            "engine_version": __version__,
+            "config_path": str(config_module.load().path),
+            "database_path": str(database_file()),
+            **views.status_summary(connection),
+        }
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _per_repo(connection: sqlite3.Connection | None, repo_key: str) -> tuple[int, int]:
@@ -235,15 +260,7 @@ def _mapping_lines(connection: sqlite3.Connection) -> list[str]:
     unassigned = connection.execute(
         "SELECT COUNT(*) FROM session WHERE repo_key IS NULL"
     ).fetchone()[0]
-    rows = connection.execute(
-        "SELECT notes, COUNT(*) AS n FROM session WHERE notes LIKE '%repository by%' GROUP BY notes"
-    ).fetchall()
-    recovered: dict[str, int] = {}
-    for row in rows:
-        for part in row["notes"].split("; "):
-            if part.startswith("repository by "):
-                method = part[len("repository by ") :]
-                recovered[method] = recovered.get(method, 0) + row["n"]
+    recovered = views.mapped_by_fallback(connection)
     lines = []
     if recovered:
         detail = ", ".join(f"{count} by {method}" for method, count in sorted(recovered.items()))
