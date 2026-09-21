@@ -314,7 +314,9 @@ the Settings tab strip, and the default and primary buttons.
 - **`Str` is a `CaseIterable` enum of keys.** `Str.menuToday.text` resolves it;
   `Str.menuStamped(a, b)` fills its `%n$@` placeholders; `Str.unitSessions.plural(3)` fills a
   plural entry with the count the rule chooses on. A test asserts every case resolves to
-  something other than its own key in both languages, and that no two read the same.
+  something other than its own key in both languages, and another that the Chinese is not the
+  English. (Nothing asserts that no two keys read the same, and nine pairs deliberately do: a
+  chart's axis label and a card's caption are two decisions that read alike today.)
 - **Plurals are plural entries**, `%lld` with `one` and `other` in English and `other` alone in
   Chinese, so the popover says "1 edit" and "3 edits" rather than "1 edits".
 - **Numbers and dates go through `Locale`** (`Fmt`). The two deliberate exceptions are marked
