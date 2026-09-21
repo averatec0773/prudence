@@ -1,5 +1,5 @@
 {
-  "note": "Generated from apps/mac/PrudenceKit/Sources/PrudenceUI/Resources/Localizable.xcstrings by apps/desktop/Scripts/strings.py. Do not edit by hand while apps/mac/ exists: run the script. When the Swift app is deleted, the script goes with it and this file becomes the source of truth.",
+  "note": "Generated from apps/mac/PrudenceKit/Sources/PrudenceUI/Resources/Localizable.xcstrings by apps/desktop/Scripts/strings.py, plus that script's DESKTOP_ONLY and DESKTOP_OVERRIDES. Do not edit by hand while apps/mac/ exists: add to those lists and run the script. When the Swift app is deleted, the script goes with it and this file becomes the source of truth.",
   "language": "zh-Hans",
   "strings": {
     "chart.coverageIs": "覆盖率 %1$@",

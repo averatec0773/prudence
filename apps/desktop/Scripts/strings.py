@@ -10,6 +10,13 @@ generator and the `--check` test exist only so that the two dictionaries cannot 
 while both apps are in the repository; when the Swift app is deleted, both go with it and
 nothing generates the JSON any more.
 
+**The desktop may diverge, and says where.** The Swift app is frozen, so a string the
+desktop needs and the catalog does not have cannot be added to the catalog, and a string
+the catalog gets wrong cannot be fixed there. Both are listed below in `DESKTOP_ONLY` and
+`DESKTOP_OVERRIDES`, and the generator carries them into the output. Anything not in those
+two lists must still match the catalog exactly, which is what stops silent drift while
+both apps exist.
+
 What it carries across, unchanged:
 
 * every key, in `en` and `zh-Hans`;
@@ -33,10 +40,34 @@ LANGUAGES = ("en", "zh-Hans")
 
 NOTE = (
     "Generated from apps/mac/PrudenceKit/Sources/PrudenceUI/Resources/Localizable.xcstrings "
-    "by apps/desktop/Scripts/strings.py. Do not edit by hand while apps/mac/ exists: run the "
-    "script. When the Swift app is deleted, the script goes with it and this file becomes "
-    "the source of truth."
+    "by apps/desktop/Scripts/strings.py, plus that script's DESKTOP_ONLY and "
+    "DESKTOP_OVERRIDES. Do not edit by hand while apps/mac/ exists: add to those lists and "
+    "run the script. When the Swift app is deleted, the script goes with it and this file "
+    "becomes the source of truth."
 )
+
+
+# Keys the desktop added after the Swift app was frozen. Nothing in `apps/mac/` uses them.
+DESKTOP_ONLY = {
+    # The Overview's hover line, its heat-cell label and its chart caption, each composed
+    # as one sentence per language rather than assembled from fragments in JavaScript.
+    "overview.weekReading": {"en": "%1$@: %2$@. %3$@", "zh-Hans": "%1$@：%2$@。%3$@"},
+    "overview.dayHours": {"en": "%1$@: %2$@", "zh-Hans": "%1$@：%2$@"},
+    "chart.pointReading": {
+        "en": "%1$@ %2$@ %3$@ of %4$@ lines",
+        "zh-Hans": "%1$@ %2$@ %3$@，基于 %4$@ 行",
+    },
+}
+
+# Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from
+# the Swift app that somebody has to carry back if that app is ever unfrozen.
+DESKTOP_OVERRIDES = {
+    # The catalog says "%1$@ 个会话" - "%1$@ sessions". The number is a count of **lines**
+    # in both places it is used (`measured_30d` and `lines` are both over `line_fate`), so
+    # the Chinese claimed a unit the figure does not have, on the one caption whose job is
+    # to make a share checkable. English was unit-free and is now explicit too.
+    "chart.sampleSize": {"en": "n=%1$@ lines", "zh-Hans": "n=%1$@ 行"},
+}
 
 
 def localisation(entry: dict, language: str, key: str):
@@ -61,7 +92,19 @@ def build() -> dict[str, dict]:
     out = {}
     for language in LANGUAGES:
         table = {key: localisation(entry, language, key) for key, entry in sorted(strings.items())}
-        out[language] = {"note": NOTE, "language": language, "strings": table}
+        for key, values in DESKTOP_OVERRIDES.items():
+            if key not in table:
+                raise KeyError(f"{key} is an override for a key the catalog does not have")
+            table[key] = values[language]
+        for key, values in DESKTOP_ONLY.items():
+            if key in table:
+                raise KeyError(f"{key} is listed as desktop-only but the catalog has it")
+            table[key] = values[language]
+        out[language] = {
+            "note": NOTE,
+            "language": language,
+            "strings": dict(sorted(table.items())),
+        }
     return out
 
 
