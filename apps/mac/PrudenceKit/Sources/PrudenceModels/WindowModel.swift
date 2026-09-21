@@ -148,20 +148,50 @@ public struct WindowFilter: Sendable {
 @MainActor
 public final class WindowModel: ObservableObject {
 
-    @Published public var section: MainSection = .overview
+    /// Where the window was left, remembered across launches.
+    ///
+    /// The sidebar item and the two pickers, in `UserDefaults` beside the other settings. A
+    /// window that reopens on Overview with the default range after the reader spent the
+    /// session on Observations for one project is a window that forgets what they were doing;
+    /// the size and the position are remembered by `setFrameAutosaveName`, and this is the
+    /// rest of the same idea. Nothing here is a *setting*: it is state, so it has no screen
+    /// and no way to be reset other than by using the window.
+    public enum Memory {
+        public static let section = "window.section"
+        public static let project = "window.project"
+        public static let range = "window.range"
+        public static let review = "window.review"
+    }
+
+    @Published public var section: MainSection = .overview {
+        didSet { if section != oldValue { remember(section.rawValue, as: Memory.section) } }
+    }
     @Published public var range: ChartRange = .eightWeeks {
-        didSet { if range != oldValue { selectedWeek = nil } }
+        didSet {
+            guard range != oldValue else { return }
+            selectedWeek = nil
+            remember(range.rawValue, as: Memory.range)
+        }
     }
     /// nil is "All projects".
     @Published public var project: String? {
-        didSet { if project != oldValue { selectedWeek = nil } }
+        didSet {
+            guard project != oldValue else { return }
+            selectedWeek = nil
+            remember(project, as: Memory.project)
+        }
     }
     /// The ISO week a bar on the Overview's stacked chart was clicked on, or nil for the whole
     /// range. Cleared whenever the scope changes, because a week that is no longer in the
     /// range would filter the cards down to nothing with no visible reason.
     @Published public var selectedWeek: String?
     /// Which stored review the Review screen is showing. nil is the newest.
-    @Published public var selectedReview: Int?
+    @Published public var selectedReview: Int? {
+        didSet {
+            guard selectedReview != oldValue else { return }
+            remember(selectedReview.map(String.init), as: Memory.review)
+        }
+    }
 
     @Published public private(set) var data: WindowData = .empty
     @Published public private(set) var storeError: String?
@@ -175,14 +205,50 @@ public final class WindowModel: ObservableObject {
     private let engine: Engine
     private let clock: () -> Date
 
+    /// True while the remembered state is being put back, so restoring does not write itself
+    /// out again and a fresh install is not given a set of defaults it never chose.
+    private var restoring = false
+
     public init(
         settings: AppSettings,
         engine: Engine? = nil,
-        clock: @escaping () -> Date = Date.init
+        clock: @escaping () -> Date = Date.init,
+        restoringMemory: Bool = true
     ) {
         self.settings = settings
         self.clock = clock
         self.engine = engine ?? Engine(settingsOverride: settings.storedEngineOverride)
+        if restoringMemory { restore() }
+    }
+
+    /// Put back where the window was left. A remembered value this build no longer
+    /// understands — a range that was renamed, a project that has gone — is ignored rather
+    /// than forced, so the window opens on a screen that exists.
+    private func restore() {
+        restoring = true
+        defer { restoring = false }
+        let defaults = settings.defaults
+        if let raw = defaults.string(forKey: Memory.section),
+            let remembered = MainSection(rawValue: raw)
+        {
+            section = remembered
+        }
+        if let raw = defaults.string(forKey: Memory.range),
+            let remembered = ChartRange(rawValue: raw)
+        {
+            range = remembered
+        }
+        project = defaults.string(forKey: Memory.project)
+        selectedReview = defaults.string(forKey: Memory.review).flatMap(Int.init)
+    }
+
+    private func remember(_ value: String?, as key: String) {
+        guard !restoring else { return }
+        if let value {
+            settings.defaults.set(value, forKey: key)
+        } else {
+            settings.defaults.removeObject(forKey: key)
+        }
     }
 
     // MARK: - what the screens read
@@ -223,10 +289,6 @@ public final class WindowModel: ObservableObject {
     }
 
     /// The observation rows for the chosen scope, biggest gap first.
-    ///
-    /// Under "All projects" only the pooled rows are shown, because a row about one project
-    /// shown under a heading that says every project would be read as a statement about all
-    /// of them, which is exactly what principle 2 forbids. Choose a project to see its own.
     public var observations: [ObservationModel] {
         observationRows.map(ObservationModel.init(row:))
     }
@@ -236,11 +298,48 @@ public final class WindowModel: ObservableObject {
     /// The screen composes each sentence in the interface language from these columns
     /// (`PrudenceUI/ObservationText`), so it needs the row rather than the finished English
     /// `ObservationModel` carries.
+    ///
+    /// With a project chosen this is that project's own rows and nothing else. Under "All
+    /// projects" it is **every** row, pooled and per project alike; which of them is a
+    /// statement about all the projects and which is about one is a question of *labelling*,
+    /// and the screen answers it by putting the pooled rows under "Across your projects" and
+    /// each project's under its own name. Batch 2 answered it by dropping the project rows,
+    /// which left the founder's own store showing an empty screen on the tab whose whole job
+    /// is to show what was observed.
     public var observationRows: [AppObservationRow] {
         data.observations
-            .filter { project == nil ? $0.isPooled : (!$0.isPooled && $0.project == project) }
+            .filter { project == nil || (!$0.isPooled && $0.project == project) }
             .sorted {
                 $0.gap == $1.gap ? $0.observationId < $1.observationId : $0.gap > $1.gap
+            }
+    }
+
+    /// The pooled rows alone, which is what "Across your projects" is over.
+    public var pooledObservationRows: [AppObservationRow] {
+        observationRows.filter(\.isPooled)
+    }
+
+    /// The per-project rows under "All projects", one bucket per project, each bucket biggest
+    /// gap first and the buckets themselves ordered by their own largest gap.
+    ///
+    /// A project with no name falls back to its repo key, which is ugly and identifies the
+    /// bucket; it is never merged with another project's rows.
+    public var projectObservationRows: [(project: String, rows: [AppObservationRow])] {
+        var order: [String] = []
+        var byProject: [String: [AppObservationRow]] = [:]
+        for row in observationRows where !row.isPooled {
+            let name = row.project ?? row.repoKey
+            if byProject[name] == nil { order.append(name) }
+            byProject[name, default: []].append(row)
+        }
+        return
+            order
+            .map { (project: $0, rows: byProject[$0] ?? []) }
+            .sorted { left, right in
+                let leftGap = left.rows.map(\.gap).max() ?? 0
+                let rightGap = right.rows.map(\.gap).max() ?? 0
+                return leftGap == rightGap
+                    ? left.project < right.project : leftGap > rightGap
             }
     }
 
@@ -336,9 +435,13 @@ public final class WindowModel: ObservableObject {
         notReadyReason: String? = nil,
         settings: AppSettings? = nil
     ) -> WindowModel {
+        // No memory: a screenshot is of the state the caller asked for, not of whatever the
+        // machine that ran the harness last left behind.
         let model = WindowModel(
             settings: settings
-                ?? AppSettings(defaults: UserDefaults(suiteName: "dev.prudence.preview") ?? .standard)
+                ?? AppSettings(
+                    defaults: UserDefaults(suiteName: "dev.prudence.preview") ?? .standard),
+            restoringMemory: false
         )
         model.data = data
         model.section = section

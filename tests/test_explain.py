@@ -237,6 +237,42 @@ def test_explain_adds_a_segment_to_a_review_written_without_one(lab, tmp_path, m
     assert "no review 9" in missing.output
 
 
+def test_the_app_review_view_carries_the_segment_language(lab, tmp_path, monkeypatch) -> None:
+    """Contract 3: the app reads which language the stored segment was written in.
+
+    A review with no segment has no language either, which is a missing value and not an
+    empty string: the app shows nothing rather than a label it invented.
+    """
+    from prudence.store import app_views
+
+    record_one_session(lab)
+    runner = CliRunner()
+    assert runner.invoke(main, ["review", *RANGE, "--force"]).exit_code == 0
+
+    connection = db.connect()
+    stored = schema.sections_of(schema.review_by_id(connection, 1))
+    assert app_views.columns(connection, "app_review") == app_views.APP_VIEWS["app_review"]
+    before = connection.execute("SELECT * FROM app_review WHERE id = 1").fetchone()
+    assert before["segment_language"] is None, "no segment, no language"
+    _record(tmp_path / "fixtures", stored, ZH_SEGMENT, language="zh-Hans")
+    connection.close()
+    _use_recorded(monkeypatch, tmp_path / "fixtures")
+
+    added = runner.invoke(main, ["explain", "1", "--language", "zh-Hans"])
+    assert added.exit_code == 0, added.output
+
+    connection = db.connect()
+    try:
+        row = connection.execute("SELECT * FROM app_review WHERE id = 1").fetchone()
+        assert row["segment_language"] == "zh-Hans"
+        assert row["segment_model"] == "recorded-haiku"
+        assert row["segment_text"].startswith(ZH_SEGMENT[:6])
+        # The same value the stored row carries: the view selects it, it does not derive it.
+        assert schema.segment_of(schema.review_by_id(connection, 1))["language"] == "zh-Hans"
+    finally:
+        connection.close()
+
+
 def test_review_without_explain_is_a_whole_review(lab) -> None:
     record_one_session(lab)
     result = CliRunner().invoke(main, ["review", *RANGE, "--force"])

@@ -28,7 +28,11 @@ APP_CONTRACT_VERSION_KEY = "app_contract_version"
 # `.sentence`, and the two new views `app_commits_by_day` and `app_review`. Nothing was
 # removed or renamed, so the bump is what tells an older app that there is more to read,
 # not that what it already reads has moved.
-APP_CONTRACT_VERSION = "2"
+#
+# 3 (M4 batch 3): `app_observation.threshold_value` and `.threshold_op`, the split as a
+# number and an operator beside the words already in `threshold_text`, and
+# `app_review.segment_language`. Appended at the end of each list for the same reason.
+APP_CONTRACT_VERSION = "3"
 
 
 def ensure_meta(connection: sqlite3.Connection) -> None:

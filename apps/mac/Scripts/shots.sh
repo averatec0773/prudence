@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Render the shipping views off-screen into shots/.
 #
-# Every screen comes in light and dark and in English and Simplified Chinese, and the two
-# surfaces that have a material come in Standard and Glass as well:
+# Every screen comes in light and dark and in English and Simplified Chinese, the two surfaces
+# that have a material come in Standard and Glass as well, and the popover comes in both
+# primary-button variants on top of that:
 #
-#   menu-{light,dark}-{en,zh}[-glass].png          the dropdown, variant C with captions
+#   menu-{light,dark}-{en,zh}[-glass]-primary{A,B}.png   the dropdown, variant C with captions
 #   window-{light,dark}-{en,zh}[-glass].png        the whole window at its 900x600 floor
 #   overview-{light,dark}-{en,zh}.png              Overview A: cards, stacked bars, lines, heat
 #   review-{light,dark}-{en,zh}.png                Review B: every chart with its table open
@@ -12,10 +13,27 @@
 #   settings-{light,dark}-{en,zh}.png              Settings B, the General tab
 #   settings-data-{light,dark}-{en,zh}.png         Settings B, the Data tab
 #
-# Thirty-six PNGs, and the names have not changed since batch 1, so `.github/workflows/
-# mac-ci.yml` needs no edit. The `-glass` pair is the popover and the window because those are
-# the control and navigation layer; the screens inside the window are content and are opaque
-# under either material, so photographing them twice would produce two identical files.
+# Forty-four PNGs. The `-glass` pair is the popover and the window because those are the
+# control and navigation layer; the screens inside the window are content and are opaque under
+# either material, so photographing them twice would produce two identical files. `-primaryA`
+# and `-primaryB` are batch 3's two readings of the mockups' one sentence about the prominent
+# action, for the founder to choose between; only the popover gets both, because the variant
+# shows on the one prominent button per surface.
+#
+# The eight `menu-*` names are new; every other name is unchanged since batch 1.
+# `.github/workflows/mac-ci.yml` needs no edit either way, because it uploads the whole
+# directory rather than a list of files.
+#
+# Every run ends with the label audit: each button style, under each material, rendered with
+# its label and without it, failing if the two pictures are identical — which is what a label
+# covered by its own material looks like (`PrudenceUI/LabelAudit.swift`, batch 3).
+# PRUDENCE_SHOTS_ONSCREEN=1 makes it take those pictures through the window server, where macOS
+# 26's glass is composited rather than drawn as a no-op, and adds a real NSPopover case. It
+# needs a window server and the screen-recording permission, so it is off by default.
+#
+# The audit is a net and not a reproduction: LabelAudit.swift records that none of its three
+# forms caught the batch 3 popover bug when the broken code was put back, and that the check
+# for anything about the material is a picture of the running app (apps/mac/README.md).
 #
 # The three screen shots are taller than a window on purpose (batch 2): each of them now
 # carries several charts, and a shot cut off at 800 px would hide the ones a reviewer is being

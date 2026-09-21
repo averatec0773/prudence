@@ -125,26 +125,33 @@ func renderEverything() {
     /// are the control and navigation layer, so they are photographed under both Standard and
     /// Glass; the three screens inside the window and the standalone Settings sheet are drawn
     /// on content surfaces, which are opaque under either.
-    let shots: [(name: String, size: CGSize?, bothMaterials: Bool, view: () -> AnyView)] = [
-        ("menu", nil, true, { AnyView(MenuContentView(model: model, actions: MenuActions())) }),
-        // The window at the floor `MainWindowController` sets, which is where the layout is
-        // under the most pressure.
-        ("window", CGSize(width: 900, height: 600), true, { window(.overview) }),
-        ("overview", overviewSize, false, { window(.overview) }),
-        ("review", reviewSize, false, { window(.review) }),
-        ("observations", observationsSize, false, { window(.observations) }),
-        // Both tabs of Settings B. The Data tab holds the two path rows and the line the
-        // store says about itself, which is half the screen; a shot of General alone would
-        // leave the founder judging the half that has no numbers in it.
-        (
-            "settings", CGSize(width: 620, height: 470), false,
-            { settingsView(.general) }
-        ),
-        (
-            "settings-data", CGSize(width: 620, height: 470), false,
-            { settingsView(.data) }
-        ),
-    ]
+    let shots:
+        [(
+            name: String, size: CGSize?, bothMaterials: Bool, bothPrimaries: Bool,
+            view: () -> AnyView
+        )] = [
+            (
+                "menu", nil, true, true,
+                { AnyView(MenuContentView(model: model, actions: MenuActions())) }
+            ),
+            // The window at the floor `MainWindowController` sets, which is where the layout
+            // is under the most pressure.
+            ("window", CGSize(width: 900, height: 600), true, false, { window(.overview) }),
+            ("overview", overviewSize, false, false, { window(.overview) }),
+            ("review", reviewSize, false, false, { window(.review) }),
+            ("observations", observationsSize, false, false, { window(.observations) }),
+            // Both tabs of Settings B. The Data tab holds the two path rows and the line the
+            // store says about itself, which is half the screen; a shot of General alone would
+            // leave the founder judging the half that has no numbers in it.
+            (
+                "settings", CGSize(width: 620, height: 470), false, false,
+                { settingsView(.general) }
+            ),
+            (
+                "settings-data", CGSize(width: 620, height: 470), false, false,
+                { settingsView(.data) }
+            ),
+        ]
 
     let appearances: [(String, NSAppearance.Name)] = [("light", .aqua), ("dark", .darkAqua)]
     let languages: [(String, Language)] = [("en", .english), ("zh", .chineseSimplified)]
@@ -159,26 +166,137 @@ func renderEverything() {
                 var materials: [(String, Theme.Material)] = [("", .standard)]
                 if shot.bothMaterials { materials.append(("-glass", .glass)) }
                 for (materialSuffix, material) in materials {
-                    let name =
-                        "\(shot.name)-\(appearanceSuffix)-\(languageSuffix)\(materialSuffix).png"
-                    let url = directory.appendingPathComponent(name)
-                    // The language is forced around the whole render, not around building the
-                    // view: SwiftUI evaluates a body during layout, and `Str` resolves its
-                    // locale there.
-                    Localization.withLanguage(language) {
-                        render(
-                            shot.view().prudenceTheme(
-                                Theme(material: material, reduceTransparency: false)),
-                            size: shot.size,
-                            appearance: appearance,
-                            to: url
-                        )
+                    // The popover is photographed once per primary variant as well, so the
+                    // founder can put A and B side by side and pick one (batch 3). Every
+                    // other shot keeps the default, because the variant only shows on the one
+                    // prominent button per surface and a second copy of the Overview would be
+                    // two identical files.
+                    let variants: [(String, Theme.PrimaryVariant)] =
+                        shot.bothPrimaries
+                        ? [("-primaryA", .accent), ("-primaryB", .tinted)] : [("", .accent)]
+                    for (variantSuffix, primary) in variants {
+                        let name =
+                            "\(shot.name)-\(appearanceSuffix)-\(languageSuffix)"
+                            + "\(materialSuffix)\(variantSuffix).png"
+                        let url = directory.appendingPathComponent(name)
+                        // The language is forced around the whole render, not around building
+                        // the view: SwiftUI evaluates a body during layout, and `Str` resolves
+                        // its locale there.
+                        Localization.withLanguage(language) {
+                            render(
+                                shot.view().prudenceTheme(
+                                    Theme(
+                                        material: material,
+                                        reduceTransparency: false,
+                                        primary: primary)),
+                                size: shot.size,
+                                appearance: appearance,
+                                to: url
+                            )
+                        }
+                        print("wrote \(url.path)")
                     }
-                    print("wrote \(url.path)")
                 }
             }
         }
     }
+
+    auditLabels()
+}
+
+// MARK: - the check the founder's eyes had to do
+
+/// Every button style, under every material, asked whether its label still reaches the screen.
+///
+/// `PrudenceUI/LabelAudit` explains the method and its limits: off-screen this covers Standard,
+/// reduced transparency and the `NSVisualEffectView` fallback, and `PRUDENCE_SHOTS_ONSCREEN=1`
+/// makes it cover macOS 26's real glass too, by ordering the window in and taking the picture
+/// through the window server instead of through `cacheDisplay`, which draws `glassEffect` as a
+/// no-op. It runs on every `shots.sh`, because a harness that photographs a blank button and
+/// says nothing is a harness that already failed once.
+@MainActor
+func auditLabels() {
+    let onScreen = ProcessInfo.processInfo.environment["PRUDENCE_SHOTS_ONSCREEN"] != nil
+    let size = CGSize(width: 200, height: 40)
+    var blank: [String] = []
+    let styles: [(String, PrudenceButtonStyle)] = [
+        ("prudencePrimaryWide", .prudencePrimaryWide),
+        ("prudenceWide", .prudenceWide),
+        ("prudence", .prudence),
+        ("prudencePlain", .prudencePlain),
+    ]
+    for (name, style) in styles {
+        for material in Theme.Material.allCases {
+            for primary in Theme.PrimaryVariant.allCases {
+                for (appearanceName, dark) in [("light", false), ("dark", true)] {
+                    let theme = Theme(
+                        material: material, reduceTransparency: false, primary: primary)
+                    let visible = LabelAudit.labelIsVisible(
+                        "Review now",
+                        size: size,
+                        appearance: NSAppearance(named: dark ? .darkAqua : .aqua),
+                        onScreen: onScreen
+                    ) { label in
+                        Button(label) {}
+                            .buttonStyle(style)
+                            .prudenceTheme(theme)
+                            .frame(width: size.width, height: size.height)
+                    }
+                    if !visible {
+                        blank.append(
+                            "\(name) \(material.rawValue) \(primary.rawValue) \(appearanceName)")
+                    }
+                }
+            }
+        }
+    }
+
+    // And the popover's own footer, in a real `NSPopover`, inside the `GlassEffectContainer`
+    // it really sits in. **This is the case that matters.** A single button was never the bug
+    // and neither was an ordinary window: the same broken code drew perfectly readable labels
+    // in both, even photographed through the window server. It took the popover's own backing
+    // material under the cluster's merged glass pass to make the labels disappear, which is
+    // why the founder saw it and nothing else did.
+    let footerSize = CGSize(width: 328, height: 110)
+    if onScreen {
+        for (appearanceName, dark) in [("light", false), ("dark", true)] {
+            let visible = LabelAudit.labelIsVisibleInAPopover(
+                "Review now",
+                size: footerSize,
+                appearance: NSAppearance(named: dark ? .darkAqua : .aqua)
+            ) { label in
+                VStack(spacing: Space.s2) {
+                    Button(label) {}.buttonStyle(.prudencePrimaryWide)
+                    HStack(spacing: Space.s2) {
+                        Button(label) {}
+                        Button(label) {}
+                    }
+                    .buttonStyle(.prudenceWide)
+                }
+                .prudenceGlassCluster(spacing: Space.s2)
+                .padding(Space.popoverPadding)
+                .frame(width: footerSize.width)
+                // The nesting the real popover has: glass on the whole content, and glass
+                // again on each control inside it.
+                .prudenceGlass(.popover, cornerRadius: 0)
+                .prudenceTheme(Theme(material: .glass))
+            }
+            if !visible {
+                blank.append("the popover's footer cluster, in an NSPopover, \(appearanceName)")
+            }
+        }
+    }
+    let how = onScreen ? "on screen, through the window server" : "off screen"
+    guard blank.isEmpty else {
+        FileHandle.standardError.write(
+            Data(
+                ("label audit (\(how)) failed: these render identically with a label and "
+                    + "without one, so something is drawn over the text:\n  "
+                    + blank.joined(separator: "\n  ") + "\n").utf8))
+        exit(2)
+    }
+    let count = styles.count * 8 + (onScreen ? 2 : 0)
+    print("label audit (\(how)): \(count) renders, every label visible")
 }
 
 /// The same row with another `sections` payload on it.

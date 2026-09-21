@@ -25,19 +25,28 @@ import GRDB
 public final class Store: @unchecked Sendable {
 
     public let url: URL
+    /// Which contract this store turned out to be at. The rows decode the same either way;
+    /// a screen that wants to know whether a stored figure can be there at all asks this.
+    public let contractVersion: String
     private let queue: DatabaseQueue
 
-    /// Open the store at `url` and refuse it unless `meta.app_contract_version` is known.
-    public init(url: URL, expectedContractVersion: String = Contract.version) throws {
+    /// Open the store at `url` and refuse it unless `meta.app_contract_version` is one this
+    /// build renders.
+    ///
+    /// Two versions rather than one, because contract 3 is additive: every column it adds is
+    /// optional in `Rows.swift` and used only where it is present, so refusing a contract 2
+    /// store would be refusing a store this app can draw completely.
+    public init(url: URL, supporting versions: [String] = Contract.supported) throws {
         self.url = url
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw StoreError.databaseMissing(path: url.path)
         }
         queue = try Self.open(path: url.path)
         let found = try Self.contractVersion(in: queue)
-        guard found == expectedContractVersion else {
-            throw StoreError.contractMismatch(found: found, expected: expectedContractVersion)
+        guard let found, versions.contains(found) else {
+            throw StoreError.contractMismatch(found: found, expected: versions)
         }
+        contractVersion = found
     }
 
     /// Open whatever `StoreLocation` resolves to.

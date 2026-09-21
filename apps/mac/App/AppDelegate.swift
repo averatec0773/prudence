@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        Self.applyForcedAppearance()
         statusItem = StatusItemController(
             model: model,
             actions: MenuActions(
@@ -38,6 +39,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for the window at launch instead. Nothing a user does sets it.
         if ProcessInfo.processInfo.environment["PRUDENCE_OPEN_WINDOW"] != nil {
             openMainWindow()
+        }
+        // The same problem one step worse: a menu bar popover cannot be opened by script at
+        // all, and the popover is the surface whose material bug batch 3 had to photograph.
+        // `PRUDENCE_OPEN_POPOVER=1` shows it at launch so `screencapture` has something to
+        // take a picture of. Nothing a user does sets it.
+        if let mode = ProcessInfo.processInfo.environment["PRUDENCE_OPEN_POPOVER"] {
+            statusItem?.openPopover(watching: mode == "dismissable")
+        }
+    }
+
+    /// `PRUDENCE_FORCE_APPEARANCE=dark` (or `light`) pins the whole process's appearance.
+    ///
+    /// `defaults write -g AppleInterfaceStyle` changes the Mac, and `defaults write -app`
+    /// needs an installed, launch-services-known app, so neither is available to an agent
+    /// checking a build out of `build/dd`. This is the one hook that makes "the real app, in
+    /// dark" reproducible from a terminal. Unset, the app follows the system as before.
+    private static func applyForcedAppearance() {
+        switch ProcessInfo.processInfo.environment["PRUDENCE_FORCE_APPEARANCE"] {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
         }
     }
 

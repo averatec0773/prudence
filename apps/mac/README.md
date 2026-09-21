@@ -41,10 +41,41 @@ PRUDENCE_DATA_DIR=/tmp/prudence-copy PRUDENCE_CONFIG_DIR=/tmp/prudence-copy \
 
 The app honours the same environment variables `src/prudence/paths.py` honours, and passes them
 through to every CLI subprocess it starts, so an app pointed at a copy can never ingest into
-the real store. `PRUDENCE_OPEN_WINDOW=1` opens the main window at launch, which is how an agent
-with no way to click a menu bar item gets to see one. Quit from the dropdown, or kill the one
-process you started; never `pkill -f Prudence.app`, which would also take down a build somebody
-else is running.
+the real store. Quit from the dropdown, or kill the one process you started; never
+`pkill -f Prudence.app`, which would also take down a build somebody else is running.
+
+### Four hooks for looking at it
+
+None of them is reachable by anything a user does. They exist because an agent cannot click a
+menu bar item and there is no supported way to script one.
+
+| Variable | Does |
+| --- | --- |
+| `PRUDENCE_OPEN_WINDOW=1` | opens the main window at launch |
+| `PRUDENCE_OPEN_POPOVER=1` | opens the dropdown at launch and **leaves it open** for a screenshot |
+| `PRUDENCE_OPEN_POPOVER=dismissable` | the same, with the real dismissal monitors installed, for checking that a click outside closes it |
+| `PRUDENCE_FORCE_APPEARANCE=dark` | pins the whole process to dark (or `light`). `defaults write -g` changes the Mac and `defaults write -app` needs an installed app, so neither is available for a build in `build/dd` |
+
+Two things about the popover hook. It hangs the popover off a 1 pt anchor window rather than
+off the status item, because a second copy of the app with the same bundle identifier — which
+is what a worktree build beside the founder's own running app is — gets a status item that is
+never shown, and `NSPopover` cannot hang off a button nobody can see. And **launch it through
+`open`, not by exec'ing the binary**: a process started from an agent's shell has no window
+server session of its own, so no status item and no popover are created at all.
+
+```sh
+open -n build/dd/Build/Products/Debug/Prudence.app \
+  --env PRUDENCE_DATA_DIR=/tmp/prudence-copy \
+  --env PRUDENCE_CONFIG_DIR=/tmp/prudence-copy \
+  --env PRUDENCE_OPEN_POPOVER=1 \
+  --env PRUDENCE_FORCE_APPEARANCE=dark
+screencapture -x /tmp/screen.png        # then crop to the popover's own window bounds
+```
+
+That sequence is the check for anything about the **material**: the render harness draws
+through `cacheDisplay(in:to:)`, which has no backdrop to sample and draws macOS 26's
+`glassEffect` as a no-op, so a glass bug is invisible in every PNG it writes. See "The bug
+behind all of this" in [DESIGN.md](DESIGN.md).
 
 `Prudence.xcodeproj`, `build/`, `DerivedData/` and `shots/` are generated and gitignored. Never
 open Xcode's UI to add a file: add it to `App/` or `PrudenceKit/Sources/`, then run
@@ -80,12 +111,13 @@ stores it; `app_review.sections` is `json_extract(..., '$.sections')` out of the
 
 ## Screenshots
 
-`./Scripts/shots.sh` writes thirty-six PNGs: every screen in light and dark and in English and
-Simplified Chinese, and the two surfaces that have a material in Standard and Glass as well.
+`./Scripts/shots.sh` writes forty-four PNGs: every screen in light and dark and in English and
+Simplified Chinese, the two surfaces that have a material in Standard and Glass as well, and
+the popover in both primary-button variants on top of that.
 
 | shot | size | materials | what it is |
 | --- | --- | --- | --- |
-| `menu-{light,dark}-{en,zh}[-glass]` | fitted | both | the dropdown, variant C with captions |
+| `menu-{light,dark}-{en,zh}[-glass]-primary{A,B}` | fitted | both | the dropdown, variant C with captions, in both primary variants |
 | `window-{light,dark}-{en,zh}[-glass]` | 900x600 | both | the whole window at the floor `MainWindowController` sets |
 | `overview-{light,dark}-{en,zh}` | 1200x1500 | standard | Overview A: cards, stacked bars, lines, heat strip |
 | `review-{light,dark}-{en,zh}` | 1200x2600 | standard | Review B: every chart with its table open under it |
@@ -102,8 +134,20 @@ completely, which is the honest Standard look.
 The three screen shots are taller than a window because each of them now carries several
 charts, and a shot cut off at the window's height would hide the ones a reviewer is being asked
 about; `window` stays at the 900x600 floor, which is where the layout is under the most
-pressure. The names have not changed since batch 1, so `.github/workflows/mac-ci.yml` needs no
-edit.
+pressure. Only the eight `menu-*` names changed in batch 3, and
+`.github/workflows/mac-ci.yml` needs no edit either way, because it uploads the whole directory
+rather than a list of files.
+
+Every run ends with the **label audit**: each button style, under each material, rendered with
+its label and without it, failing if the two pictures are identical, which is what a label
+covered by its own material looks like. `PRUDENCE_SHOTS_ONSCREEN=1` makes it take those
+pictures through the window server, where macOS 26's glass is composited rather than drawn as
+a no-op; it needs a window server and the screen-recording permission, so it is off by default.
+
+**It is a net, not a reproduction.** `PrudenceUI/LabelAudit.swift` records which forms of the
+audit were run against the batch 3 bug with the broken code put back, and none of them caught
+it: that case needs the shipping app with a menu bar and an active application. The check for
+anything about the material is the screenshot procedure above.
 
 `PRUDENCE_SHOTS_DUMP=1` also prints the Overview's three cards and every week's token totals on
 standard output, for holding beside `prudence usage --last 60d` over the same store.
@@ -150,6 +194,7 @@ apps/mac/
       Charts/                      the seven chart types, one file each:
                                    StackedBarsChart, DonutChart, PairedBarsChart,
                                    ShareWithCoverageBar, LinesWithGaps, HeatStrip, CompareCard
+      LabelAudit.swift             does a control's label still reach the screen?
       Localization.swift, Fmt.swift   the String Catalog's keys, and Locale-aware numbers
       ObservationText.swift, ReviewText.swift   sentences composed per language
       Brand.swift                  the mark, from the package's copy of assets/brand
@@ -161,8 +206,12 @@ apps/mac/
 ## The window
 
 A `NavigationSplitView` with four entries, and one screen at a time. The window remembers its
-size (`setFrameAutosaveName`) and will not go below 900x600. The Dock icon appears while it is
-open and goes away when it closes (M3 plan, open question 1).
+size **and position** (`setFrameAutosaveName` plus `setFrameUsingName` after the content view
+is in) and will not go below 900x600; the sidebar item and the two pickers come back too
+(`WindowModel.Memory`). Cmd-1 to Cmd-4 move between the four entries, Cmd-R writes a review,
+Cmd-, opens Settings, and Esc closes the menu bar dropdown; the list is in
+[DESIGN.md](DESIGN.md). The Dock icon appears while the window is open and goes away when it
+closes (M3 plan, open question 1).
 
 **Overview** (variant A: one column, cards first). Three cards, then three charts, for the
 chosen project and range (8 weeks by default, or 90 days, or all). The cards are sessions in
@@ -197,9 +246,11 @@ answer shows the engine's own reason with a "Write anyway" button that adds `--f
 first, carrying the threshold that made the split and then one paired-bars row per outcome:
 the two medians, **`n` on each bar**, the gap in points under them, and the coverage and method
 line beside. Survival and rework of the same split share a card, because they are two readings
-of the same two groups of sessions. Under "All projects" only the pooled rows appear, labelled
-"across your projects": a row about one project under a heading that says every project would
-read as a statement about all of them.
+of the same two groups of sessions. Under "All projects" the pooled rows come first under
+"Across your projects" and then one heading per project, biggest gap first: a row about one
+project under a heading that says every project would read as a statement about all of them,
+and a heading is a cheaper answer to that than hiding the rows, which left the founder's own
+store showing an empty screen. A project picked in the picker still shows only its own.
 
 **Settings.** The same screen the menu bar opens, hosted in the sidebar.
 
@@ -233,9 +284,28 @@ that outrank layout are there too: glass never touches content, colour never mea
 bad, and a composed sentence is composed per language rather than translated.
 
 **4. The contract is checked before anything is rendered.** `Store.init` reads
-`meta.app_contract_version` and refuses anything but `2`, with an error carrying both versions
-and a sentence saying which side to update. No screen ever renders half a schema it does not
-understand.
+`meta.app_contract_version` and refuses anything outside `Contract.supported`, with an error
+carrying both the found version and the supported list and a sentence saying which side to
+update. No screen ever renders half a schema it does not understand.
+
+## The contract: 2 and 3, from one code path
+
+Contract 3 is **additive**, so this build renders both and refuses neither. Four view columns
+and three payload fields, every one of them decoded as an optional and used only where it is
+present, so the app and the engine can be upgraded in either order:
+
+- `app_observation.threshold_value` and `.threshold_op`, so an Observations card words its own
+  threshold instead of printing the engine's English;
+- `app_review.segment_language`, so a segment's language is read rather than guessed;
+- `with_n` and `without_n` on a review's observation numbers, so Review's paired bars carry the
+  same `n` Observations' do;
+- `value` and `previous_value` on the compared numbers, so `CompareCard` draws its bars from
+  figures rather than from the leading number of a printed cell.
+
+All four are the requests batch 2 wrote down. Each keeps its old behaviour as the fallback, and
+a null stays a null: a compared row whose page shows a dash gets no bars, not bars of zero.
+The two column tables live in `PrudenceStore/Contract.swift` as data, one per version, and a
+test compares the fixture's own contract against the matching one.
 
 ## The contract, and what moved to 2
 
@@ -260,14 +330,11 @@ needed:
 view still answers with exactly those columns in that order, so a Python change that forgets to
 bump the version fails in `swift test` rather than in front of the user.
 
-**Open against contract 2:** the Overview has no figure it wanted and could not have. The one
-thing the app still assembles itself is an observation's caveat line, `(coverage: 90%, method:
-4 fact, 3 inferred)`, which is three columns of the same row in a fixed shape rather than a
-restated rule; a `caveat` column beside `sentence` would remove even that. Batch 2's four
-requests, all of them about a stored review rather than about a view, are listed under
-"Contract requests" in [DESIGN.md](DESIGN.md): `with_n` and `without_n` on a review's
-observation numbers, a `value` on its `compared.*` numbers, a `segment_language` column, and a
-structured threshold beside `app_observation.threshold_text`.
+**Open against contract 3:** the one thing the app still assembles itself is an observation's
+caveat line, `(coverage: 90%, method: 4 fact, 3 inferred)`, which is three columns of the same
+row in a fixed shape rather than a restated rule; a `caveat` column beside `sentence` would
+remove even that. Batch 2's four requests are all answered at contract 3, and the table is in
+[DESIGN.md](DESIGN.md).
 
 ## Bundle identifier
 

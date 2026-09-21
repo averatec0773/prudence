@@ -77,35 +77,31 @@ public struct Panel<Content: View>: View {
 
 // MARK: - figures
 
-/// A caption and a value on one line, the popover's own row shape.
-public struct StatRow<Value: View>: View {
+/// A caption above its content, the popover's own block shape.
+///
+/// One column, not two. The caption is a line of its own in caption type and the content
+/// runs the full width under it, because a caption column beside the values gives the
+/// popover a two-column shape, which is the one thing variant C is not.
+public struct StatBlock<Content: View>: View {
 
     let caption: String
-    var captionWidth: CGFloat
-    @ViewBuilder var value: Value
+    @ViewBuilder var content: Content
 
-    public init(
-        _ caption: String, captionWidth: CGFloat = 108, @ViewBuilder value: () -> Value
-    ) {
+    public init(_ caption: String, @ViewBuilder content: () -> Content) {
         self.caption = caption
-        self.captionWidth = captionWidth
-        self.value = value()
+        self.content = content()
     }
 
     public var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Space.s2) {
-            // Two lines rather than an ellipsis: "Latest observation" is 108 pt in English
-            // and longer again in a language nobody has measured yet, and a caption that
-            // truncates is a caption that stopped labelling anything.
+        VStack(alignment: .leading, spacing: 4) {
             Text(caption)
                 .font(Type.caption)
                 .foregroundStyle(Ink.secondary)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(width: captionWidth, alignment: .leading)
-            value
+            content
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -165,9 +161,16 @@ public struct CoverageChip: View {
         Text(text)
             .font(Type.caption2.monospacedDigit())
             .foregroundStyle(Ink.secondary)
+            // A caveat that truncates is a caveat that stopped qualifying anything, and in
+            // the popover's 220 pt value column "coverage 93%, method: 642 fact, 25 inferred"
+            // does not fit on one line. Two lines in a rounded rectangle rather than one in a
+            // capsule, because a capsule with two lines of text in it is a lozenge.
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, Space.s2)
             .padding(.vertical, 3)
-            .background(Surface.sunken, in: Capsule())
+            .background(
+                Surface.sunken,
+                in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
 }
 

@@ -113,17 +113,33 @@ public struct WeekUsageModel: Equatable, Sendable {
     /// The week's active minutes, summed straight off `active_minutes`. A sum of one view
     /// column, which is the only arithmetic rule 2 allows a screen.
     public let activeMinutes: Double
+    /// Sessions in the same seven days, as **rows of `app_session_list`**, not as a sum of
+    /// `app_usage_by_purpose_day.sessions`: that column is per purpose per day, so summing it
+    /// would count one session once for every day and purpose it touched. Nil where the
+    /// caller had no session rows to count, because a missing count is not a zero (rule 10).
+    public let sessions: Int?
 
-    public init(top: [Slice], total: Int, all: [Slice]? = nil, activeMinutes: Double = 0) {
+    public init(
+        top: [Slice],
+        total: Int,
+        all: [Slice]? = nil,
+        activeMinutes: Double = 0,
+        sessions: Int? = nil
+    ) {
         self.top = top
         self.all = all ?? top
         self.total = total
         self.activeMinutes = activeMinutes
+        self.sessions = sessions
     }
 
     public static let topCount = 3
 
-    public init(rows: [AppUsageByPurposeDayRow], limit: Int = WeekUsageModel.topCount) {
+    public init(
+        rows: [AppUsageByPurposeDayRow],
+        sessions: Int? = nil,
+        limit: Int = WeekUsageModel.topCount
+    ) {
         var totals: [String: Int] = [:]
         for row in rows {
             totals[row.purpose, default: 0] += row.totalTokens ?? 0
@@ -131,7 +147,7 @@ public struct WeekUsageModel: Equatable, Sendable {
         let minutes = rows.reduce(0.0) { $0 + ($1.activeMinutes ?? 0) }
         let grand = totals.values.reduce(0, +)
         guard grand > 0 else {
-            self.init(top: [], total: 0, all: [], activeMinutes: minutes)
+            self.init(top: [], total: 0, all: [], activeMinutes: minutes, sessions: sessions)
             return
         }
         // Ties break on the purpose name so the order is the same on every refresh.
@@ -145,7 +161,8 @@ public struct WeekUsageModel: Equatable, Sendable {
             top: Array(slices.prefix(limit)),
             total: grand,
             all: slices,
-            activeMinutes: minutes
+            activeMinutes: minutes,
+            sessions: sessions
         )
     }
 
@@ -332,12 +349,17 @@ public struct Snapshot: Sendable {
         // The local day, from the view that counts a commit once.
         let todayCommits = try store.commitsByDay(since: today).filter { $0.day == today }
         let usageRows = try store.usageByPurposeDay(since: Formatting.day(weekStart))
+        // The same seven days as the usage rows, counted as sessions rather than as
+        // purpose-days, so the week's totals line can say how many sessions the tokens and
+        // the hours are over.
+        let weekBounds = Formatting.localDayBoundsUTC(weekStart)
+        let weekSessions = try store.sessions(startedBetween: weekBounds.start, and: bounds.end)
         let observationRows = try store.observations()
         let reviewRow = try store.latestReview()
         return Snapshot(
             status: statusRow.map(StatusModel.init(row:)),
             today: TodayModel(sessions: todayRows, commits: todayCommits),
-            week: WeekUsageModel(rows: usageRows),
+            week: WeekUsageModel(rows: usageRows, sessions: weekSessions.count),
             observation: LatestObservationModel(rows: observationRows),
             observationRow: observationRows.first,
             review: reviewRow.map(LatestReviewModel.init(row:)),

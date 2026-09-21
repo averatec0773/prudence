@@ -15,18 +15,42 @@ struct MenuActions {
 /// The dropdown: **menu bar variant C, with every block keeping its small caption**, which is
 /// what the founder settled on after the M4 mockups (`docs/design/mockups/NOTES.md`).
 ///
-/// C is chart-first: today as a headline, then the week as a one-row stacked bar with the top
-/// three purposes as a legend under it, the latest observation with its caveat, and the two
-/// stamps. A's captions come back on every block, because a value with no label answers a
-/// question the reader has to guess.
+/// Batch 3 rebuilt it as C. Batches 1 and 2 had shipped A's shape — five label-and-value rows
+/// at one weight — carrying C's content, which is not the variant the founder chose. C is
+/// chart-first, and the order below is `dropdown.html`'s `variantC` with the `captions`
+/// branch on, which is the amendment: every block keeps its small caption, because a value
+/// with no label answers a question the reader has to guess.
 ///
-///     Today               2 sessions, 17 edits, 3 commits
-///     This week           [====  ==  = ]   development 71%, research 18%, debugging 11%
-///                         1.2M tokens · 9.4 hours
-///     Latest observation  In prudence, your 7 sessions that ran tests reworked 12% ...
-///                         coverage 90%, method: 4 fact, 3 inferred
-///     Last ingest         20 Sep 18:04 (4 minutes ago)
-///     Last review         Review 1, 8 Sep 2026 to 15 Sep 2026: What you did
+///     Today                                                      <- the caption, on its own line
+///     2 sessions, 17 edits, 3 commits                            <- the one headline
+///     20 September 2026
+///     This week
+///     development 71%, research 18%, debugging 11%
+///     [==================  =======  ====                      ]
+///     1.2M tokens   8 sessions   9.4 hours
+///     ▪ development  ▪ research  ▪ debugging
+///     -------------------------------------------------------
+///     Latest observation
+///     In prudence, your 7 sessions that ran tests reworked 12% ...
+///     coverage 90%, method: 4 fact, 3 inferred
+///     -------------------------------------------------------
+///     Last ingest
+///     20 Sep 18:04 (4 minutes ago)
+///     Last review
+///     Review 1, 8 Sep 2026 to 15 Sep 2026: What you did
+///     =======================================================
+///     [ Open Prudence                                        ]   <- .pop-foot
+///     [ Review now            ] [ Ingest now                 ]
+///      Settings...                                      Quit
+///
+/// **One column, the full width.** Batch 3 shipped the captions in a 96 pt column with the
+/// content beside them, and the founder rejected that shape twice: C puts everything in the
+/// centre, not a title on the left and a value on the right. So each caption is a line of its
+/// own above its block, and every figure, sentence and bar starts on the same left edge and
+/// runs to the same right one.
+///
+/// The widths and the paddings are `tokens.css`'s own: 360 pt wide, 16 pt of side padding,
+/// 12 pt between blocks, and the footer on `Surface.secondary` under one hairline.
 ///
 /// Not one of those numbers is computed here. Each comes from an `app_*` view through
 /// `PrudenceModels` (M3 rule 8, ARCHITECTURE rule 14). The observation's sentence is the one
@@ -46,24 +70,17 @@ struct MenuContentView: View {
     private var snapshot: Snapshot { model.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.popoverGap) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.horizontal, Space.popoverPadding)
+                .padding(.top, Space.popoverPadding)
+                .padding(.bottom, Space.s2)
             blocks
-            if let problem = problemText {
-                Divider().opacity(0.6)
-                problemLine(problem)
-            }
-            Divider().opacity(0.6)
-            buttons
-            if let message = model.actionMessage {
-                Text(message)
-                    .font(Type.caption)
-                    .foregroundStyle(Ink.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                .padding(.horizontal, Space.popoverPadding)
+                .padding(.bottom, Space.s3)
+            foot
         }
-        .padding(Space.popoverPadding)
-        .frame(width: 380)
+        .frame(width: Space.popoverWidth)
         .background(Surface.canvas.opacity(materialBackdropOpacity))
         .prudenceGlass(.popover, cornerRadius: 0)
     }
@@ -75,15 +92,17 @@ struct MenuContentView: View {
 
     // MARK: - the head
 
+    /// `.pop-head` from `tokens.css`: the mark at 18, the name at headline weight, and the
+    /// engine's own version pushed to the right in the smallest type on the surface.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: Space.s2) {
-            BrandMark(size: 16)
+            BrandMark(size: 18)
             Text(Product.name)
                 .font(Type.headline)
                 .foregroundStyle(Ink.primary)
             Spacer(minLength: Space.s2)
             Text(engineText)
-                .font(Type.caption.monospacedDigit())
+                .font(Type.caption2.monospacedDigit())
                 .foregroundStyle(Ink.tertiary)
         }
     }
@@ -92,82 +111,133 @@ struct MenuContentView: View {
 
     private var blocks: some View {
         VStack(alignment: .leading, spacing: Space.popoverGap) {
-            // The caption size, not a 20 pt headline. Variant C put today at headline weight
-            // and the founder read it as heavy (M4 plan, "Batch 2 inputs"): "no session
-            // recorded today" set in a title is a statement about the day rather than a line
-            // in a status glance. Every block in this popover now reads at the same weight,
-            // which is what the caption on each of them was for.
-            StatRow(Str.menuToday.text) {
-                Text(verbatim: todayLine)
-                    .font(Type.footnote.monospacedDigit())
-                    .foregroundStyle(Ink.primary)
+            StatBlock(Str.menuToday.text) { todayBlock }
+
+            StatBlock(Str.menuThisWeek.text) { week }
+
+            separator
+
+            StatBlock(Str.menuLatestObservation.text) { observation }
+
+            separator
+
+            StatBlock(Str.menuLastIngest.text) {
+                Text(ingestText)
+                    .font(Type.caption.monospacedDigit())
+                    .foregroundStyle(Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            StatBlock(Str.menuLastReview.text) {
+                Text(reviewText)
+                    .font(Type.caption)
+                    .foregroundStyle(Ink.secondary)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            StatRow(Str.menuThisWeek.text) { week }
-
-            Divider().opacity(0.6)
-
-            StatRow(Str.menuLatestObservation.text) { observation }
-
-            Divider().opacity(0.6)
-
-            StatRow(Str.menuLastIngest.text) {
-                Text(ingestText)
-                    .font(Type.footnote.monospacedDigit())
-                    .foregroundStyle(Ink.primary)
+            if let problem = problemText {
+                separator
+                problemLine(problem)
             }
-            StatRow(Str.menuLastReview.text) {
-                Text(reviewText)
-                    .font(Type.footnote)
-                    .foregroundStyle(Ink.primary)
-                    .lineLimit(2)
+            if let message = model.actionMessage {
+                Text(message)
+                    .font(Type.caption)
+                    .foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    /// `2 sessions, 17 edits, 3 commits`. Edits are left out when nothing measured any: a
-    /// missing count is not a zero (ARCHITECTURE rule 10).
-    private var todayLine: String {
-        let today = snapshot.today
-        guard today.sessions > 0 || today.commits > 0 else {
-            return Str.menuNoSessionsToday.text
+    /// `.pop-sep`: a 0.5 pt separator with 8 pt of air on each side.
+    private var separator: some View {
+        Rectangle()
+            .fill(Surface.separator)
+            .frame(height: 0.5)
+            .padding(.vertical, Space.s2 - Space.popoverGap / 2)
+    }
+
+    /// Today, variant C's way: the day's counts as the one headline on the surface, with the
+    /// date under it in the smallest type.
+    ///
+    /// Batch 2 pulled this back to caption size because "今天还没有记录到会话" set in a title
+    /// read as a statement about the day rather than a line in a glance (M4 plan, "Batch 2
+    /// inputs"), and batch 3 put C's headline back at the founder's request. Both notes are
+    /// honoured: **counts get the headline, the empty sentence does not.** A number is a
+    /// figure worth the size; "no session recorded today" is a caption.
+    @ViewBuilder
+    private var todayBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let counts = todayCounts {
+                Text(verbatim: counts)
+                    .font(Type.figure(20, weight: .semibold))
+                    .foregroundStyle(Ink.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(.menuNoSessionsToday)
+                    .font(Type.footnote)
+                    .foregroundStyle(Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(verbatim: Fmt.day(Formatting.day(snapshot.readAt)))
+                .font(Type.caption2.monospacedDigit())
+                .foregroundStyle(Ink.tertiary)
         }
+    }
+
+    /// `2 sessions, 17 edits, 3 commits`, or nil when nothing was recorded today. Edits are
+    /// left out when nothing measured any: a missing count is not a zero (ARCHITECTURE
+    /// rule 10).
+    private var todayCounts: String? {
+        let today = snapshot.today
+        guard today.sessions > 0 || today.commits > 0 else { return nil }
         var parts = [Fmt.sessions(today.sessions)]
         if let edits = today.edits { parts.append(Fmt.edits(edits)) }
         parts.append(Fmt.commits(today.commits))
         return Fmt.list(parts)
     }
 
-    /// The week as a bar, its top three as a legend, and the two totals the bar is over.
+    /// The week, variant C's way: the shares as a sentence, the single stacked bar, the
+    /// totals the bar is over, and the legend that says which colour is which.
+    ///
+    /// The shares are printed once, in the text line. The mockup repeats them in the legend
+    /// as well; a share said twice a centimetre apart is a figure a reader has to check
+    /// against itself, so the legend here carries the swatch and the name and nothing else.
     private var week: some View {
         let usage = snapshot.week
         return VStack(alignment: .leading, spacing: 6) {
+            if usage.all.isEmpty {
+                Text(.menuNoTokensThisWeek)
+                    .font(Type.footnote)
+                    .foregroundStyle(Ink.secondary)
+            } else {
+                Text(verbatim: shareLine(usage))
+                    .font(Type.footnote.monospacedDigit())
+                    .foregroundStyle(Ink.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             MiniStack(
                 slices: usage.all.map { MiniStack.Slice(purpose: $0.purpose, tokens: $0.tokens) }
             )
-            if usage.top.isEmpty {
-                Text(.menuNoTokensThisWeek)
-                    .font(Type.caption)
-                    .foregroundStyle(Ink.secondary)
-            } else {
-                PurposeLegend(
-                    purposes: usage.top.map(\.purpose),
-                    shares: Dictionary(
-                        usage.top.map { ($0.purpose, $0.share) }, uniquingKeysWith: { first, _ in
-                            first
-                        })
-                )
-                HStack(spacing: Space.s3) {
+            if !usage.all.isEmpty {
+                // A wrapping row, not an `HStack`: "1,169.9M tokens" on a real store is wide
+                // enough that a fixed row truncated the token count to "1,169.9M to...",
+                // and the three figures still have to fit inside 328 pt of content.
+                FlowLayout(spacing: Space.s3, lineSpacing: 2) {
                     Text(Fmt.tokenPhrase(usage.total))
+                    if let sessions = usage.sessions { Text(Fmt.sessions(sessions)) }
                     Text(Fmt.hourPhrase(usage.activeMinutes / 60))
-                    Spacer(minLength: 0)
                 }
                 .font(Type.caption.monospacedDigit())
                 .foregroundStyle(Ink.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                PurposeLegend(purposes: usage.all.map(\.purpose))
             }
         }
+    }
+
+    /// `development 88%, research 8%, debugging 4%`, every purpose the week measured.
+    private func shareLine(_ usage: WeekUsageModel) -> String {
+        Fmt.list(usage.all.map { "\(Fmt.purpose($0.purpose)) \(Fmt.percent($0.share))" })
     }
 
     @ViewBuilder
@@ -175,9 +245,9 @@ struct MenuContentView: View {
         if let row = snapshot.observationRow {
             VStack(alignment: .leading, spacing: 5) {
                 Text(ObservationText.sentence(row: row))
-                    .font(Type.footnote)
+                    .font(Type.body)
                     .foregroundStyle(Ink.primary)
-                    .lineLimit(4)
+                    .lineLimit(5)
                     .fixedSize(horizontal: false, vertical: true)
                 CoverageChip(ObservationText.caveat(row: row))
             }
@@ -200,29 +270,56 @@ struct MenuContentView: View {
 
     // MARK: - the foot
 
-    /// C's layout: the one prominent action full width, then the two that change the record,
-    /// then Settings and Quit with Quit pushed to the right, where the hand already is.
+    /// C's layout, on **one grid** (batch 3).
+    ///
+    /// The founder's note on the first real screenshot was that the buttons were not aligned,
+    /// and they were not: every row was a different width, because `.frame(maxWidth:
+    /// .infinity)` at a call site widens the button and not the shape a `ButtonStyle` draws.
+    /// The grid is three rows sharing the popover's own content column, on the same left and
+    /// right edges as every block above them, which is what `Space.popoverPadding` already
+    /// sets:
+    ///
+    ///     | Open Prudence                                  |   full width
+    ///     | Review now          |  gutter  |  Ingest now    |   two equal cells, one 8 pt gap
+    ///     | Settings...                              Quit   |   one baseline, both edges
+    ///
+    /// The two plain buttons take their own padding back out (`PrudenceButtonStyle`), so their
+    /// glyphs start on the grid's edges rather than 8 pt inside them.
+    /// `.pop-foot`: the actions on their own surface, under one hairline.
+    ///
+    /// Opaque `Surface.secondary` under Standard, and a thin wash of it under Glass: a solid
+    /// footer inside a frosted popover would cut a slab out of the material, and the point of
+    /// the different surface is only to say "this part is controls, the part above is what
+    /// was measured".
+    private var foot: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Surface.separator).frame(height: 0.5)
+            buttons
+                .padding(.horizontal, Space.popoverPadding)
+                .padding(.top, Space.s3)
+                .padding(.bottom, Space.popoverPadding)
+        }
+        .background(Surface.secondary.opacity(theme.wantsTranslucency ? 0.3 : 1))
+    }
+
     private var buttons: some View {
         VStack(spacing: Space.s2) {
             Button(Str.menuOpenPrudence.text) { act(actions.openMain) }
-                .buttonStyle(.prudencePrimary)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.prudencePrimaryWide)
             HStack(spacing: Space.s2) {
                 Button(Str.menuReviewNow.text) { act(model.reviewNow) }
-                    .frame(maxWidth: .infinity)
                 Button(Str.menuIngestNow.text) { act(model.ingestNow) }
-                    .frame(maxWidth: .infinity)
                     .disabled(model.isBusy)
             }
-            .buttonStyle(.prudence)
-            HStack(spacing: Space.s2) {
+            .buttonStyle(.prudenceWide)
+            HStack(alignment: .firstTextBaseline, spacing: Space.s2) {
                 Button(Str.menuSettings.text) { act(actions.openSettings) }
-                    .buttonStyle(.prudence)
-                Spacer(minLength: 0)
+                Spacer(minLength: Space.s2)
                 Button(Str.menuQuit.text) { act(actions.quit) }
-                    .buttonStyle(.prudencePlain)
             }
+            .buttonStyle(.prudencePlain)
         }
+        .frame(maxWidth: .infinity)
         .prudenceGlassCluster(spacing: Space.s2)
     }
 

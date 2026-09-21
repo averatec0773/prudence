@@ -51,15 +51,31 @@ public enum ReviewText {
     /// `Written by claude-sonnet-4-5`.
     public static func credit(model: String) -> String { Str.reviewWrittenBy(model) }
 
-    /// The language a stored model segment is written in, **read off the segment itself**.
+    /// The language a stored model segment is written in: the column when there is one, and
+    /// the prose when there is not.
     ///
-    /// `app_review` has no column for it: `--language` reaches the prompt and the answer is
-    /// stored as text, so the only record of which language was asked for is the prose. A
-    /// segment containing Han characters is Chinese and anything else is English, which is
+    /// Contract 3 answers the batch 2 request and stores `app_review.segment_language`, the
+    /// code `--language` was given. Where it is there this is a **read**. Where it is not —
+    /// a contract 2 store, or a row written before the column existed — it falls back to the
+    /// reading below, so an older review still says which language it is in.
+    ///
+    /// A stored code this app does not ship a language for is not trusted over the prose: the
+    /// chip says what the reader is looking at, and a row claiming `fr` over English text
+    /// would be a label that contradicts the paragraph under it.
+    /// `system` is not a language either: it is the CLI's word for "whatever `model.language`
+    /// says", so a row stamped with it is a row that did not record one and falls back too.
+    public static func segmentLanguage(stored code: String?, of text: String) -> Language {
+        if let code, let language = Language(rawValue: code), language != .system {
+            return language
+        }
+        return segmentLanguage(of: text)
+    }
+
+    /// The same, **read off the segment itself**.
+    ///
+    /// A segment containing Han characters is Chinese and anything else is English, which is
     /// exact for the two languages this app ships and is a property of the stored text rather
-    /// than a guess at what the setting was on the day it was written. A `segment_language`
-    /// column would make this a read instead of a reading; it is one of the contract requests
-    /// in `apps/mac/DESIGN.md`.
+    /// than a guess at what the setting was on the day it was written.
     public static func segmentLanguage(of text: String) -> Language {
         let han = text.unicodeScalars.contains { scalar in
             (0x4E00...0x9FFF).contains(scalar.value)

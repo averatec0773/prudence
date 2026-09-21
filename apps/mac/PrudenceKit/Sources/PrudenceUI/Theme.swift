@@ -239,9 +239,14 @@ public enum Space {
     public static let cardPadding: CGFloat = 20
     public static let cardGap: CGFloat = 16
     public static let sectionGap: CGFloat = 24
-    /// The popover is tighter than a window: 14 pt of padding, 10 between blocks.
-    public static let popoverPadding: CGFloat = 14
-    public static let popoverGap: CGFloat = 10
+    /// The popover, from `tokens.css`: `.pop-body` is `padding: 0 var(--s4) var(--s3)` with
+    /// `gap: var(--s3)`, so 16 pt of side padding and 12 pt between blocks. Batch 1 read them
+    /// as 14 and 10; batch 3 put the mockup's own numbers back when the popover was rebuilt
+    /// as variant C rather than as A carrying C's content.
+    public static let popoverPadding: CGFloat = 16
+    public static let popoverGap: CGFloat = 12
+    /// `.popover { width: 360px }`.
+    public static let popoverWidth: CGFloat = 360
 }
 
 /// SF Pro through the system font, `PingFang SC` picked up automatically for Chinese.
@@ -307,13 +312,36 @@ public struct Theme: Equatable, Sendable {
         case glass
     }
 
+    /// Which of the two prominent buttons is drawn.
+    ///
+    /// Batch 3, and open on purpose: the founder read the old primary as "a flat blue pill
+    /// from an older era", so both readings of NOTES.md's one sentence about it are built and
+    /// photographed (`menu-…-primaryA.png` and `-primaryB.png`) and the choice is theirs. It
+    /// is a `Theme` flag rather than a setting because it is a decision about the design
+    /// system, not about this Mac; once the founder has chosen, the loser is deleted.
+    public enum PrimaryVariant: String, Sendable, CaseIterable {
+        /// A, the literal reading: the accent at 92 per cent over the frost, a white label,
+        /// one hairline edge, no gradient.
+        case accent
+        /// B, the quieter one: tinted glass with an accent-coloured label and an accent edge,
+        /// so the prominent action is the brightest thing on the surface without being a slab
+        /// of colour.
+        case tinted
+    }
+
     public var material: Material
     /// When true, both glass paths draw an opaque surface instead.
     public var reduceTransparency: Bool
+    public var primary: PrimaryVariant
 
-    public init(material: Material = .glass, reduceTransparency: Bool = false) {
+    public init(
+        material: Material = .glass,
+        reduceTransparency: Bool = false,
+        primary: PrimaryVariant = .accent
+    ) {
         self.material = material
         self.reduceTransparency = reduceTransparency
+        self.primary = primary
     }
 
     /// True when a surface should really be translucent: glass asked for, and not refused.

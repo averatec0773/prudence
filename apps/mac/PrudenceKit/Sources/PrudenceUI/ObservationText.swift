@@ -171,6 +171,38 @@ public enum ObservationText {
         sentence(Input(row: row))
     }
 
+    // MARK: - the threshold that made the split
+
+    /// The line that made the split, in the reader's own language where the store can say it.
+    ///
+    /// `threshold_text` is the engine's English ("more than 0", "at least 3"), so a Chinese
+    /// Observations card used to carry one English clause in the middle of it. Contract 3
+    /// stores the split as a rule and a number — `threshold_op` in `">="`, `">"`, `"=="` or
+    /// NULL, with `threshold_value` beside it — which is enough for the interface to word it
+    /// itself, and this is the fourth of batch 2's contract requests answered.
+    ///
+    /// **The text stays the fallback and stays authoritative where it disagrees.** A contract
+    /// 2 store has neither column; a contract 3 row may have a split with no comparison in it,
+    /// and `threshold_op` is NULL there. Either way the engine's own words are printed rather
+    /// than a clause this app invented.
+    public static func threshold(row: AppObservationRow) -> String {
+        guard let op = row.thresholdOp, let value = row.thresholdValue else {
+            return row.thresholdText
+        }
+        // The value is a count or a rate, printed the way the reader's locale writes one.
+        let number =
+            value == value.rounded()
+            ? Fmt.count(Int(value)) : Fmt.decimal(value, places: 1)
+        switch op {
+        case ">=": return Str.observationThresholdAtLeast(number)
+        case ">": return Str.observationThresholdMoreThan(number)
+        case "==": return Str.observationThresholdExactly(number)
+        // An operator this build has never heard of falls back to the engine's sentence
+        // rather than to a clause with a symbol in it nobody chose a wording for.
+        default: return row.thresholdText
+        }
+    }
+
     /// `coverage 90%, method: 4 fact, 3 inferred`, beside the sentence and never a section
     /// away (principle 3).
     public static func caveat(row: AppObservationRow) -> String {

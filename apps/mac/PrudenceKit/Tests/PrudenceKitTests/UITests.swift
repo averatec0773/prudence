@@ -297,3 +297,101 @@ struct GlassTests {
         #expect(!Theme(material: .standard, reduceTransparency: false).wantsTranslucency)
     }
 }
+
+// MARK: - the bug the eyes caught and the machine did not
+
+/// The batch 3 popover bug, as a check that runs everywhere.
+///
+/// On macOS 26 the three `.prudence` buttons in the dropdown drew as blank frosted rectangles
+/// with no text, while `.prudencePrimary` and `.prudencePlain` — the two emphases that never
+/// call `glassEffect` — kept their labels. The cause was the material: it was applied to an
+/// empty `Color.clear` handed to `.background(...)`, and inside a `GlassEffectContainer` the
+/// container's merged glass pass carried no label with it and came out over the text. The fix
+/// is to apply `glassEffect` to the labelled view, which is its documented use.
+///
+/// The property pinned here is the one that broke: **a control drawn with a label looks
+/// different from the same control drawn with nothing in it.** A label that has been covered
+/// by anything — a material, an overlay, a foreground style that resolved to the fill —
+/// renders identically either way, which is exactly the blank rectangle the founder
+/// photographed. **`LabelAudit` records that this did not reproduce that bug**, measured with
+/// the broken code put back: the macOS 26 popover case needs the shipping app. What these
+/// catch is the class it belongs to, and they were checked against an opaque overlay, which
+/// they do fail on. The check for the material itself is a picture of the real app (README).
+@Suite("Buttons keep their labels under every material")
+struct ButtonLabelTests {
+
+    /// The five actions the popover's footer carries, which is what the founder photographed.
+    static let popoverLabels = [
+        "Open Prudence", "Review now", "Ingest now", "Settings...", "Quit",
+    ]
+
+    /// Every style the popover's footer uses, each as the label it carries there.
+    static let styles: [(name: String, style: PrudenceButtonStyle)] = [
+        ("prudencePrimaryWide", .prudencePrimaryWide),
+        ("prudenceWide", .prudenceWide),
+        ("prudence", .prudence),
+        ("prudencePlain", .prudencePlain),
+    ]
+
+    /// Every style, every material, both primary variants, both appearances: 32 pairs of
+    /// renders, and in every one of them the label has to make a difference to the picture.
+    @MainActor
+    @Test func everyButtonLabelSurvivesTheMaterial() {
+        let size = CGSize(width: 180, height: 40)
+        for (name, style) in Self.styles {
+            for material in Theme.Material.allCases {
+                for primary in Theme.PrimaryVariant.allCases {
+                    for dark in [false, true] {
+                        let theme = Theme(
+                            material: material, reduceTransparency: false, primary: primary)
+                        let visible = LabelAudit.labelIsVisible(
+                            "Review now",
+                            size: size,
+                            appearance: NSAppearance(named: dark ? .darkAqua : .aqua)
+                        ) { label in
+                            Button(label) {}
+                                .buttonStyle(style)
+                                .prudenceTheme(theme)
+                                .frame(width: size.width, height: size.height)
+                        }
+                        #expect(
+                            visible,
+                            """
+                            a \(name) button renders the same with its label and without it, \
+                            under material=\(material.rawValue) primary=\(primary.rawValue) \
+                            dark=\(dark): something is drawn over the label.
+                            """
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same inside a `GlassEffectContainer`, which is what the popover's footer is wrapped
+    /// in and what turned one covered label into three.
+    @MainActor
+    @Test func labelsSurviveInsideAGlassCluster() {
+        let size = CGSize(width: 320, height: 120)
+        for dark in [false, true] {
+            let visible = LabelAudit.labelIsVisible(
+                "Review now",
+                size: size,
+                appearance: NSAppearance(named: dark ? .darkAqua : .aqua)
+            ) { label in
+                VStack(spacing: Space.s2) {
+                    Button(label) {}.buttonStyle(.prudencePrimaryWide)
+                    HStack(spacing: Space.s2) {
+                        Button(label) {}
+                        Button(label) {}
+                    }
+                    .buttonStyle(.prudenceWide)
+                }
+                .frame(width: size.width)
+                .prudenceGlassCluster(spacing: Space.s2)
+                .prudenceTheme(Theme(material: .glass))
+            }
+            #expect(visible, "the cluster draws the same with labels and without, dark=\(dark)")
+        }
+    }
+}

@@ -47,7 +47,9 @@ in `store/views/`, so the app and the CLI cannot disagree:
   `observation` table is `WITHOUT ROWID` and has no row id of its own, so
   `observation_id` is the row's position in `views.observations`'s own fixed order, given
   once by `ROW_NUMBER()` in the view and by `enumerate` in the fill, over the same
-  ORDER BY. A test checks every row's sentence against the CLI's.
+  ORDER BY. A test checks every row's sentence against the CLI's. Contract 3 added
+  `threshold_value` and `threshold_op`, the same split as a number and one of `>=`, `>`
+  or `==`, taken from `observations.SPLITS` in the same fill and for the same reason.
 - `app_review` is one row per stored review, newest first, with the headline a dropdown
   shows and the two JSON blocks (`sections` and `numbers`) a review screen renders. The
   review tables are not derived from the archive and a store may not have them yet, so
@@ -177,6 +179,10 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         # earlier columns by position is not moved out from under by the bump.
         "observation_id",
         "sentence",
+        # Contract 3: the same split as a number and an operator, for a chart that draws
+        # the line. `threshold_text` is unchanged and stays the thing a person reads.
+        "threshold_value",
+        "threshold_op",
     ),
     "app_session_list": (
         "session_id",
@@ -212,6 +218,9 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "segment_text",
         "segment_model",
         "segment_created_at",
+        # Contract 3, appended for the same reason: the language the segment was asked
+        # for. NULL on a row written before there was a choice, which reads as English.
+        "segment_language",
     ),
 }
 
@@ -260,12 +269,18 @@ _GAPS = """
 # retyping it as a string expression would be a second implementation of one sentence and
 # two chances to word it differently. It is refilled with the views, from at most a few
 # hundred rows, and costs about a millisecond. Not part of the contract; `APP_VIEWS` is.
+#
+# Contract 3 put the structured threshold here too, for the same reason: it is read off
+# `observations.SPLITS`, which is Python, and an `above_median` row's number is parsed
+# back out of the very text that module wrote.
 OBSERVATION_TEXT_TABLE = "app_observation_text"
 
 _OBSERVATION_TEXT_SCHEMA = f"""
     CREATE TABLE {OBSERVATION_TEXT_TABLE}(
         observation_id INTEGER PRIMARY KEY,
-        sentence TEXT NOT NULL
+        sentence TEXT NOT NULL,
+        threshold_value REAL,
+        threshold_op TEXT
     )
 """
 
@@ -380,19 +395,24 @@ def install_app_views(connection: sqlite3.Connection) -> None:
 
 
 def fill_observation_text(connection: sqlite3.Connection) -> int:
-    """One sentence per observation row, numbered as the view numbers them.
+    """One sentence and one structured threshold per row, numbered as the view numbers them.
 
     `views.observations` and the view's `ROW_NUMBER()` sort by the same expression, so
-    the nth row here is the nth row there. Returns how many sentences were written.
+    the nth row here is the nth row there. Returns how many rows were written.
     """
     from prudence.store import views
 
     rows = views.observations(connection)
     names = views.repository_names(connection)
     connection.executemany(
-        f"INSERT INTO {OBSERVATION_TEXT_TABLE}(observation_id, sentence) VALUES (?, ?)",
+        f"INSERT INTO {OBSERVATION_TEXT_TABLE}(observation_id, sentence, threshold_value,"
+        " threshold_op) VALUES (?, ?, ?, ?)",
         [
-            (index, observations_module.sentence(row, names.get(row["repo_key"])))
+            (
+                index,
+                observations_module.sentence(row, names.get(row["repo_key"])),
+                *observations_module.threshold_of(row),
+            )
             for index, row in enumerate(rows, start=1)
         ],
     )
@@ -519,7 +539,9 @@ def definitions() -> dict[str, str]:
            n.fact_commits AS fact_commits, n.inferred_commits AS inferred_commits,
            n.fact_version AS fact_version,
            n.observation_id AS observation_id,
-           t.sentence AS sentence
+           t.sentence AS sentence,
+           t.threshold_value AS threshold_value,
+           t.threshold_op AS threshold_op
     FROM numbered n
     LEFT JOIN repository r ON r.repo_key = n.repo_key
     LEFT JOIN {OBSERVATION_TEXT_TABLE} t ON t.observation_id = n.observation_id
@@ -544,7 +566,8 @@ def definitions() -> dict[str, str]:
            v.coverage AS coverage,
            v.segment_text AS segment_text,
            v.segment_model AS segment_model,
-           v.segment_created_at AS segment_created_at
+           v.segment_created_at AS segment_created_at,
+           v.segment_language AS segment_language
     FROM review v
     LEFT JOIN repository r ON r.repo_key = v.project
     ORDER BY v.id DESC

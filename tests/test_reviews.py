@@ -314,6 +314,95 @@ def test_the_row_keeps_a_coverage_even_when_nothing_has_matured() -> None:
     connection.close()
 
 
+def test_the_numbers_carry_the_group_sizes_and_the_previous_values() -> None:
+    """Review version 2: what a paired bar and a compare card need, as numbers.
+
+    The texts are unchanged; these are the same figures the page prints, in a form a
+    chart can measure with instead of parsing the string back.
+    """
+    connection = _populated()
+    window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)
+    payload = build.build(connection, window, now=NOW)
+    connection.close()
+
+    assert payload["review_version"] == 2
+    numbers = {number["key"]: number for number in payload["numbers"]}
+    observed = [number for key, number in numbers.items() if key.startswith("observation.")]
+    assert observed, "the populated store has an observation"
+    # Ten sessions compacted and ten did not, over both weeks: an observation is about
+    # every session in the store, not only the ones inside the review's range.
+    for number in observed:
+        assert number["with_n"] == 10 and number["without_n"] == 10, number["key"]
+
+    sessions = numbers["compared.sessions.now"]
+    assert (sessions["text"], sessions["value"], sessions["previous_value"]) == ("10", 10, 10)
+    assert numbers["compared.sessions.change"]["value"] == 0
+    # 15% of this period's lines against 45% of the previous period's, and the change in
+    # points, each the number under the cell beside it.
+    rework = numbers["compared.rework_share.now"]
+    assert (rework["text"], rework["value"], rework["previous_value"]) == ("15%", 0.15, 0.45)
+    assert numbers["compared.rework_share.previous"]["value"] == 0.45
+    assert numbers["compared.rework_share.change"]["value"] == -30
+    # A dash is never a zero: these sessions carry no usage rows at all, so every token
+    # cell of the row is a dash and every number under it is null (rule 10).
+    for suffix in ("now", "previous", "change"):
+        cell = numbers[f"compared.tokens.{suffix}"]
+        assert cell["text"] == "-" and cell["value"] is None, suffix
+    assert numbers["compared.tokens.now"]["previous_value"] is None
+
+
+def test_a_review_stored_before_the_new_keys_still_renders() -> None:
+    """A version 1 row carries no `with_n` and no `previous_value`, and is still a page.
+
+    The three keys were added, never required: a surface that finds them missing has an
+    older review rather than a broken one.
+    """
+    connection = _populated()
+    window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)
+    payload = _as_version_one(build.build(connection, window, now=NOW))
+    review_id = schema.insert_review(
+        connection,
+        created_at=schema.now_text(NOW),
+        range_start=window.start,
+        range_end=window.end,
+        project=window.project,
+        outcome_range_start=window.outcome_start,
+        outcome_range_end=window.outcome_end,
+        sections=payload,
+        coverage=build.coverage_of(payload),
+        fact_version=2,
+        parser_version=4,
+    )
+    row = schema.review_by_id(connection, review_id)
+    stored = schema.sections_of(row)
+    assert stored["review_version"] == 1
+    assert all("with_n" not in number for number in stored["numbers"])
+
+    text = render.render(row)
+    missing = [number["text"] for number in stored["numbers"] if number["text"] not in text]
+    assert not missing, f"figures stored but not printed: {missing}"
+    assert "# Review" in text and "| purpose |" in text
+    assert render.headline(row).startswith(f"Review {review_id}")
+
+    # And the app reads the row as it always did: the JSON is what the view hands over.
+    app_views.install_app_views(connection)
+    view = connection.execute("SELECT * FROM app_review WHERE id = ?", (review_id,)).fetchone()
+    assert json.loads(view["numbers"]) == stored["numbers"]
+    connection.close()
+
+
+def _as_version_one(payload: dict) -> dict:
+    """The same payload as a review written before version 2, with the new keys gone."""
+    older = json.loads(json.dumps(payload))
+    older["review_version"] = 1
+    lists = [older["numbers"], *(section["numbers"] for section in older["sections"])]
+    for numbers in lists:
+        for number in numbers:
+            for key in ("with_n", "without_n", "previous_value"):
+                number.pop(key, None)
+    return older
+
+
 def test_every_number_in_the_list_appears_in_the_markdown() -> None:
     connection = _populated()
     window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)

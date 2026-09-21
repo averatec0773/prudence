@@ -1753,19 +1753,53 @@
         }
       }
     },
+    "observations.group.perProject": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per project"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按项目"
+          }
+        }
+      }
+    },
+    "observations.group.pooled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Across your projects"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跨你的项目"
+          }
+        }
+      }
+    },
     "observations.scope.pooled": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pooled rows only: these are computed across your projects, for behaviours no single project had the sessions to answer, and are not a finding about any one of them."
+            "value": "The rows that hold across your projects come first; each project's own follow under its name. A pooled row is computed for a behaviour no single project had the sessions to answer, and is not a finding about any one of them."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "只显示跨项目的行：它们是把你所有项目合在一起算的，用于单个项目样本不足以回答的行为，并不是关于其中任何一个项目的结论。"
+            "value": "先列出跨项目成立的行，随后按项目名分组列出各自的行。跨项目的行是在单个项目样本不足以回答某个行为时才计算的，并不是关于其中任何一个项目的结论。"
           }
         }
       }
@@ -1793,13 +1827,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pooled across your projects. Choose a project for its own."
+            "value": "Across your projects first, then one group per project. Choose a project for its own."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跨你的各个项目合并计算。选择一个项目可只看它自己。"
+            "value": "先看跨项目的结果，再按项目分组。也可以在上方选择某个项目单独查看。"
           }
         }
       }
@@ -1834,6 +1868,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "阈值：%1$@"
+          }
+        }
+      }
+    },
+    "observations.threshold.atLeast": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "at least %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "至少 %1$@"
+          }
+        }
+      }
+    },
+    "observations.threshold.exactly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "exactly %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正好 %1$@"
+          }
+        }
+      }
+    },
+    "observations.threshold.moreThan": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "more than %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "多于 %1$@"
           }
         }
       }

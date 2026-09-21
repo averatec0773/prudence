@@ -441,6 +441,16 @@ public enum Str: String, CaseIterable, Sendable {
 
     /// `Threshold: %1$@`
     case observationThreshold = "observations.threshold"
+    /// `at least %1$@` — `threshold_op` `">="` at contract 3.
+    case observationThresholdAtLeast = "observations.threshold.atLeast"
+    /// `more than %1$@` — `threshold_op` `">"`.
+    case observationThresholdMoreThan = "observations.threshold.moreThan"
+    /// `exactly %1$@` — `threshold_op` `"=="`.
+    case observationThresholdExactly = "observations.threshold.exactly"
+    /// `Across your projects` — the heading over the pooled group under "All projects".
+    case observationsGroupPooled = "observations.group.pooled"
+    /// `Per project` — the heading that introduces the project groups under it.
+    case observationsGroupPerProject = "observations.group.perProject"
     /// `still at head` — and in Chinese **仍留在当前版本**, never the English word "head".
     case observationOutcomeAlive = "observation.outcome.alive"
     /// `reworked later`

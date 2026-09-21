@@ -22,10 +22,31 @@ import Foundation
 ///   identity a screen can select on.
 /// - `app_review`, the stored reviews as a view, with the sections and the numbers as the JSON
 ///   `reviews/build.py` wrote and the model segment beside them.
+/// Contract 3 is **additive**, which is why this build renders 2 and 3 from one code path.
+/// Four columns and three payload fields, each of them one of the requests batch 2 wrote down
+/// in `apps/mac/DESIGN.md` under "Contract requests":
+///
+/// - `app_observation.threshold_value` and `.threshold_op` (`">="`, `">"`, `"=="` or NULL), so
+///   an Observations card in Chinese can word its own threshold instead of printing the
+///   engine's English `threshold_text`. The text stays on the row and stays the fallback.
+/// - `app_review.segment_language`, so the language a model segment is in is read rather than
+///   guessed from whether the prose contains Han characters.
+/// - `with_n` and `without_n` on a review's observation numbers, so the Review screen's paired
+///   bars carry the same `n` the Observations screen does.
+/// - `value` and `previous_value` on the compared rows, so `CompareCard` draws its two bars
+///   from stored figures instead of reading the leading number out of a printed cell.
+///
+/// **Every one of them is decoded as an optional and used only where it is present.** A store
+/// at contract 2 is still a store this build renders completely, which is what makes the app
+/// and the engine upgradable in either order.
 public enum Contract {
 
-    /// The only `meta.app_contract_version` this build knows how to render.
-    public static let version = "2"
+    /// Every `meta.app_contract_version` this build knows how to render, oldest first.
+    public static let supported = ["2", "3"]
+
+    /// The newest of them: what a current engine writes, and what a mismatch message compares
+    /// against when it has to say which side is behind.
+    public static let newest = "3"
 
     /// The key the engine writes that version under, in the shared `meta` table.
     public static let versionKey = "app_contract_version"
@@ -39,10 +60,43 @@ public enum Contract {
         case commitsByDay = "app_commits_by_day"
         case review = "app_review"
 
-        public var columns: [String] { Contract.columns[self] ?? [] }
+        /// The columns this view answers with at one contract version.
+        public func columns(at version: String) -> [String] {
+            Contract.columns(at: version)[self] ?? []
+        }
     }
 
-    public static let columns: [View: [String]] = [
+    /// The column lists, as data, one table per supported version.
+    ///
+    /// Contract 3's are contract 2's with the four additions inserted beside the columns they
+    /// qualify. An unknown version answers with the newest table rather than with nothing, so
+    /// a store one version ahead is described by the closest list this build has instead of by
+    /// an empty one.
+    public static func columns(at version: String) -> [View: [String]] {
+        version == "2" ? columnsAtTwo : columnsAtThree
+    }
+
+    /// Contract 2's lists with contract 3's additions put in.
+    public static let columnsAtThree: [View: [String]] = {
+        var table = columnsAtTwo
+        table[.observation] = insert(
+            ["threshold_value", "threshold_op"], into: table[.observation] ?? [],
+            after: "threshold_text")
+        table[.review] = insert(
+            ["segment_language"], into: table[.review] ?? [], after: "segment_created_at")
+        return table
+    }()
+
+    private static func insert(_ additions: [String], into list: [String], after anchor: String)
+        -> [String]
+    {
+        guard let index = list.firstIndex(of: anchor) else { return list + additions }
+        var result = list
+        result.insert(contentsOf: additions, at: index + 1)
+        return result
+    }
+
+    public static let columnsAtTwo: [View: [String]] = [
         .status: [
             "engine_version",
             "last_ingest_at",

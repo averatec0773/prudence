@@ -15,10 +15,21 @@ import SwiftUI
 /// activation-policy toggle `AppDelegate` owns (M3 plan, open question 1). `onClose` is how it
 /// hears about it.
 ///
-/// The size is remembered by `setFrameAutosaveName`, which writes the frame into
-/// `UserDefaults` under `NSWindow Frame PrudenceMainWindow` and restores it on the next
-/// launch. `contentMinSize` rather than `minSize`, so the 900 x 600 floor is the floor of the
-/// content and does not shrink by the height of the title bar.
+/// The size **and the position** are remembered by `setFrameAutosaveName`, which writes the
+/// frame into `UserDefaults` under `NSWindow Frame PrudenceMainWindow` and restores it on the
+/// next launch. `contentMinSize` rather than `minSize`, so the 900 x 600 floor is the floor of
+/// the content and does not shrink by the height of the title bar.
+///
+/// The order below is the part that is easy to get wrong and that batch 3 fixed: `center()`
+/// first, then `setFrameAutosaveName`, then **`setFrameUsingName`**. Setting the autosave name
+/// registers the window for *saving*; it restores the saved frame only if one is already
+/// there when the name is set, and a window whose content view is installed afterwards is
+/// resized by its content and loses it either way. Asking for the frame explicitly, after the
+/// content is in, is what makes the window actually come back where it was left. Which screen
+/// the window was on comes back with the frame, and `constrainFrameRect` puts a window whose
+/// display has gone back onto one that exists.
+///
+/// The sidebar item and the two pickers are remembered as well, by `WindowModel.Memory`.
 @MainActor
 final class MainWindowController: NSObject, NSWindowDelegate {
 
@@ -48,8 +59,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.contentMinSize = Self.minimumSize
         window.center()
-        // Set after `center()`, so a remembered frame wins over the centred one.
-        window.setFrameAutosaveName("PrudenceMainWindow")
+        window.setFrameAutosaveName(Self.frameAutosaveName)
         window.contentViewController = NSHostingController(
             rootView: MainWindowContentView(
                 model: model,
@@ -59,8 +69,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             )
             .prudenceTheme(.system)
         )
+        // After the content view is in, or the hosting controller's own sizing pass throws
+        // the restored frame away and the window opens centred at its minimum every time.
+        window.setFrameUsingName(Self.frameAutosaveName)
         window.delegate = self
     }
+
+    static let frameAutosaveName = NSWindow.FrameAutosaveName("PrudenceMainWindow")
 
     func show() {
         model.refresh()
@@ -111,6 +126,40 @@ struct MainWindowContentView: View {
             minWidth: MainWindowController.minimumSize.width,
             minHeight: MainWindowController.minimumSize.height
         )
+        .background(shortcuts)
+    }
+
+    /// The keyboard, as four hidden buttons rather than as a `Commands` scene.
+    ///
+    /// This app has no SwiftUI `App` and no menu bar of its own — it is an `LSUIElement`
+    /// accessory whose windows are hand-built `NSWindow`s (`apps/mac/README.md`, convention
+    /// 1) — so `.commands { }`, which is the documented home for `keyboardShortcut`, has
+    /// nowhere to attach. A zero-size, hidden `Button` with a shortcut on it is the shape that
+    /// works in a plain hosting view: SwiftUI registers the shortcut with the window's own
+    /// key-equivalent handling, and a hidden button is still reachable that way.
+    ///
+    ///     Cmd-1  Overview        Cmd-R  Review now
+    ///     Cmd-2  Review          Cmd-,  Settings
+    ///     Cmd-3  Observations
+    ///     Cmd-4  Settings
+    ///
+    /// Esc belongs to the popover, not here: it is a status item away in `StatusItem.swift`.
+    private var shortcuts: some View {
+        ZStack {
+            ForEach(Array(MainSection.allCases.enumerated()), id: \.element) { index, section in
+                Button("") { model.section = section }
+                    .keyboardShortcut(
+                        KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            }
+            Button("") { model.reviewNow() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(model.isBusy)
+            Button("") { model.section = .settings }
+                .keyboardShortcut(",", modifiers: .command)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     private func sectionTitle(_ section: MainSection) -> String {
@@ -233,7 +282,7 @@ struct ScopeControls: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
-        .frame(width: 180)
+        .frame(width: 180, height: ReviewPicker.controlHeight)
         .help(Str.scopeProjectHelp.text)
 
         Picker(Str.scopeRange.text, selection: $model.range) {
@@ -243,13 +292,22 @@ struct ScopeControls: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: 210)
+        .frame(width: 210, height: ReviewPicker.controlHeight)
         .help(Str.scopeRangeHelp.text)
     }
 }
 
 /// Which stored review to read, newest first.
+///
+/// The picker and the button share one baseline and one height, which is the popover's grid
+/// discipline applied to the window's own header: a 28 pt pop-up button beside a 28 pt push
+/// button, centred in a `ControlStrip` that lays them on the same line. Before batch 3 the
+/// button was 28 pt and the picker took whatever height AppKit gave it, so the two sat a
+/// couple of points out from each other.
 struct ReviewPicker: View {
+
+    /// The one control height in a header, so nothing in a strip is taller than its neighbour.
+    static let controlHeight: CGFloat = 28
 
     @ObservedObject var model: WindowModel
 
@@ -274,12 +332,12 @@ struct ReviewPicker: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .frame(width: 240)
+            .frame(width: 240, height: Self.controlHeight)
         }
         Button(model.isBusy ? Str.reviewWriting.text : Str.menuReviewNow.text) {
             model.reviewNow()
         }
-        .buttonStyle(.prudencePrimary)
+        .buttonStyle(PrudenceButtonStyle(emphasis: .prominent, height: Self.controlHeight))
         .disabled(model.isBusy)
     }
 }

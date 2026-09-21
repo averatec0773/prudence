@@ -120,19 +120,42 @@ public struct ReviewNumber: Decodable, Equatable, Sendable, Identifiable {
     public let text: String
     public let value: Double?
     public let coverage: Double?
+    /// The sessions on each side of an observation's split, at contract 3. Absent from a
+    /// payload written by an older engine, where the bars carry no `n` and the sentence above
+    /// them carries both counts in words instead.
+    public let withN: Int?
+    public let withoutN: Int?
+    /// The same figure for the previous period, at contract 3, on a `compared.*` number.
+    /// Null where the page prints a dash, which is not the same as zero.
+    public let previousValue: Double?
 
     public var id: String { key }
 
-    public init(key: String, label: String, text: String, value: Double?, coverage: Double?) {
+    public init(
+        key: String,
+        label: String,
+        text: String,
+        value: Double?,
+        coverage: Double?,
+        withN: Int? = nil,
+        withoutN: Int? = nil,
+        previousValue: Double? = nil
+    ) {
         self.key = key
         self.label = label
         self.text = text
         self.value = value
         self.coverage = coverage
+        self.withN = withN
+        self.withoutN = withoutN
+        self.previousValue = previousValue
     }
 
     enum CodingKeys: String, CodingKey {
         case key, label, text, value, coverage
+        case withN = "with_n"
+        case withoutN = "without_n"
+        case previousValue = "previous_value"
     }
 
     /// Rule 1 above, applied to a figure: every property is optional or defaulted, so one
@@ -145,6 +168,9 @@ public struct ReviewNumber: Decodable, Equatable, Sendable, Identifiable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         value = try container.decodeIfPresent(Double.self, forKey: .value)
         coverage = try container.decodeIfPresent(Double.self, forKey: .coverage)
+        withN = try container.decodeIfPresent(Int.self, forKey: .withN)
+        withoutN = try container.decodeIfPresent(Int.self, forKey: .withoutN)
+        previousValue = try container.decodeIfPresent(Double.self, forKey: .previousValue)
     }
 }
 
@@ -293,12 +319,16 @@ public struct ReviewSegment: Equatable, Sendable {
     public let text: String
     public let model: String
     public let createdAt: String?
+    /// `app_review.segment_language` at contract 3: the code `--language` was given, stored
+    /// rather than read back off the prose. Nil on a contract 2 store.
+    public let language: String?
 
     public init?(row: AppReviewRow) {
         guard let text = row.segmentText, !text.isEmpty else { return nil }
         self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         model = row.segmentModel ?? "a model"
         createdAt = row.segmentCreatedAt.map { String($0.prefix(10)) }
+        language = row.segmentLanguage.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     public var credit: String { "Written by \(model)" }

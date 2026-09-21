@@ -34,16 +34,16 @@ struct ObservationsView: View {
 
     @ObservedObject var model: WindowModel
 
-    /// The rows for the chosen scope, already filtered pooled-or-project by `WindowModel`.
+    /// The rows for the chosen scope, already filtered by `WindowModel`.
     private var rows: [AppObservationRow] { model.observationRows }
 
     /// One card per behaviour, biggest gap first.
     ///
-    /// Grouped on `repo_key|fact` rather than on the fact alone, so that under "All projects"
-    /// two pooled rows about the same behaviour meet and a project's own row never joins a
-    /// pooled one. The group's place in the list is its **largest** gap, not the mean of its
-    /// rows: a card is as interesting as its most interesting bar.
-    private var groups: [ObservationGroup] {
+    /// Grouped on `repo_key|fact` rather than on the fact alone, so that two pooled rows about
+    /// the same behaviour meet and a project's own row never joins a pooled one. The group's
+    /// place in the list is its **largest** gap, not the mean of its rows: a card is as
+    /// interesting as its most interesting bar.
+    private static func groups(of rows: [AppObservationRow]) -> [ObservationGroup] {
         var order: [String] = []
         var byKey: [String: [AppObservationRow]] = [:]
         for row in rows {
@@ -68,9 +68,7 @@ struct ObservationsView: View {
                     .font(Type.caption)
                     .foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(groups) { group in
-                    ObservationCard(group: group)
-                }
+                if model.project == nil { allProjects } else { oneProject }
                 Text(.observationFloor)
                     .font(Type.caption)
                     .foregroundStyle(Ink.tertiary)
@@ -79,10 +77,52 @@ struct ObservationsView: View {
         }
     }
 
+    /// A project was picked: its own rows, and nothing about anybody else's.
+    private var oneProject: some View {
+        ForEach(Self.groups(of: rows)) { group in
+            ObservationCard(group: group)
+        }
+    }
+
+    /// "All projects": the pooled rows first under their own heading, then one heading per
+    /// project with that project's cards under it, biggest gap first.
+    ///
+    /// Batch 2 showed the pooled rows and dropped the rest, on the reasoning that a row about
+    /// one project under a heading saying every project reads as a statement about all of
+    /// them (principle 2). The reasoning is right and the remedy was wrong: on a store whose
+    /// projects each have their own observations and nothing yet holds across them, the tab
+    /// was empty. A heading is the cheaper answer — the pooled rows say "across your
+    /// projects" and each project's say the project's name — and nothing is hidden.
+    @ViewBuilder
+    private var allProjects: some View {
+        let pooled = Self.groups(of: model.pooledObservationRows)
+        let projects = model.projectObservationRows
+        if !pooled.isEmpty {
+            heading(Str.observationsGroupPooled.text)
+            ForEach(pooled) { group in ObservationCard(group: group) }
+        }
+        ForEach(projects, id: \.project) { entry in
+            heading(entry.project)
+            ForEach(Self.groups(of: entry.rows)) { group in
+                ObservationCard(group: group)
+            }
+        }
+    }
+
+    private func heading(_ text: String) -> some View {
+        Text(verbatim: text)
+            .font(Type.title3)
+            .foregroundStyle(Ink.primary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, Space.s2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var scopeLine: String {
         model.project == nil
             ? Str.observationScopePooled.text : Str.observationScopeProject.text
     }
+
 
     private var emptyTitle: String {
         model.project == nil
@@ -117,7 +157,9 @@ struct ObservationGroup: Identifiable {
     var isPooled: Bool { first?.isPooled ?? false }
     var fact: String { first?.fact ?? "" }
     var project: String? { first?.project }
-    var thresholdText: String { first?.thresholdText ?? "" }
+    /// The split, in the reader's language at contract 3 and in the engine's English before
+    /// it. `ObservationText.threshold` owns that choice.
+    var threshold: String { first.map(ObservationText.threshold(row:)) ?? "" }
 }
 
 /// One behaviour, its threshold, and one paired-bars row per outcome.
@@ -154,7 +196,7 @@ struct ObservationCard: View {
                         : (group.project ?? Str.scopeAllProjects.text))
                 Spacer(minLength: 0)
             }
-            MethodLine(Str.observationThreshold(group.thresholdText))
+            MethodLine(Str.observationThreshold(group.threshold))
         }
     }
 }

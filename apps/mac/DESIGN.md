@@ -142,7 +142,10 @@ right ink without anybody checking `colorScheme`.
 ### Spacing, type, radii, motion
 
 - **`Space`**, base 4: 4, 8, 12, 16, 20, 24, 32, 40. Card padding 20, card gap 16, section gap
-  24, popover padding 14 with 10 between blocks.
+  24. The popover is `tokens.css`'s own: 360 pt wide, 16 pt of side padding, 12 pt between
+  blocks, one column. Batch 1 read those as 14 and 10 from memory; batch 3 put the file's
+  numbers back when the popover was rebuilt as variant C, and dropped the caption column when
+  the founder said again that C is content in the centre, not captions left and values right.
 - **`Type`**, SF Pro through the system font (`PingFang SC` picked up for Chinese): 11
   (caption 2), 12 (caption), 13 (footnote, the working size), 15 (body), 17 (headline), 20
   (title 3), 24 (title 2), 28 (title 1). `Type.figure(size, weight:)` for every number.
@@ -159,7 +162,7 @@ right ink without anybody checking `colorScheme`.
 |---|---|---|
 | `Card` | The one card shape: opaque fill, hairline ring, no shadow | every screen; the base of `Panel`, `StatCard`, `ObservationRow` |
 | `Panel` | A heading, an optional note, and content | Overview's two charts, every review section |
-| `StatRow` | A caption in a fixed column and a value beside it | the popover's five blocks |
+| `StatBlock` | A caption on its own line, the content full width under it | the popover's five blocks |
 | `StatCard` | A caption, a figure, a detail | Overview's three cards, Review's figure cards |
 | `CoverageChip` | The coverage and method line, as a capsule | the popover's observation, Observations |
 | `DeltaChip` | A neutral difference. **Never coloured by sign** | Observations' gap, Review's change column |
@@ -176,13 +179,91 @@ right ink without anybody checking `colorScheme`.
 
 `PrudenceButtonStyle` in three emphases, which is the whole of the custom control drawing:
 
-- `.prudencePrimary` — the one prominent action per surface: the accent at 92 %, a white
-  label, no gradient.
+- `.prudencePrimary` — the one prominent action per surface. Two variants, chosen by
+  `Theme.primary` (below).
 - `.prudence` — the frosted default: 8 pt rounded rect, one hairline edge, a top inner
   highlight that is barely there, no drop shadow.
-- `.prudencePlain` — Quit and Dismiss: a hover wash and nothing else.
+- `.prudencePlain` — Quit, Settings and Dismiss: a hover wash and nothing else, and its own
+  horizontal padding taken back out again so its glyphs start on the grid's edge.
+
+`.prudenceWide` and `.prudencePrimaryWide` are the same two styles with `fills: true`, which
+makes the **drawn shape** take the width it is offered. A `.frame(maxWidth: .infinity)` at the
+call site widens the button and not the shape a `ButtonStyle` draws, which is why the popover's
+rows each came out a different width before batch 3.
 
 Hover brightens the tint by a few per cent; press darkens it and **nothing moves**.
+
+#### The two primary variants
+
+The founder read the old prominent button as "a flat blue pill from an older era", so both
+readings of NOTES.md's one sentence about it are built and photographed, and the choice is
+theirs. `Theme.primary` picks; `menu-…-primaryA.png` and `-primaryB.png` show them.
+
+| Variant | Fill | Label | Edge |
+|---|---|---|---|
+| `.accent` (A) | the accent at 92 % over the same frost | white | 0.5 pt `Surface.hairline` |
+| `.tinted` (B) | `Ink.accentSoft` over the same frost | `Ink.accent` | 1 pt accent at 35 % |
+
+Both are 8 pt radius, a semibold 13 pt label, and **no gradient** on A: the faint top highlight
+is drawn for the frosted emphases and for B only. Once the founder has chosen, the loser goes.
+
+#### The button grid
+
+The popover's actions sit on one grid, sharing the content column above them — the caption
+column's left edge to the value column's right edge, which is what `Space.popoverPadding`
+sets on both sides:
+
+```
+| Open Prudence                                        |   full width
+| Review now              |  8 pt  | Ingest now        |   two equal cells
+| Settings...                                     Quit |   one baseline, both outer edges
+```
+
+The window's Review header follows the same discipline: the stored-review pop-up and
+`Review now` are both `ReviewPicker.controlHeight` (28 pt) and centred in one `ControlStrip`,
+so they share a top and a bottom edge instead of sitting a couple of points out.
+
+#### The bug behind all of this
+
+On macOS 26, in the real app, the three `.prudence` buttons in the popover drew as **blank
+frosted rectangles with no text**; `.prudencePrimary` and `.prudencePlain` kept their labels.
+
+**Cause.** The frosted emphasis drew its material as
+`.background(Color.clear.prudenceGlass(.control))` — a `glassEffect` on an *empty* view, handed
+to the background slot. Inside a `GlassEffectContainer` the container gathers its descendants'
+glass shapes and composites them in one pass of its own, and a shape whose only content is
+`Color.clear` carries no label into that pass, so the merged glass landed over the text. The two
+emphases that never call `glassEffect` were untouched, which is exactly the pattern the founder
+photographed.
+
+**Fix.** Apply the material to the **labelled** view, which is `glassEffect(_:in:)`'s documented
+use: it puts the glass behind the view it is applied to. One call, the same on the
+`NSVisualEffectView` path and the opaque one.
+
+**Why nothing caught it.** The render harness draws through `cacheDisplay(in:to:)`, which has no
+backdrop to sample and draws `glassEffect` as a no-op, so the labels were readable in every PNG.
+The accessibility tree is no help either: `NSHostingView.accessibilityChildren()` is empty for a
+SwiftUI view no assistive client has asked about, and `AXUIElementCreateApplication(getpid())`
+answers with nothing, so there is no label in it to assert on before the fix or after it.
+
+**The guard, and its honest limit.** `PrudenceUI/LabelAudit.swift` asks the property directly:
+render the control twice, once with its label and once with nothing in it, and require the two
+pictures to differ. A label covered by anything renders identically either way.
+`UITests.ButtonLabelTests` runs it over every style × material × primary variant × appearance
+in `swift test`, and `Scripts/shots.sh` runs it at the end of every render.
+
+**It does not reproduce this bug, and that was measured rather than assumed.** The broken code
+was put back and the audit run against it three ways — off screen through `cacheDisplay`, on
+screen in an ordinary window through the window server, and on screen in a real `NSPopover`
+through the window server — and all three drew readable labels. The case needs the shipping
+app, a menu bar and an active application. What the audit does catch, checked the same way, is
+the class it belongs to: an opaque overlay over a label fails all three forms.
+
+So **the check for anything about the material is a picture of the real app**:
+`PRUDENCE_OPEN_POPOVER=1 PRUDENCE_FORCE_APPEARANCE=dark`, then `screencapture` (README). The
+audit is the cheap net underneath that, not a replacement for it; `PRUDENCE_SHOTS_ONSCREEN=1`
+makes it take its pictures through the window server, where glass is composited rather than
+drawn as a no-op, which is more than the default can see and still less than the real app.
 
 **Everything else shaped like a control is a system control and is not redrawn.** Segmented
 controls are `Picker(.segmented)` (the range, the Settings tabs), menu pickers are
@@ -204,9 +285,12 @@ on top would be a second material over the first.
 
 The API names were checked against the macOS 27 SDK that Xcode 27 ships, not against memory.
 
-`Theme` is an environment value carrying the material and the reduced-transparency flag, read
-once per window from `Theme.system`. Both paths consult the same flag, so the fallback cannot
-drift from the thing it falls back from.
+`Theme` is an environment value carrying the material, the reduced-transparency flag and the
+primary variant, read once per window from `Theme.system`. Both paths consult the same flag, so
+the fallback cannot drift from the thing it falls back from.
+
+**The material goes behind the labelled view, never in a sibling layer.** That is the whole of
+the batch 3 bug, and it is written out under *Controls* above.
 
 **Glass**: the popover's content, the window's sidebar, the toolbar strip above each screen,
 the Settings tab strip, and the default and primary buttons.
@@ -323,41 +407,86 @@ cannot run at all answers false, and the review is written in the engine's confi
 
 ## Screens
 
-| Screen | Variant | State after batch 2 |
+| Screen | Variant | State after batch 3 |
 |---|---|---|
-| Menu bar popover | **C with captions** | today back at caption weight (it read heavy as a headline), the week as a `MiniStack` with its top-three legend, the observation composed in the interface language, the two stamps, C's button layout |
+| Menu bar popover | **C with captions, one column** | rebuilt as C in batch 3, which had been shipping as A's five equal rows carrying C's content: 360 pt wide, every caption a line of its own above its block and the content full width under it (a caption column was tried and rejected: C is content in the centre, not titles left and values right), the day's counts as the one headline with the date under it, the week as a share line + `MiniStack` + totals + legend, the observation at body size, two quiet footer lines, and the action grid on `Surface.secondary` under a hairline. Batch 2's note that a headline read heavy is kept where it applies: **counts get the headline, "no session recorded today" stays a caption** |
 | Settings | **B** | General and Data tabs, grouped boxes, the language setting; the store's location now in the reader's language |
 | Overview | **A** | one column, cards first: the three totals, `StackedBarsChart` with hover and week selection, `LinesWithGaps` with coverage, `HeatStrip` |
 | Review | **B** | charts with their tables open under them: `DonutChart` + the purpose table, `ShareWithCoverageBar` rows, `PairedBarsChart` rows, `CompareCard`s, the model segment last with its model and its language |
-| Observations | **C** | grouped by behaviour: one card per fact, the threshold, one `PairedBarsChart` per outcome with `n` on each bar, the coverage and method line |
+| Observations | **C** | grouped by behaviour: one card per fact, the threshold, one `PairedBarsChart` per outcome with `n` on each bar, the coverage and method line. Under "All projects", the pooled rows come first under "Across your projects" and then one heading per project, so the screen is never empty while project rows exist; a project picked in the picker still shows only its own |
 
-## Contract requests
+## Contract requests: all four answered at contract 3
 
-Four figures a screen wants and the `app_*` views do not carry. None of them is computed in
-Swift; each one is shown as a placeholder, a reading, or not at all, and each is a small
-addition on the Python side.
+The app renders contract **2 and 3** from one code path (`PrudenceStore/Contract.swift`,
+`Contract.supported`), because every one of contract 3's additions is optional and is used only
+where it is present. A store at either is a store this app draws completely, so the app and the
+engine can be upgraded in either order.
 
-1. **`with_n` and `without_n` on a review's observation numbers.** `reviews/build._observations`
-   stores the sentence, the caveat and the two medians; the counts live on `app_observation`
-   and not in the payload, so the Review screen's paired bars carry no `n`. The sentence above
-   them carries both in words. Reading them off the live observation rows instead would put
-   this range's prose beside another range's counts.
-2. **A `value` on the `compared.*` numbers.** They are stored as text alone, so `CompareCard`
-   reads the leading figure out of the printed cell to size its mini bars (above).
-3. **`app_review.segment_language`.** `--language` reaches the prompt and the answer is stored
-   as prose, so the only record of which language was asked for is the text.
-   `ReviewText.segmentLanguage` reads it off the words, which is exact for the two languages
-   this app ships and is still a reading rather than a read.
-4. **A structured threshold on `app_observation`.** `threshold_text` is the engine's English
-   ("more than 0", "at least 3"), so an Observations card in Chinese shows one English clause.
-   A rule and a value beside the text would let the interface word it.
+| Batch 2 asked for | Contract 3 stores | Where it shows |
+|---|---|---|
+| `with_n` / `without_n` on a review's observation numbers | `with_n`, `without_n` on `observation.*.with` and `.without` | Review's paired bars carry `n`, as Observations' do |
+| a `value` on the `compared.*` numbers | `value` and `previous_value` | `CompareCard`'s twin bars are drawn from figures, not from a reading of the printed cell |
+| `app_review.segment_language` | that column | the segment's language chip is a read |
+| a structured threshold on `app_observation` | `threshold_value` and `threshold_op` (`">="`, `">"`, `"=="`, NULL) | `ObservationText.threshold` words the clause in the reader's language |
+
+Each of the four keeps its old behaviour as the fallback, and a null stays a null:
+`CompareCard.numeric` still reads a printed cell where the engine stored no value,
+`ReviewText.segmentLanguage(stored:of:)` still reads the prose where there is no column,
+`ObservationText.threshold` still prints `threshold_text` where there is no operator, and a
+compared row whose page shows a dash gets **no** bars rather than bars of zero.
+
+## Window memory and the keyboard
+
+The window remembers where it was and what was on it.
+
+- **Size and position**: `setFrameAutosaveName("PrudenceMainWindow")`, then
+  `setFrameUsingName` **after the content view is installed** — the hosting controller's own
+  sizing pass throws a restored frame away otherwise, which is why batch 1's autosave name
+  alone never restored anything.
+- **The sidebar item and the pickers**: `WindowModel.Memory`, in `UserDefaults` beside the
+  settings (`window.section`, `window.project`, `window.range`, `window.review`). A remembered
+  value this build no longer understands is ignored rather than forced. The render harness
+  builds its models with `restoringMemory: false`, so a shot is of the state the caller asked
+  for and not of whatever the machine last left behind.
+
+| Key | Does |
+|---|---|
+| Cmd-1 / 2 / 3 / 4 | Overview, Review, Observations, Settings |
+| Cmd-R | Review now |
+| Cmd-, | Settings |
+| Esc | closes the menu bar popover |
+
+The four sidebar keys and the two actions are hidden zero-size `Button`s carrying
+`.keyboardShortcut`, because this app has no SwiftUI `App` and therefore no `.commands` scene
+to hang them on (README, convention 1). Esc belongs to the popover and lives in
+`App/StatusItem.swift`.
+
+### Closing the popover
+
+`NSPopover.behavior = .transient` closes on the next event **its own window sees**, and an
+`LSUIElement` app is `.accessory`, so the app is often not active when the dropdown opens and a
+click in another application is delivered to that application and never to us. The dropdown
+stayed up and the only way out was to click the status item again. Four things close it now:
+
+- `NSApp.activate(ignoringOtherApps:)` **before** `show`, which makes the popover a window the
+  click can land in and fixes the common case;
+- a **global** mouse-down monitor, which sees clicks that go to other applications and never
+  our own, so it cannot close the popover out from under its own buttons;
+- a **local** key-down monitor for Esc, swallowed so the key does not also reach what is behind;
+- `didResignActiveNotification`, for Cmd-Tab and Mission Control, where no click of ours happens.
+
+All three monitors are torn down the moment the popover closes: a global event monitor that
+outlives what it was watching keeps waking the process.
 
 ## Still open
 
 - **Observations at scale** (the founder's reservation, M4 plan). The screen sorts by the
   largest absolute gap and shows everything above the engine's floors, which is honest at two
   projects and will not be at twenty: at that size the list becomes a ranking, and a ranking is
-  a score by another name. The reservation is written into `App/ObservationsView.swift` as a
-  comment so that nobody adds a filter or a "top N" here without deciding the question first.
+  a score by another name. Batch 3 made it worse-before-better by showing the per-project groups
+  under "All projects" as well, which is more rows, not fewer. The reservation is written into
+  `App/ObservationsView.swift` as a comment so that nobody adds a filter or a "top N" here
+  without deciding the question first.
+- **Which primary variant.** A or B, the founder's call off `menu-…-primaryA/B.png`.
 - **The dropdown's icon** carrying a live number, deferred from M3 and still deferred.
-- **Empty and error states, window memory and keyboard**, which are batch 3.
+- **Empty and error states** beyond the ones each screen already has.

@@ -46,13 +46,23 @@ NOT_MEASURED = "-"
 
 @dataclass(frozen=True)
 class Number:
-    """One figure on the page: where it came from, what it is, and how it is printed."""
+    """One figure on the page: where it came from, what it is, and how it is printed.
+
+    The last three fields were added at review version 2, for the app's charts: a paired
+    bar needs the two group sizes it is drawing and a compare card needs the previous
+    value as a number rather than as a string it would have to parse back. They are
+    optional, and a review stored before they existed simply has neither, which a surface
+    reads as unknown rather than as zero (architecture rule 10).
+    """
 
     key: str
     label: str
     text: str
     value: float | None = None
     coverage: float | None = None
+    with_n: int | None = None
+    without_n: int | None = None
+    previous_value: float | None = None
 
 
 @dataclass
@@ -277,6 +287,8 @@ def _observations(context: Context) -> Section:
         caveat = observations_module.caveat(row)
         section.rows.append([sentence, caveat])
         key = observation_key(row)
+        # Both entries carry both group sizes: a paired bar draws the two sides together
+        # and reads n off whichever of them it is holding.
         section.numbers.append(
             Number(
                 f"observation.{key}.with",
@@ -284,6 +296,8 @@ def _observations(context: Context) -> Section:
                 _percent(row["with_value"]),
                 row["with_value"],
                 row["coverage"],
+                with_n=int(row["with_n"]),
+                without_n=int(row["without_n"]),
             )
         )
         section.numbers.append(
@@ -293,6 +307,8 @@ def _observations(context: Context) -> Section:
                 _percent(row["without_value"]),
                 row["without_value"],
                 row["coverage"],
+                with_n=int(row["with_n"]),
+                without_n=int(row["without_n"]),
             )
         )
     pooled = sum(1 for row in rows if row["repo_key"] == observations_module.POOLED)
@@ -308,6 +324,25 @@ def _observations(context: Context) -> Section:
         f"{observations_module.FACT_VERSION}).",
     ]
     return section
+
+
+@dataclass(frozen=True)
+class _Compared:
+    """One row of the comparison: three cells, and the number under each of them.
+
+    A cell's number is None exactly when the cell is a dash, so a chart can tell a period
+    that measured nothing from one that measured zero (architecture rule 10). Each number
+    is in the unit its own cell is printed in: a share is the share, and a change is the
+    change as printed, which is points for a share and thousands for tokens.
+    """
+
+    label: str
+    now_text: str
+    previous_text: str
+    change_text: str
+    now_value: float | None
+    previous_value: float | None
+    change_value: float | None
 
 
 def _compared(context: Context) -> Section:
@@ -344,60 +379,94 @@ def _compared(context: Context) -> Section:
         return section
 
     section.headers = ["figure", "this period", "previous period", "change"]
-    pairs: list[tuple[str, str, str, str]] = []
+    pairs: list[_Compared] = []
 
     this_sessions, that_sessions = here["sessions"], there["sessions"]
     pairs.append(
-        (
+        _Compared(
             "sessions",
             str(this_sessions),
             str(that_sessions),
             _delta_count(this_sessions, that_sessions),
+            this_sessions,
+            that_sessions,
+            this_sessions - that_sessions,
         )
     )
     this_hours = sum(cell["hours"] for cell in here["by_purpose"].values())
     that_hours = sum(cell["hours"] for cell in there["by_purpose"].values())
     pairs.append(
-        (
+        _Compared(
             "active hours",
             f"{this_hours:.1f}",
             f"{that_hours:.1f}",
             _delta_count(this_hours, that_hours, decimals=1),
+            this_hours,
+            that_hours,
+            _delta_value(this_hours, that_hours, decimals=1),
         )
     )
     this_tokens = _merge(here["by_purpose"].values())
     that_tokens = _merge(there["by_purpose"].values())
     both_measured = this_tokens["measured"] and that_tokens["measured"]
     pairs.append(
-        (
+        _Compared(
             "tokens",
             _thousands(this_tokens),
             _thousands(that_tokens),
             _delta_count(_tokens(this_tokens), _tokens(that_tokens), unit="k", scale=1000)
             if both_measured
             else NOT_MEASURED,
+            _tokens(this_tokens) if this_tokens["measured"] else None,
+            _tokens(that_tokens) if that_tokens["measured"] else None,
+            _delta_value(_tokens(this_tokens), _tokens(that_tokens), scale=1000)
+            if both_measured
+            else None,
         )
     )
     for label, key in (("rework share", "reworked_share"), ("alive at 7 days", "survival_7d")):
         here_value = now_outcomes["shares"][key] if now_outcomes else None
         there_value = then_outcomes["shares"][key] if then_outcomes else None
         pairs.append(
-            (
+            _Compared(
                 label,
                 _percent(here_value),
                 _percent(there_value),
                 _delta_points(here_value, there_value),
+                here_value,
+                there_value,
+                _points_value(here_value, there_value),
             )
         )
 
-    for label, this_text, that_text, change in pairs:
-        section.rows.append([label, this_text, that_text, change])
-        key = label.replace(" ", "_")
-        section.numbers.append(Number(f"compared.{key}.now", f"{label}, this period", this_text))
+    for pair in pairs:
+        section.rows.append([pair.label, pair.now_text, pair.previous_text, pair.change_text])
+        key = pair.label.replace(" ", "_")
         section.numbers.append(
-            Number(f"compared.{key}.previous", f"{label}, previous period", that_text)
+            Number(
+                f"compared.{key}.now",
+                f"{pair.label}, this period",
+                pair.now_text,
+                pair.now_value,
+                previous_value=pair.previous_value,
+            )
         )
-        section.numbers.append(Number(f"compared.{key}.change", f"{label}, change", change))
+        section.numbers.append(
+            Number(
+                f"compared.{key}.previous",
+                f"{pair.label}, previous period",
+                pair.previous_text,
+                pair.previous_value,
+            )
+        )
+        section.numbers.append(
+            Number(
+                f"compared.{key}.change",
+                f"{pair.label}, change",
+                pair.change_text,
+                pair.change_value,
+            )
+        )
     section.notes.append(
         "The outcome rows compare the two periods' own outcome windows, each seven days "
         "behind its activity window, so both sides are commits that had reached the same age."
@@ -647,11 +716,16 @@ def _cell(alive: int, measured: int) -> str:
     return f"{alive / measured * 100:.0f}% ({measured})"
 
 
+def _delta_value(here: float, there: float, decimals: int = 0, scale: float = 1) -> float:
+    """The change `_delta_count` prints, as a number: the same rounding, so they agree."""
+    return round(here / scale, decimals) - round(there / scale, decimals)
+
+
 def _delta_count(
     here: float, there: float, decimals: int = 0, unit: str = "", scale: float = 1
 ) -> str:
     """The change between two cells, over the values as they are printed (see below)."""
-    change = round(here / scale, decimals) - round(there / scale, decimals)
+    change = _delta_value(here, there, decimals, scale)
     return f"{change:+.{decimals}f}{unit}"
 
 
@@ -662,9 +736,15 @@ def _delta_points(here: float | None, there: float | None) -> str:
     floats and rounding that instead produces a row whose three numbers do not add up,
     which reads as an error whether or not it is one.
     """
+    change = _points_value(here, there)
+    return NOT_MEASURED if change is None else f"{change:+d} points"
+
+
+def _points_value(here: float | None, there: float | None) -> int | None:
+    """The change `_delta_points` prints, as a number of points, or None for a dash."""
     if here is None or there is None:
-        return NOT_MEASURED
-    return f"{round(here * 100) - round(there * 100):+d} points"
+        return None
+    return round(here * 100) - round(there * 100)
 
 
 def _day(value: str) -> str:

@@ -116,6 +116,12 @@ public struct AppObservationRow: Codable, FetchableRecord, Equatable, Sendable {
     public let pooled: Int
     public let fact: String
     public let thresholdText: String
+    /// The threshold as a number and a rule, at contract 3. `thresholdText` is the engine's
+    /// English for the same split and stays as the fallback; both are nil-tolerant, because a
+    /// contract 2 store has neither column.
+    public let thresholdValue: Double?
+    /// `">="`, `">"`, `"=="`, or nil where the split has no comparison to print.
+    public let thresholdOp: String?
     public let outcome: String
     public let direction: String
     public let withN: Int
@@ -138,6 +144,8 @@ public struct AppObservationRow: Codable, FetchableRecord, Equatable, Sendable {
         case pooled
         case fact
         case thresholdText = "threshold_text"
+        case thresholdValue = "threshold_value"
+        case thresholdOp = "threshold_op"
         case outcome
         case direction
         case withN = "with_n"
@@ -250,6 +258,10 @@ public struct AppReviewRow: Codable, FetchableRecord, Equatable, Sendable {
     public let segmentText: String?
     public let segmentModel: String?
     public let segmentCreatedAt: String?
+    /// The language `--language` asked the model to write in, at contract 3. Nil on a
+    /// contract 2 store and on a row written before the column existed, where
+    /// `ReviewText.segmentLanguage` reads it off the prose instead.
+    public let segmentLanguage: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -267,5 +279,6 @@ public struct AppReviewRow: Codable, FetchableRecord, Equatable, Sendable {
         case segmentText = "segment_text"
         case segmentModel = "segment_model"
         case segmentCreatedAt = "segment_created_at"
+        case segmentLanguage = "segment_language"
     }
 }

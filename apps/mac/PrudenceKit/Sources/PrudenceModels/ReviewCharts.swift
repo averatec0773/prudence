@@ -141,6 +141,10 @@ public enum ReviewCharts {
         public let withValue: Double
         public let withoutValue: Double
         public let coverage: Double?
+        /// The sessions on each side, at contract 3. Nil on a payload written before the
+        /// engine stored them, where the bars print the share alone.
+        public let withN: Int?
+        public let withoutN: Int?
 
         public var id: String { key }
 
@@ -150,7 +154,7 @@ public enum ReviewCharts {
 
         public init(
             key: String, sentence: String, caveat: String, withValue: Double,
-            withoutValue: Double, coverage: Double?
+            withoutValue: Double, coverage: Double?, withN: Int? = nil, withoutN: Int? = nil
         ) {
             self.key = key
             self.sentence = sentence
@@ -158,6 +162,8 @@ public enum ReviewCharts {
             self.withValue = withValue
             self.withoutValue = withoutValue
             self.coverage = coverage
+            self.withN = withN
+            self.withoutN = withoutN
         }
     }
 
@@ -173,11 +179,13 @@ public enum ReviewCharts {
     /// numbers per observation in one loop. A row with no pair of numbers, or a pair with no
     /// row, is left out rather than half-drawn.
     ///
-    /// **The counts behind the two sides are not here.** `reviews/build._observations` stores
-    /// the sentence, the caveat and the two medians; `with_n` and `without_n` live on
-    /// `app_observation` and not in the review's payload, so the bars on this screen carry no
-    /// `n`. The sentence above them does, in words. See the contract requests in
-    /// `apps/mac/DESIGN.md`.
+    /// **The counts behind the two sides arrived at contract 3.** Until then
+    /// `reviews/build._observations` stored the sentence, the caveat and the two medians only,
+    /// `with_n` and `without_n` lived on `app_observation` and not in the review's payload,
+    /// and the bars on this screen carried no `n`; reading them off the live observation rows
+    /// instead would have put this range's prose beside another range's counts. They are read
+    /// off the `.with` and `.without` numbers now, and stay nil for a review an older engine
+    /// wrote, where the bars print the share alone exactly as they did.
     public static func observationPairs(of section: ReviewSection) -> [ObservationPair] {
         var keys: [String] = []
         var withs: [String: ReviewNumber] = [:]
@@ -205,7 +213,9 @@ public enum ReviewCharts {
                     caveat: row.count > 1 ? row[1] : "",
                     withValue: with.value ?? 0,
                     withoutValue: without.value ?? 0,
-                    coverage: with.coverage ?? without.coverage
+                    coverage: with.coverage ?? without.coverage,
+                    withN: with.withN,
+                    withoutN: without.withoutN ?? without.withN
                 )
             )
         }
@@ -214,34 +224,53 @@ public enum ReviewCharts {
 
     // MARK: - compared with the previous period
 
-    /// One row of the `compared` section. Four strings, all of them the engine's own.
+    /// One row of the `compared` section: four strings, all of them the engine's own, and at
+    /// contract 3 the two magnitudes behind two of them.
     ///
-    /// **No `value` here, and that is the engine's shape, not an omission.**
-    /// `reviews/build._compared` writes `Number(key, label, text)` with no fourth argument, so
-    /// the comparison's figures are stored as text alone. The card draws its twin bars from
-    /// `CompareCard.numeric`, which reads the leading figure out of the text the engine
-    /// printed; a cell that will not parse gets no bars. A `value` on those numbers is one of
-    /// the contract requests in `apps/mac/DESIGN.md`.
+    /// Until contract 3 `reviews/build._compared` wrote `Number(key, label, text)` with no
+    /// fourth argument, so the comparison's figures were stored as text alone and the card
+    /// sized its twin bars with `CompareCard.numeric`, which reads the leading figure out of
+    /// the printed cell. Contract 3 stores `value` and `previous_value`, so the bars are drawn
+    /// from figures rather than from a reading of a string. `numeric` stays as the fallback
+    /// for an older review, and **a null is still a null**: the engine writes one where the
+    /// page prints a dash, and a row with no value gets no bars rather than bars of zero.
     public struct CompareRow: Equatable, Sendable, Identifiable {
         public let label: String
         public let now: String
         public let previous: String
         public let change: String
+        public let value: Double?
+        public let previousValue: Double?
 
         public var id: String { label }
 
-        public init(label: String, now: String, previous: String, change: String) {
+        public init(
+            label: String, now: String, previous: String, change: String,
+            value: Double? = nil, previousValue: Double? = nil
+        ) {
             self.label = label
             self.now = now
             self.previous = previous
             self.change = change
+            self.value = value
+            self.previousValue = previousValue
         }
     }
 
+    /// Paired on the label, the way `shareRows` is: `_compared` writes the number's `label`
+    /// as the row's first cell, character for character.
     public static func compareRows(of section: ReviewSection) -> [CompareRow] {
         section.rows.compactMap { row in
             guard let label = row.first, row.count >= 4 else { return nil }
-            return CompareRow(label: label, now: row[1], previous: row[2], change: row[3])
+            let number = section.numbers.first { $0.label == label }
+            return CompareRow(
+                label: label,
+                now: row[1],
+                previous: row[2],
+                change: row[3],
+                value: number?.value,
+                previousValue: number?.previousValue
+            )
         }
     }
 }

@@ -46,6 +46,7 @@ the threshold that defines it; the layout around them is the surface's business.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from collections import defaultdict
@@ -152,6 +153,16 @@ _BY_FACT = {split.fact: split for split in SPLITS}
 
 # A label is not a number, so it gets no threshold: one label against every other one.
 PURPOSE_PREFIX = "purpose:"
+
+# The operator each rule is written with, for a surface that draws the split rather than
+# reads it. `_threshold` prints these same signs into `threshold_text`.
+THRESHOLD_OPS: dict[str, str] = {"at_least": ">=", "above": ">", "above_median": ">"}
+
+# A label is matched, not measured: it has an operator and no number at all.
+LABEL_OP = "=="
+
+# The median an `above_median` row was split at, out of the text this module wrote for it.
+_MEDIAN_IN_TEXT = re.compile(r">\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)")
 
 NOTHING = (
     f"No observation clears the sample floor ({MIN_SESSIONS} sessions each side) and the "
@@ -402,8 +413,7 @@ def _threshold(split: Split, held: list[_Session]) -> tuple[float, str]:
         line = float(median(session.values[split.fact] for session in held))
         return line, f"{split.fact} > {line:g} (the median here)"
     line = float(split.value or 0)
-    sign = ">=" if split.rule == "at_least" else ">"
-    return line, f"{split.fact} {sign} {line:g}"
+    return line, f"{split.fact} {THRESHOLD_OPS[split.rule]} {line:g}"
 
 
 def _above(rule: str, value: float, line: float) -> bool:
@@ -471,6 +481,30 @@ def caveat(row: Any) -> str:
         f"(coverage: {coverage}, method: {row['fact_commits']} fact, "
         f"{row['inferred_commits']} inferred)"
     )
+
+
+def threshold_of(row: Any) -> tuple[float | None, str | None]:
+    """One row's split as a number and an operator, beside the words in `threshold_text`.
+
+    The words stay what a person reads; these two are what a chart places a tick with,
+    and they come from the `Split` that produced the row rather than from parsing prose.
+    The one exception is an `above_median` split, whose number is the median of the
+    sessions that were compared and therefore belongs to the row and not to the `Split`:
+    it is read back out of the text this module wrote in `_threshold`. A label split has
+    an operator and no number; a fact this build of the engine no longer knows has
+    neither, which is a missing value and not a zero (architecture rule 10).
+    """
+    fact = row["fact"]
+    if fact.startswith(PURPOSE_PREFIX):
+        return (None, LABEL_OP)
+    split = _BY_FACT.get(fact)
+    if split is None:
+        return (None, None)
+    operator = THRESHOLD_OPS[split.rule]
+    if split.rule == "above_median":
+        found = _MEDIAN_IN_TEXT.search(row["threshold_text"] or "")
+        return (float(found.group(1)) if found else None, operator)
+    return (float(split.value or 0), operator)
 
 
 def phrases(fact: str) -> tuple[str, str]:

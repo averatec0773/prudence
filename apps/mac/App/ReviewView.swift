@@ -296,12 +296,10 @@ struct SectionView: View {
 
     /// The sentence, the two medians as paired bars, and the coverage and method line.
     ///
-    /// The bars carry no `n`: `reviews/build._observations` stores the sentence, the caveat and
-    /// the two medians, and `with_n` / `without_n` live on `app_observation` rather than in the
-    /// payload. The sentence above the bars carries both counts in words, and a `with_n` and
-    /// `without_n` on the section's numbers is a contract request (`apps/mac/DESIGN.md`).
-    /// Reading them off the live observation rows instead would put this range's prose beside
-    /// another range's counts, which is worse than not drawing them.
+    /// The bars carry `n` from contract 3 on, read off this review's own `observation.*.with`
+    /// and `.without` numbers rather than off the live observation rows, which would have put
+    /// this range's prose beside another range's counts. A review an older engine wrote has no
+    /// such numbers and the bars print the share alone, as they did before.
     private var observationsBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !pairs.isEmpty {
@@ -313,10 +311,11 @@ struct SectionView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         PairedBarsChart(
                             with: .init(
-                                label: Str.observationSideDid.text, value: pair.withValue, n: nil),
+                                label: Str.observationSideDid.text, value: pair.withValue,
+                                n: pair.withN),
                             without: .init(
                                 label: Str.observationSideDidNot.text, value: pair.withoutValue,
-                                n: nil),
+                                n: pair.withoutN),
                             tint: pair.isRework ? Outcome.rework : Outcome.alive,
                             labelWidth: 130
                         )
@@ -351,7 +350,11 @@ struct SectionView: View {
                             title: row.label,
                             value: row.now,
                             previous: row.previous,
-                            change: row.change
+                            change: row.change,
+                            // Contract 3's stored figures where the engine wrote them; the
+                            // card falls back to reading the printed cell where it did not.
+                            nowValue: row.value,
+                            previousValue: row.previousValue
                         )
                     }
                 }
@@ -474,7 +477,10 @@ struct SegmentCard: View {
                         .font(Type.caption.monospacedDigit())
                         .foregroundStyle(Ink.tertiary)
                 }
-                CoverageChip(ReviewText.segmentLanguage(of: segment.text).label)
+                CoverageChip(
+                    ReviewText.segmentLanguage(
+                        stored: segment.language, of: segment.text
+                    ).label)
                 Spacer(minLength: 0)
             }
             Text(.reviewSegmentChecked)

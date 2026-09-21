@@ -202,6 +202,45 @@ def test_every_observation_sentence_is_the_one_the_cli_prints(lab: Workspace) ->
     assert rows[-1]["pooled"] == 1, "a pooled row is last and says so"
 
 
+def test_the_threshold_columns_are_the_split_the_row_was_made_by(lab: Workspace) -> None:
+    """Contract 3: every split as a number and an operator, for a chart to draw the line.
+
+    One row per entry in `SPLITS`, so a split added with a rule nothing here maps would
+    fail at the first regeneration rather than reach the app as a silent NULL.
+    """
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        repo_key = lab.repo_key()
+        for split in observations_module.SPLITS:
+            _observation(connection, repo_key, split.fact, "rework", _threshold_text(split))
+        _observation(connection, repo_key, "purpose:development", "rework", "purpose = development")
+        _observation(connection, repo_key, "a_fact_this_build_forgot", "rework", "nothing to read")
+        app_views.install_app_views(connection)
+        rows = {row["fact"]: row for row in connection.execute("SELECT * FROM app_observation")}
+    finally:
+        connection.close()
+
+    assert len(rows) == len(observations_module.SPLITS) + 2
+    for split in observations_module.SPLITS:
+        row = rows[split.fact]
+        assert row["threshold_op"] == observations_module.THRESHOLD_OPS[split.rule], split.fact
+        if split.rule == "above_median":
+            # The median belongs to the row rather than to the split: it is the median of
+            # the sessions that were compared, which `_threshold_text` made 3.5.
+            assert row["threshold_value"] == 3.5, split.fact
+        else:
+            assert row["threshold_value"] == float(split.value), split.fact
+        assert f"{row['threshold_value']:g}" in row["threshold_text"], split.fact
+    label = rows["purpose:development"]
+    assert (label["threshold_value"], label["threshold_op"]) == (
+        None,
+        observations_module.LABEL_OP,
+    ), "a label is matched, not measured"
+    unknown = rows["a_fact_this_build_forgot"]
+    assert (unknown["threshold_value"], unknown["threshold_op"]) == (None, None)
+
+
 def test_app_review_is_one_row_per_review_newest_first(lab: Workspace) -> None:
     """Contract 2: the review screen reads the stored row, not a fresh computation."""
     record_one_session(lab)
@@ -310,15 +349,44 @@ def test_the_json_and_the_text_carry_the_same_totals(lab: Workspace) -> None:
     assert f"{as_json['sessions']} sessions in the last 3650d" in text
 
 
-def _observation(connection: sqlite3.Connection, repo_key: str, fact: str, outcome: str) -> None:
+def _observation(
+    connection: sqlite3.Connection,
+    repo_key: str,
+    fact: str,
+    outcome: str,
+    threshold_text: str = "more than 0",
+) -> None:
     """One observation row with plausible numbers; the sentence is built from them."""
     connection.execute(
         "INSERT OR REPLACE INTO observation (repo_key, fact, threshold_text, outcome,"
         " with_n, without_n, with_value, without_value, direction, coverage,"
         " fact_commits, inferred_commits, fact_version)"
-        " VALUES (?, ?, 'more than 0', ?, 7, 9, 0.12, 0.31, 'lower', 0.86, 5, 2, 1)",
-        (repo_key, fact, outcome),
+        " VALUES (?, ?, ?, ?, 7, 9, 0.12, 0.31, 'lower', 0.86, 5, 2, 1)",
+        (repo_key, fact, threshold_text, outcome),
     )
+
+
+def _threshold_text(split: observations_module.Split) -> str:
+    """The very text `observations.build` would have stored for this split.
+
+    Written by the module rather than retyped here, so the test reads the real wording,
+    including the median a rule computes from the sessions in front of it (0 to 7 here,
+    whose median is 3.5).
+    """
+    held = [
+        observations_module._Session(
+            session_id=f"synthetic-{index}",
+            repo_key="repo",
+            rework=0.1,
+            alive_head=0.9,
+            coverage=0.9,
+            fact_commits=1,
+            inferred_commits=0,
+            values={split.fact: float(index)},
+        )
+        for index in range(8)
+    ]
+    return observations_module._threshold(split, held)[1]
 
 
 def _usage_session(

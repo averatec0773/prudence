@@ -29,4 +29,8 @@ from __future__ import annotations
 
 # The shape of a stored review's `sections` JSON. Bumped when the section list, the
 # number list or their keys change, so a surface can refuse a payload it cannot read.
-REVIEW_VERSION = 1
+# 2 (M4 batch 3): a number may carry `with_n`, `without_n` and `previous_value` beside
+# the text it is printed as. Every key that existed at version 1 is still written and
+# still means the same thing, so a version 1 row renders unchanged and the three new keys
+# are optional wherever they are read.
+REVIEW_VERSION = 2

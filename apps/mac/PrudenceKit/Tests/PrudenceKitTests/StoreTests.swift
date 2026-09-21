@@ -88,38 +88,46 @@ enum Fixture {
 @Suite("The contract")
 struct ContractTests {
 
-    @Test("A store at contract 2 opens")
-    func opensAtTwo() throws {
-        let store = try Store(url: Fixture.url, expectedContractVersion: "2")
-        #expect(try store.status()?.appContractVersion == "2")
-        #expect(Contract.version == "2")
+    /// Contract 3 is additive — four optional columns and three optional payload fields — so
+    /// this build renders 2 and 3 from one code path and refusing either would be refusing a
+    /// store it can draw completely. Whichever the fixture is at, it opens.
+    @Test("Both supported contracts open, and the store says which one it was")
+    func opensAtEitherSupportedVersion() throws {
+        let store = try Store(url: Fixture.url)
+        #expect(Contract.supported == ["2", "3"])
+        #expect(Contract.newest == "3")
+        #expect(Contract.supported.contains(store.contractVersion))
+        #expect(try store.status()?.appContractVersion == store.contractVersion)
     }
 
     @Test("Contract 1 is refused, and the refusal says the engine is the old one")
     func refusesOne() throws {
-        #expect(throws: StoreError.contractMismatch(found: "2", expected: "1")) {
-            _ = try Store(url: Fixture.url, expectedContractVersion: "1")
+        // The fixture is written at the engine's current contract; the refusal names it.
+        let fixtureVersion = try Fixture.text("SELECT value FROM meta WHERE key = 'app_contract_version'")
+        #expect(throws: StoreError.contractMismatch(found: fixtureVersion, expected: ["1"])) {
+            _ = try Store(url: Fixture.url, supporting: ["1"])
         }
-        let refusal = StoreError.contractMismatch(found: "1", expected: Contract.version)
+        let refusal = StoreError.contractMismatch(found: "1", expected: Contract.supported)
         #expect(refusal.message.contains("contract 1"))
-        #expect(refusal.message.contains("needs 2"))
+        #expect(refusal.message.contains("needs 2 or 3"))
         #expect(refusal.message.contains("newer than the Prudence engine"))
     }
 
-    @Test("Contract 3 is refused too, and that refusal says the app is the old one")
-    func refusesThree() throws {
-        #expect(throws: StoreError.contractMismatch(found: "2", expected: "3")) {
-            _ = try Store(url: Fixture.url, expectedContractVersion: "3")
+    @Test("Contract 4 is refused, and that refusal says the app is the old one")
+    func refusesFour() throws {
+        let fixtureVersion = try Fixture.text("SELECT value FROM meta WHERE key = 'app_contract_version'")
+        #expect(throws: StoreError.contractMismatch(found: fixtureVersion, expected: ["4"])) {
+            _ = try Store(url: Fixture.url, supporting: ["4"])
         }
-        let refusal = StoreError.contractMismatch(found: "3", expected: Contract.version)
-        #expect(refusal.message.contains("contract 3"))
-        #expect(refusal.message.contains("app knows 2"))
+        let refusal = StoreError.contractMismatch(found: "4", expected: Contract.supported)
+        #expect(refusal.message.contains("contract 4"))
+        #expect(refusal.message.contains("app knows 2 or 3"))
         #expect(refusal.message.contains("newer than this app"))
     }
 
     @Test("A store with no meta table at all is a sentence, not a crash")
     func refusesAncient() {
-        let ancient = StoreError.contractMismatch(found: nil, expected: Contract.version)
+        let ancient = StoreError.contractMismatch(found: nil, expected: Contract.supported)
         #expect(ancient.message.contains("prudence ingest"))
     }
 
@@ -159,12 +167,45 @@ struct ContractTests {
         }
     }
 
-    @Test("Every view answers with exactly the columns APP_VIEWS names, in order")
+    /// Every view answers with exactly the columns `APP_VIEWS` names, at whichever contract
+    /// the fixture is at.
+    ///
+    /// The set has to match exactly — a renamed or dropped column is the thing this test is
+    /// for — and the **contract 2 columns have to still be in their contract 2 order**, so a
+    /// reordering that would break a positional read still fails. Where contract 3 puts its
+    /// four additions in the list is the Python side's business and not something this app can
+    /// assert from the outside; it is the only part left loose, and deliberately.
+    @Test("Every view answers with exactly the columns APP_VIEWS names")
     func columnsMatch() throws {
         let store = try Fixture.store()
+        let expected = Contract.columns(at: store.contractVersion)
         for view in Contract.View.allCases {
-            #expect(try store.columns(of: view) == view.columns, "\(view.rawValue)")
+            let actual = try store.columns(of: view)
+            let wanted = expected[view] ?? []
+            #expect(Set(actual) == Set(wanted), "\(view.rawValue)")
+            let shared = Contract.columnsAtTwo[view] ?? []
+            #expect(actual.filter(shared.contains) == shared, "\(view.rawValue), order")
         }
+    }
+
+    /// Contract 3's own lists are contract 2's plus four columns, and nothing is lost on the
+    /// way: a table built by insertion can silently drop the anchor it inserts after.
+    @Test("Contract 3 is contract 2 plus four columns and nothing else")
+    func threeIsTwoPlusFour() {
+        for view in Contract.View.allCases {
+            let two = Contract.columnsAtTwo[view] ?? []
+            let three = Contract.columnsAtThree[view] ?? []
+            #expect(three.filter(two.contains) == two, "\(view.rawValue)")
+        }
+        let observation = Contract.columnsAtThree[.observation] ?? []
+        #expect(observation.contains("threshold_value"))
+        #expect(observation.contains("threshold_op"))
+        #expect(Contract.columnsAtThree[.review]?.contains("segment_language") == true)
+        let added = Contract.View.allCases.reduce(0) { total, view in
+            total + (Contract.columnsAtThree[view] ?? []).count
+                - (Contract.columnsAtTwo[view] ?? []).count
+        }
+        #expect(added == 3, "contract 3 adds three view columns, not \(added)")
     }
 
     @Test("Contract 2 names seven views, the five of contract 1 plus commits and reviews")
@@ -182,7 +223,7 @@ struct RowTests {
     func status() throws {
         let row = try #require(try Fixture.store().status())
         #expect(!row.engineVersion.isEmpty)
-        #expect(row.appContractVersion == "2")
+        #expect(row.appContractVersion == (try Fixture.text("SELECT value FROM meta WHERE key = 'app_contract_version'")))
         // Two views of the same store have to agree about how much is in it: the number on
         // the status line is the number of sessions the session list will hand a screen.
         #expect(row.sessions == (try Fixture.count("SELECT COUNT(*) FROM app_session_list")))
