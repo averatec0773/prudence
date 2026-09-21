@@ -115,7 +115,7 @@ struct SettingsView: View {
                     .frame(width: 160)
                     if languageChanged {
                         Button(Str.settingsLanguageRelaunchNow.text) { relaunch() }
-                            .buttonStyle(PrudenceButtonStyle(height: 24))
+                            .buttonStyle(.prudence)
                     }
                 }
             }
@@ -272,7 +272,7 @@ private struct PathField: View {
             Button(Str.commonClear.text) { text = "" }
                 .disabled(text.isEmpty)
         }
-        .buttonStyle(PrudenceButtonStyle(height: 22))
+        .buttonStyle(.prudence)
     }
 
     private func choose() {

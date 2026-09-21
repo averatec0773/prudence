@@ -126,31 +126,22 @@ func renderEverything() {
     /// Glass; the three screens inside the window and the standalone Settings sheet are drawn
     /// on content surfaces, which are opaque under either.
     let shots:
-        [(
-            name: String, size: CGSize?, bothMaterials: Bool, bothPrimaries: Bool,
-            view: () -> AnyView
-        )] = [
+        [(name: String, size: CGSize?, bothMaterials: Bool, view: () -> AnyView)] = [
             (
-                "menu", nil, true, true,
+                "menu", nil, true,
                 { AnyView(MenuContentView(model: model, actions: MenuActions())) }
             ),
             // The window at the floor `MainWindowController` sets, which is where the layout
             // is under the most pressure.
-            ("window", CGSize(width: 900, height: 600), true, false, { window(.overview) }),
-            ("overview", overviewSize, false, false, { window(.overview) }),
-            ("review", reviewSize, false, false, { window(.review) }),
-            ("observations", observationsSize, false, false, { window(.observations) }),
+            ("window", CGSize(width: 900, height: 600), true, { window(.overview) }),
+            ("overview", overviewSize, false, { window(.overview) }),
+            ("review", reviewSize, false, { window(.review) }),
+            ("observations", observationsSize, false, { window(.observations) }),
             // Both tabs of Settings B. The Data tab holds the two path rows and the line the
             // store says about itself, which is half the screen; a shot of General alone would
             // leave the founder judging the half that has no numbers in it.
-            (
-                "settings", CGSize(width: 620, height: 470), false, false,
-                { settingsView(.general) }
-            ),
-            (
-                "settings-data", CGSize(width: 620, height: 470), false, false,
-                { settingsView(.data) }
-            ),
+            ("settings", CGSize(width: 620, height: 470), false, { settingsView(.general) }),
+            ("settings-data", CGSize(width: 620, height: 470), false, { settingsView(.data) }),
         ]
 
     let appearances: [(String, NSAppearance.Name)] = [("light", .aqua), ("dark", .darkAqua)]
@@ -166,36 +157,23 @@ func renderEverything() {
                 var materials: [(String, Theme.Material)] = [("", .standard)]
                 if shot.bothMaterials { materials.append(("-glass", .glass)) }
                 for (materialSuffix, material) in materials {
-                    // The popover is photographed once per primary variant as well, so the
-                    // founder can put A and B side by side and pick one (batch 3). Every
-                    // other shot keeps the default, because the variant only shows on the one
-                    // prominent button per surface and a second copy of the Overview would be
-                    // two identical files.
-                    let variants: [(String, Theme.PrimaryVariant)] =
-                        shot.bothPrimaries
-                        ? [("-primaryA", .accent), ("-primaryB", .tinted)] : [("", .accent)]
-                    for (variantSuffix, primary) in variants {
-                        let name =
-                            "\(shot.name)-\(appearanceSuffix)-\(languageSuffix)"
-                            + "\(materialSuffix)\(variantSuffix).png"
-                        let url = directory.appendingPathComponent(name)
-                        // The language is forced around the whole render, not around building
-                        // the view: SwiftUI evaluates a body during layout, and `Str` resolves
-                        // its locale there.
-                        Localization.withLanguage(language) {
-                            render(
-                                shot.view().prudenceTheme(
-                                    Theme(
-                                        material: material,
-                                        reduceTransparency: false,
-                                        primary: primary)),
-                                size: shot.size,
-                                appearance: appearance,
-                                to: url
-                            )
-                        }
-                        print("wrote \(url.path)")
+                    let name =
+                        "\(shot.name)-\(appearanceSuffix)-\(languageSuffix)"
+                        + "\(materialSuffix).png"
+                    let url = directory.appendingPathComponent(name)
+                    // The language is forced around the whole render, not around building the
+                    // view: SwiftUI evaluates a body during layout, and `Str` resolves its
+                    // locale there.
+                    Localization.withLanguage(language) {
+                        render(
+                            shot.view().prudenceTheme(
+                                Theme(material: material, reduceTransparency: false)),
+                            size: shot.size,
+                            appearance: appearance,
+                            to: url
+                        )
                     }
+                    print("wrote \(url.path)")
                 }
             }
         }
@@ -227,25 +205,21 @@ func auditLabels() {
     ]
     for (name, style) in styles {
         for material in Theme.Material.allCases {
-            for primary in Theme.PrimaryVariant.allCases {
-                for (appearanceName, dark) in [("light", false), ("dark", true)] {
-                    let theme = Theme(
-                        material: material, reduceTransparency: false, primary: primary)
-                    let visible = LabelAudit.labelIsVisible(
-                        "Review now",
-                        size: size,
-                        appearance: NSAppearance(named: dark ? .darkAqua : .aqua),
-                        onScreen: onScreen
-                    ) { label in
-                        Button(label) {}
-                            .buttonStyle(style)
-                            .prudenceTheme(theme)
-                            .frame(width: size.width, height: size.height)
-                    }
-                    if !visible {
-                        blank.append(
-                            "\(name) \(material.rawValue) \(primary.rawValue) \(appearanceName)")
-                    }
+            for (appearanceName, dark) in [("light", false), ("dark", true)] {
+                let theme = Theme(material: material, reduceTransparency: false)
+                let visible = LabelAudit.labelIsVisible(
+                    "Review now",
+                    size: size,
+                    appearance: NSAppearance(named: dark ? .darkAqua : .aqua),
+                    onScreen: onScreen
+                ) { label in
+                    Button(label) {}
+                        .buttonStyle(style)
+                        .prudenceTheme(theme)
+                        .frame(width: size.width, height: size.height)
+                }
+                if !visible {
+                    blank.append("\(name) \(material.rawValue) \(appearanceName)")
                 }
             }
         }
@@ -295,7 +269,7 @@ func auditLabels() {
                     + blank.joined(separator: "\n  ") + "\n").utf8))
         exit(2)
     }
-    let count = styles.count * 8 + (onScreen ? 2 : 0)
+    let count = styles.count * 4 + (onScreen ? 2 : 0)
     print("label audit (\(how)): \(count) renders, every label visible")
 }
 

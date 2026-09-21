@@ -111,13 +111,12 @@ stores it; `app_review.sections` is `json_extract(..., '$.sections')` out of the
 
 ## Screenshots
 
-`./Scripts/shots.sh` writes forty-four PNGs: every screen in light and dark and in English and
-Simplified Chinese, the two surfaces that have a material in Standard and Glass as well, and
-the popover in both primary-button variants on top of that.
+`./Scripts/shots.sh` writes thirty-six PNGs: every screen in light and dark and in English and
+Simplified Chinese, and the two surfaces that have a material in Standard and Glass as well.
 
 | shot | size | materials | what it is |
 | --- | --- | --- | --- |
-| `menu-{light,dark}-{en,zh}[-glass]-primary{A,B}` | fitted | both | the dropdown, variant C with captions, in both primary variants |
+| `menu-{light,dark}-{en,zh}[-glass]` | fitted | both | the dropdown, variant C with captions |
 | `window-{light,dark}-{en,zh}[-glass]` | 900x600 | both | the whole window at the floor `MainWindowController` sets |
 | `overview-{light,dark}-{en,zh}` | 1200x1500 | standard | Overview A: cards, stacked bars, lines, heat strip |
 | `review-{light,dark}-{en,zh}` | 1200x2600 | standard | Review B: every chart with its table open under it |
@@ -134,9 +133,10 @@ completely, which is the honest Standard look.
 The three screen shots are taller than a window because each of them now carries several
 charts, and a shot cut off at the window's height would hide the ones a reviewer is being asked
 about; `window` stays at the 900x600 floor, which is where the layout is under the most
-pressure. Only the eight `menu-*` names changed in batch 3, and
-`.github/workflows/mac-ci.yml` needs no edit either way, because it uploads the whole directory
-rather than a list of files.
+pressure. Batch 3's `-primaryA` / `-primaryB` suffixes are gone now that the founder has chosen
+A and there is one primary style, so the `menu-*` names are back to the shape every other shot
+has. `.github/workflows/mac-ci.yml` needs no edit either way, because it uploads the whole
+directory rather than a list of files.
 
 Every run ends with the **label audit**: each button style, under each material, rendered with
 its label and without it, failing if the two pictures are identical, which is what a label

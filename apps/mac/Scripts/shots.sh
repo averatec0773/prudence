@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Render the shipping views off-screen into shots/.
 #
-# Every screen comes in light and dark and in English and Simplified Chinese, the two surfaces
-# that have a material come in Standard and Glass as well, and the popover comes in both
-# primary-button variants on top of that:
+# Every screen comes in light and dark and in English and Simplified Chinese, and the two
+# surfaces that have a material come in Standard and Glass as well:
 #
-#   menu-{light,dark}-{en,zh}[-glass]-primary{A,B}.png   the dropdown, variant C with captions
+#   menu-{light,dark}-{en,zh}[-glass].png          the dropdown, variant C with captions
 #   window-{light,dark}-{en,zh}[-glass].png        the whole window at its 900x600 floor
 #   overview-{light,dark}-{en,zh}.png              Overview A: cards, stacked bars, lines, heat
 #   review-{light,dark}-{en,zh}.png                Review B: every chart with its table open
@@ -13,16 +12,14 @@
 #   settings-{light,dark}-{en,zh}.png              Settings B, the General tab
 #   settings-data-{light,dark}-{en,zh}.png         Settings B, the Data tab
 #
-# Forty-four PNGs. The `-glass` pair is the popover and the window because those are the
+# Thirty-six PNGs. The `-glass` pair is the popover and the window because those are the
 # control and navigation layer; the screens inside the window are content and are opaque under
-# either material, so photographing them twice would produce two identical files. `-primaryA`
-# and `-primaryB` are batch 3's two readings of the mockups' one sentence about the prominent
-# action, for the founder to choose between; only the popover gets both, because the variant
-# shows on the one prominent button per surface.
+# either material, so photographing them twice would produce two identical files.
 #
-# The eight `menu-*` names are new; every other name is unchanged since batch 1.
-# `.github/workflows/mac-ci.yml` needs no edit either way, because it uploads the whole
-# directory rather than a list of files.
+# Batch 3's `-primaryA` / `-primaryB` suffixes are gone: the founder chose A, so there is one
+# primary style and the popover is photographed once per material again.
+# `.github/workflows/mac-ci.yml` needs no edit, because it uploads the whole directory rather
+# than a list of files.
 #
 # Every run ends with the label audit: each button style, under each material, rendered with
 # its label and without it, failing if the two pictures are identical — which is what a label

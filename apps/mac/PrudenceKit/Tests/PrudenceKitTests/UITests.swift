@@ -333,36 +333,33 @@ struct ButtonLabelTests {
         ("prudencePlain", .prudencePlain),
     ]
 
-    /// Every style, every material, both primary variants, both appearances: 32 pairs of
-    /// renders, and in every one of them the label has to make a difference to the picture.
+    /// Every style, every material, both appearances: 16 pairs of renders, and in every one of
+    /// them the label has to make a difference to the picture.
     @MainActor
     @Test func everyButtonLabelSurvivesTheMaterial() {
         let size = CGSize(width: 180, height: 40)
         for (name, style) in Self.styles {
             for material in Theme.Material.allCases {
-                for primary in Theme.PrimaryVariant.allCases {
-                    for dark in [false, true] {
-                        let theme = Theme(
-                            material: material, reduceTransparency: false, primary: primary)
-                        let visible = LabelAudit.labelIsVisible(
-                            "Review now",
-                            size: size,
-                            appearance: NSAppearance(named: dark ? .darkAqua : .aqua)
-                        ) { label in
-                            Button(label) {}
-                                .buttonStyle(style)
-                                .prudenceTheme(theme)
-                                .frame(width: size.width, height: size.height)
-                        }
-                        #expect(
-                            visible,
-                            """
-                            a \(name) button renders the same with its label and without it, \
-                            under material=\(material.rawValue) primary=\(primary.rawValue) \
-                            dark=\(dark): something is drawn over the label.
-                            """
-                        )
+                for dark in [false, true] {
+                    let theme = Theme(material: material, reduceTransparency: false)
+                    let visible = LabelAudit.labelIsVisible(
+                        "Review now",
+                        size: size,
+                        appearance: NSAppearance(named: dark ? .darkAqua : .aqua)
+                    ) { label in
+                        Button(label) {}
+                            .buttonStyle(style)
+                            .prudenceTheme(theme)
+                            .frame(width: size.width, height: size.height)
                     }
+                    #expect(
+                        visible,
+                        """
+                        a \(name) button renders the same with its label and without it, \
+                        under material=\(material.rawValue) dark=\(dark): something is drawn \
+                        over the label.
+                        """
+                    )
                 }
             }
         }

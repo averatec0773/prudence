@@ -282,7 +282,7 @@ public struct ContractMismatchState: View {
             Text(.contractNote).font(Type.caption).foregroundStyle(Ink.tertiary)
             if let onRetry {
                 Button(Str.commonTryAgain.text, action: onRetry)
-                    .buttonStyle(PrudenceButtonStyle())
+                    .buttonStyle(.prudence)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

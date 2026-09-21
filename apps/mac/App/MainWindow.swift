@@ -337,7 +337,7 @@ struct ReviewPicker: View {
         Button(model.isBusy ? Str.reviewWriting.text : Str.menuReviewNow.text) {
             model.reviewNow()
         }
-        .buttonStyle(PrudenceButtonStyle(emphasis: .prominent, height: Self.controlHeight))
+        .buttonStyle(.prudencePrimary)
         .disabled(model.isBusy)
     }
 }

@@ -283,8 +283,9 @@ struct MenuContentView: View {
     ///     | Review now          |  gutter  |  Ingest now    |   two equal cells, one 8 pt gap
     ///     | Settings...                              Quit   |   one baseline, both edges
     ///
-    /// The two plain buttons take their own padding back out (`PrudenceButtonStyle`), so their
-    /// glyphs start on the grid's edges rather than 8 pt inside them.
+    /// The two plain buttons carry no horizontal padding of their own (`PrudenceButtonStyle`),
+    /// so their glyphs start on the grid's edges rather than inside them, and they keep the
+    /// same 28 pt row height as the filled rows above, so all three baselines line up.
     /// `.pop-foot`: the actions on their own surface, under one hairline.
     ///
     /// Opaque `Surface.secondary` under Standard, and a thin wash of it under Glass: a solid

@@ -194,6 +194,12 @@ public enum Surface {
     /// Chart tracks: the groove a bar or a share is drawn into.
     public static let sunken = Color.dynamic(light: "#EBEBEF", dark: "#171719")
     public static let sidebar = Color.dynamic(light: "#F6F6F8", dark: "#232325")
+    /// The quiet fill under a secondary control on an opaque surface, at rest, under the
+    /// pointer and pressed. Flat by construction: no gradient, no bevel, no highlight, and
+    /// the only thing any of the three states changes is the alpha.
+    public static let control = Color.dynamicAlpha(light: (0, 0.05), dark: (1, 0.08))
+    public static let controlHover = Color.dynamicAlpha(light: (0, 0.08), dark: (1, 0.12))
+    public static let controlPressed = Color.dynamicAlpha(light: (0, 0.03), dark: (1, 0.05))
     public static let separator = Color.dynamicAlpha(
         light: (0, 0.08), dark: (1, 0.10))
     public static let hairline = Color.dynamicAlpha(
@@ -312,36 +318,13 @@ public struct Theme: Equatable, Sendable {
         case glass
     }
 
-    /// Which of the two prominent buttons is drawn.
-    ///
-    /// Batch 3, and open on purpose: the founder read the old primary as "a flat blue pill
-    /// from an older era", so both readings of NOTES.md's one sentence about it are built and
-    /// photographed (`menu-…-primaryA.png` and `-primaryB.png`) and the choice is theirs. It
-    /// is a `Theme` flag rather than a setting because it is a decision about the design
-    /// system, not about this Mac; once the founder has chosen, the loser is deleted.
-    public enum PrimaryVariant: String, Sendable, CaseIterable {
-        /// A, the literal reading: the accent at 92 per cent over the frost, a white label,
-        /// one hairline edge, no gradient.
-        case accent
-        /// B, the quieter one: tinted glass with an accent-coloured label and an accent edge,
-        /// so the prominent action is the brightest thing on the surface without being a slab
-        /// of colour.
-        case tinted
-    }
-
     public var material: Material
     /// When true, both glass paths draw an opaque surface instead.
     public var reduceTransparency: Bool
-    public var primary: PrimaryVariant
 
-    public init(
-        material: Material = .glass,
-        reduceTransparency: Bool = false,
-        primary: PrimaryVariant = .accent
-    ) {
+    public init(material: Material = .glass, reduceTransparency: Bool = false) {
         self.material = material
         self.reduceTransparency = reduceTransparency
-        self.primary = primary
     }
 
     /// True when a surface should really be translucent: glass asked for, and not refused.

@@ -2,14 +2,19 @@ import SwiftUI
 
 /// The control styles.
 ///
-/// NOTES.md's Material section, in Swift: a button is a flat frosted 8 pt rounded rect, 30 pt
-/// tall in a window and 28 in the popover, 15 pt of horizontal padding, a semibold 13 pt
-/// label, one hairline edge and a top inner highlight that is barely there. No specular
-/// sweep, no bottom shading, **no drop shadow**: a control's only shadow is its ring, while
-/// the popover and the window keep theirs. Hover brightens the tint by a few per cent, press
-/// darkens it and **nothing moves**, and focus is the system's own accent ring. The prominent
-/// action is the accent at 92 per cent behind the same frost with a white label and no
-/// gradient.
+/// **Three styles and no fourth**, all on one 8 pt rounded rect, all 28 pt tall, all carrying
+/// a semibold 13 pt label, and none of them beveled, gradient-filled or shadowed:
+///
+/// | Style | Fill | Edge | Label |
+/// |---|---|---|---|
+/// | primary | the accent at 92 % behind the same frost | 0.5 pt `Surface.hairline` | white |
+/// | secondary | a flat quiet fill (`Surface.control`), or the popover's own frost at control strength under Glass | 0.5 pt `Surface.separator` | `Ink.primary` |
+/// | plain | none | none | `Ink.secondary`, the accent under the pointer |
+///
+/// The founder read the old set as retro, and the two things that made it so are gone: the top
+/// inner highlight (a bevel by another name) and the second prominent variant. Hover raises the
+/// fill by a few per cent, press lowers it, **nothing moves**, a plain button changes only its
+/// ink, and focus is the system's own accent ring.
 ///
 /// **Everything else shaped like a control is a system control and is not redrawn.** The
 /// segmented control is `Picker(...).pickerStyle(.segmented)`, the project and review pickers
@@ -47,7 +52,7 @@ public struct PrudenceButtonStyle: ButtonStyle {
 }
 
 extension ButtonStyle where Self == PrudenceButtonStyle {
-    /// The one prominent action per surface.
+    /// The one prominent action per surface: the accent at 92 % behind the frost.
     public static var prudencePrimary: PrudenceButtonStyle {
         PrudenceButtonStyle(emphasis: .prominent)
     }
@@ -55,13 +60,13 @@ extension ButtonStyle where Self == PrudenceButtonStyle {
     public static var prudencePrimaryWide: PrudenceButtonStyle {
         PrudenceButtonStyle(emphasis: .prominent, fills: true)
     }
-    /// Everything else with a frame around it.
+    /// The secondary action: `Review now`, `Ingest now`, `Choose...`, `Write anyway`.
     public static var prudence: PrudenceButtonStyle { PrudenceButtonStyle() }
     /// The same, filling its cell. The popover's `Review now` and `Ingest now`.
     public static var prudenceWide: PrudenceButtonStyle {
         PrudenceButtonStyle(fills: true)
     }
-    /// Quit, and anything else that should not look like an action.
+    /// `Settings...`, `Quit`, `Dismiss`: a label on the grid line and nothing else.
     public static var prudencePlain: PrudenceButtonStyle {
         PrudenceButtonStyle(emphasis: .plain)
     }
@@ -93,21 +98,21 @@ private struct PrudenceButtonBody: View {
             // pointer. That is the one thing a flat control must get right.
             .animation(Motion.hover, value: hovering)
             .animation(Motion.hover, value: configuration.isPressed)
-            // A plain button is text on a grid line, so its own padding is taken back out
-            // again: the hover wash keeps its breathing room and the glyphs start exactly on
-            // the edge the rows above them start on.
-            .padding(.horizontal, emphasis == .plain ? -Space.s2 : 0)
     }
 
-    /// The label, sized, with the hover and press washes behind it.
+    /// The label, sized, with the hover and press wash behind it.
+    ///
+    /// A plain button has **no** horizontal padding of its own: it is a label on the grid
+    /// line, so its glyphs start exactly on the edge the rows above it start on, and it keeps
+    /// the same 28 pt row height so its baseline lands where the filled rows' baselines do.
     private var core: some View {
         configuration.label
             .font(Type.footnoteStrong)
             .foregroundStyle(foreground)
-            .padding(.horizontal, emphasis == .plain ? Space.s2 : 15)
+            .padding(.horizontal, emphasis == .plain ? 0 : 15)
             .frame(maxWidth: fills ? .infinity : nil)
             .frame(height: height)
-            .background(washes)
+            .background(shape.fill(overlayTint).allowsHitTesting(false))
     }
 
     /// **The material goes behind the label, never in front of it.**
@@ -132,74 +137,69 @@ private struct PrudenceButtonBody: View {
     private var skinned: some View {
         switch emphasis {
         case .plain:
-            // Borderless: a hover wash and nothing else, and no material at all.
-            core.background(shape.fill(hovering ? Surface.sunken : Color.clear))
+            // No fill, no edge, no material: the ink is the whole of it.
+            core
         case .normal:
-            core.prudenceGlass(.control)
-        case .prominent:
-            switch theme.primary {
-            case .accent:
-                // Variant A: the accent at 92 per cent over the same frost, a white label,
-                // one hairline edge, no gradient. NOTES.md's own words.
-                core
-                    .background(
-                        shape.fill(Ink.accent.opacity(0.92))
-                            .overlay(shape.strokeBorder(Surface.hairline, lineWidth: 0.5))
-                    )
-                    .prudenceGlass(.control)
-            case .tinted:
-                // Variant B: the quieter one the founder asked to see beside A. The same
-                // frost, a soft accent wash instead of a fill, and the label in the accent.
-                core
-                    .background(
-                        shape.fill(Ink.accentSoft)
-                            .overlay(shape.strokeBorder(Ink.accent.opacity(0.35), lineWidth: 1))
-                    )
-                    .prudenceGlass(.control)
+            if theme.wantsTranslucency {
+                // Under Glass the fill is the frost the popover itself uses, at control
+                // strength, so a secondary button and the surface behind it are one material.
+                core.prudenceGlass(.control).overlay(edge)
+            } else {
+                // Opaque: one flat quiet fill, whose alpha is the only thing hover and press
+                // move. No highlight, no bevel, no shadow.
+                core.background(shape.fill(quietFill)).overlay(edge)
             }
+        case .prominent:
+            // The accent at 92 per cent over the same frost, a white label, one hairline
+            // edge, no gradient. NOTES.md's own words, and the founder's choice.
+            core
+                .background(
+                    shape.fill(Ink.accent.opacity(0.92))
+                        .overlay(shape.strokeBorder(Surface.hairline, lineWidth: 0.5))
+                )
+                .prudenceGlass(.control)
         }
+    }
+
+    /// The one hairline a secondary control carries, in the separator colour.
+    private var edge: some View {
+        shape.strokeBorder(Surface.separator, lineWidth: 0.5)
     }
 
     private var foreground: Color {
         switch emphasis {
-        case .prominent: return theme.primary == .accent ? Ink.onAccent : Ink.accent
+        case .prominent: return Ink.onAccent
         case .normal: return Ink.primary
-        case .plain: return Ink.secondary
+        // A plain button has no fill to brighten, so the pointer moves its ink to the accent
+        // instead. No underline: a link is not a control.
+        case .plain: return hovering ? Ink.accent : Ink.secondary
         }
     }
 
-    /// Hover, press, and the faint top inner highlight, in one layer behind the label.
-    ///
-    /// The prominent action has **no gradient** (NOTES.md), which is what made the founder
-    /// read the old one as a pill from an earlier era, so the highlight is drawn for the
-    /// frosted emphases only.
-    @ViewBuilder
-    private var washes: some View {
-        ZStack {
-            shape.fill(overlayTint)
-            if emphasis == .normal || theme.primary == .tinted { topHighlight }
-        }
-        .allowsHitTesting(false)
+    /// The flat fill of a secondary control on an opaque surface. Hover raises it by a few
+    /// per cent, press lowers it, and nothing moves.
+    private var quietFill: Color {
+        if configuration.isPressed { return Surface.controlPressed }
+        if hovering { return Surface.controlHover }
+        return Surface.control
     }
 
-    /// Hover brightens by a few per cent, press darkens. Both are a wash over the tint, never
-    /// a second material.
+    /// Hover and press as a wash above the fill, for the two styles whose fill cannot carry
+    /// the state itself: the accent slab, and a secondary control whose fill is the frost.
+    /// Empty everywhere else, so a plain button never grows a background.
     private var overlayTint: Color {
-        if configuration.isPressed { return Color.black.opacity(0.10) }
-        if hovering { return Color.white.opacity(0.08) }
-        return .clear
-    }
-
-    /// The faint top inner highlight. One gradient, a third of the height, and gone.
-    private var topHighlight: some View {
-        LinearGradient(
-            colors: [Color.white.opacity(0.22), Color.white.opacity(0)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: height / 3)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .clipShape(shape)
+        switch emphasis {
+        case .plain: return .clear
+        case .normal:
+            guard theme.wantsTranslucency else { return .clear }
+            if configuration.isPressed { return Color.black.opacity(0.06) }
+            if hovering { return Color.white.opacity(0.08) }
+            return .clear
+        case .prominent:
+            if configuration.isPressed { return Color.black.opacity(0.10) }
+            if hovering { return Color.white.opacity(0.08) }
+            return .clear
+        }
     }
 }
 

@@ -125,6 +125,7 @@ fails and says so.
 | `Surface.secondary` | `#F7F7F9` | `#242426` |
 | `Surface.sunken` (chart tracks, chips) | `#EBEBEF` | `#171719` |
 | `Surface.sidebar` | `#F6F6F8` | `#232325` |
+| `Surface.control` / `.controlHover` / `.controlPressed` (the secondary button's flat fill) | `rgba(0,0,0,0.05)` / `0.08` / `0.03` | `rgba(255,255,255,0.08)` / `0.12` / `0.05` |
 | `Surface.separator` | `rgba(0,0,0,0.08)` | `rgba(255,255,255,0.10)` |
 | `Surface.hairline` | `rgba(0,0,0,0.13)` | `rgba(255,255,255,0.16)` |
 | `Surface.coverage` | `rgba(0,0,0,0.16)` | `rgba(255,255,255,0.24)` |
@@ -177,35 +178,40 @@ right ink without anybody checking `colorScheme`.
 
 ### Controls
 
-`PrudenceButtonStyle` in three emphases, which is the whole of the custom control drawing:
+**Exactly three button styles, and no fourth.** `PrudenceButtonStyle` in three emphases is the
+whole of the custom control drawing. All three are the same 8 pt rounded rect, the same 28 pt
+height and the same semibold 13 pt label, and none of them is beveled, gradient-filled or
+shadowed:
 
-- `.prudencePrimary` — the one prominent action per surface. Two variants, chosen by
-  `Theme.primary` (below).
-- `.prudence` — the frosted default: 8 pt rounded rect, one hairline edge, a top inner
-  highlight that is barely there, no drop shadow.
-- `.prudencePlain` — Quit, Settings and Dismiss: a hover wash and nothing else, and its own
-  horizontal padding taken back out again so its glyphs start on the grid's edge.
+| Style | Fill | Edge | Label | Where |
+|---|---|---|---|---|
+| `.prudencePrimary` | the accent at 92 % behind the same frost | 0.5 pt `Surface.hairline` | white (`Ink.onAccent`) | Open Prudence, Review now in the Review header |
+| `.prudence` | flat and quiet: `Surface.control` (black 5 % / white 8 %), or the frost the popover uses at control strength under Glass | 0.5 pt `Surface.separator` | `Ink.primary` | Review now, Ingest now, Choose..., Clear, Write anyway, Relaunch, Try again, Show all weeks |
+| `.prudencePlain` | none | none | `Ink.secondary`, the accent under the pointer | Settings..., Quit, Dismiss |
 
-`.prudenceWide` and `.prudencePrimaryWide` are the same two styles with `fills: true`, which
+`.prudenceWide` and `.prudencePrimaryWide` are the first two styles with `fills: true`, which
 makes the **drawn shape** take the width it is offered. A `.frame(maxWidth: .infinity)` at the
 call site widens the button and not the shape a `ButtonStyle` draws, which is why the popover's
 rows each came out a different width before batch 3.
 
-Hover brightens the tint by a few per cent; press darkens it and **nothing moves**.
+**States.** Hover raises the secondary fill by a few per cent (`Surface.controlHover`) and press
+lowers it (`Surface.controlPressed`); under Glass and on the primary, where the fill is a
+material or a slab, the same movement is a wash above it. A plain button has no fill to move, so
+the pointer changes its ink to the accent and nothing else — no underline, because a link is not
+a control. **Nothing moves** in any of the three.
 
-#### The two primary variants
+#### One primary, after batch 3's two
 
-The founder read the old prominent button as "a flat blue pill from an older era", so both
-readings of NOTES.md's one sentence about it are built and photographed, and the choice is
-theirs. `Theme.primary` picks; `menu-…-primaryA.png` and `-primaryB.png` show them.
+The founder read the old prominent button as "a flat blue pill from an older era", so batch 3
+built and photographed both readings of NOTES.md's one sentence about it. **The founder chose A**
+— the accent at 92 % behind the frost, a white semibold label, 8 pt radius, one hairline edge,
+no gradient — so B, the `Theme.primary` flag that selected between them and the
+`-primaryA` / `-primaryB` shot suffixes are all gone; the popover's shots are
+`menu-{light,dark}-{en,zh}[-glass].png` again.
 
-| Variant | Fill | Label | Edge |
-|---|---|---|---|
-| `.accent` (A) | the accent at 92 % over the same frost | white | 0.5 pt `Surface.hairline` |
-| `.tinted` (B) | `Ink.accentSoft` over the same frost | `Ink.accent` | 1 pt accent at 35 % |
-
-Both are 8 pt radius, a semibold 13 pt label, and **no gradient** on A: the faint top highlight
-is drawn for the frosted emphases and for B only. Once the founder has chosen, the loser goes.
+The same round removed the **top inner highlight** from every style. It was a bevel by another
+name, and it was what made the rest of the popover's controls read as retro beside the chosen
+primary.
 
 #### The button grid
 
@@ -249,8 +255,8 @@ answers with nothing, so there is no label in it to assert on before the fix or 
 **The guard, and its honest limit.** `PrudenceUI/LabelAudit.swift` asks the property directly:
 render the control twice, once with its label and once with nothing in it, and require the two
 pictures to differ. A label covered by anything renders identically either way.
-`UITests.ButtonLabelTests` runs it over every style × material × primary variant × appearance
-in `swift test`, and `Scripts/shots.sh` runs it at the end of every render.
+`UITests.ButtonLabelTests` runs it over every style × material × appearance in `swift test`,
+and `Scripts/shots.sh` runs it at the end of every render.
 
 **It does not reproduce this bug, and that was measured rather than assumed.** The broken code
 was put back and the audit run against it three ways — off screen through `cacheDisplay`, on
@@ -285,9 +291,9 @@ on top would be a second material over the first.
 
 The API names were checked against the macOS 27 SDK that Xcode 27 ships, not against memory.
 
-`Theme` is an environment value carrying the material, the reduced-transparency flag and the
-primary variant, read once per window from `Theme.system`. Both paths consult the same flag, so
-the fallback cannot drift from the thing it falls back from.
+`Theme` is an environment value carrying the material and the reduced-transparency flag, read
+once per window from `Theme.system`. Both paths consult the same flag, so the fallback cannot
+drift from the thing it falls back from.
 
 **The material goes behind the labelled view, never in a sibling layer.** That is the whole of
 the batch 3 bug, and it is written out under *Controls* above.
@@ -487,6 +493,5 @@ outlives what it was watching keeps waking the process.
   under "All projects" as well, which is more rows, not fewer. The reservation is written into
   `App/ObservationsView.swift` as a comment so that nobody adds a filter or a "top N" here
   without deciding the question first.
-- **Which primary variant.** A or B, the founder's call off `menu-…-primaryA/B.png`.
 - **The dropdown's icon** carrying a live number, deferred from M3 and still deferred.
 - **Empty and error states** beyond the ones each screen already has.
