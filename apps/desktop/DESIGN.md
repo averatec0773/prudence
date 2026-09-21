@@ -183,6 +183,60 @@ assumption breaks, and the condition under which it is removed. A sleep, a retry
 special case or a widened tolerance that is not in this table is a patch and does not go
 in.
 
+### The watcher waits 750 ms and retries a read eight times
+
+`watcher.rs`, `QUIET` and `RETRIES`. An ingest writes in bursts and a file event arrives
+mid-write, so the watcher waits for quiet and then tests the store by reading it. A store
+caught mid-write answers with an error rather than a payload, and announcing then would
+make every page draw the failure.
+
+- **Assumes:** an ingest's writes are never more than 750 ms apart, and one that is still
+  going after eight tries (about 6 seconds) will produce another file event when it ends.
+- **When it breaks:** a very slow ingest announces twice, so the pages re-read twice; or
+  the watcher gives up and the pages stay one ingest behind until the next write. Both are
+  logged by the shell.
+- **Removed when:** the engine signals the end of an ingest directly, which is the honest
+  fix and belongs on the engine side.
+
+### `in_the_menu_bar` allows a point of slack
+
+`platform/macos.rs`. The rule is that a status item's top edge is its screen's top edge,
+and it is tested with `abs(...) <= 1.0` rather than for equality. Every frame observed has
+been exactly equal; the tolerance is there because a menu bar is not measured to the
+micron and a future display scale could land a half point off.
+
+- **Assumes:** no unplaced frame ever lands within a point of a screen's top edge. The two
+  observed bad frames sit 971 and 982 points away.
+- **When it breaks:** the anchor is accepted a moment too early and the panel opens away
+  from its icon, which is the defect this rule was written to fix.
+- **Removed when:** the tolerance is shown to be unnecessary on every scale factor, or
+  AppKit gives us a placement signal we can ask instead of measuring.
+
+### A refresh that fails leaves the old figures on screen and says nothing
+
+`boot.js`, the `catch` inside `onStoreChanged`. The store was readable a moment ago and
+will be again; replacing a correct screen with an error because one re-read lost a race
+would be worse than being briefly stale. The shell's log carries the reason.
+
+- **Assumes:** the failure is transient.
+- **When it breaks:** the figures are stale and nothing on screen says so. A store that
+  becomes permanently unreadable while the app is open looks fine until it is relaunched.
+- **Removed when:** the page can show a quiet "these numbers are from HH:MM" line, which
+  is the right answer and is a design question, not a bug fix.
+
+### `PRUDENCE_UI_MEMORY` is not behind the `harness` feature
+
+`ui_state.rs`. It is an automation hook by the definition used everywhere else here (it is
+what every screenshot run sets), and the rule is that automation is compiled out of a
+release build. This one is not.
+
+- **Assumes:** nothing reads it by accident, being an undocumented variable.
+- **When it breaks:** a release build can be made to forget its window geometry by
+  anything that sets the variable in the app's environment.
+- **Removed when:** it is gated like `PRUDENCE_GLASS_OPAQUE` is. The shots are taken with
+  a bundle built `--features harness`, so gating costs nothing; it is listed here rather
+  than fixed because `ui_state.rs` is outside the batch that found it.
+
 ### The status item's button is found by class name
 
 `platform/macos.rs`, `status_bar_button`. Neither Tauri nor `tray-icon` exposes the

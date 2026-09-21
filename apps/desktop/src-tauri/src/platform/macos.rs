@@ -211,29 +211,26 @@ pub fn tray_anchor() -> Option<TrayAnchor> {
     // AppKit has not laid the status item out yet during `setup`. Answering with the frame
     // it reports then would put the panel off the screen, so say nothing and let the
     // caller fall back.
-    if !screens
+    //
+    // The screen that satisfies this **is** the screen the item is on, and it is kept:
+    // re-deriving it afterwards from a horizontal overlap alone picked the wrong display
+    // whenever two of them share an x range, which stacked vertically they always do.
+    let Some(on) = screens
         .iter()
-        .any(|screen| in_the_menu_bar(frame, screen.frame()))
-    {
+        .find(|screen| in_the_menu_bar(frame, screen.frame()))
+    else {
         eprintln!(
             "[anchor] status item not laid out yet: {:?} ({})",
             frame,
             item_window.class().name().to_string_lossy()
         );
         return None;
-    }
+    };
 
     let flipped_bottom = primary.frame().size.height - frame.origin.y;
 
-    // The screen the item is actually on decides how far the panel may slide.
-    let visible = screens
-        .iter()
-        .find(|screen| {
-            let f = screen.frame();
-            frame.origin.x >= f.origin.x && frame.origin.x < f.origin.x + f.size.width
-        })
-        .map(|screen| screen.visibleFrame())
-        .unwrap_or_else(|| primary.visibleFrame());
+    // The screen the item is on decides how far the panel may slide.
+    let visible = on.visibleFrame();
 
     Some(TrayAnchor {
         center_x: frame.origin.x + frame.size.width / 2.0,

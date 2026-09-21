@@ -27,6 +27,7 @@ function walk(dir) {
 const frontend = walk(join(app, "src")).filter((path) => path.endsWith(".js"));
 const bridgeSource = readFileSync(join(app, "src/bridge.js"), "utf8");
 const shellSource = readFileSync(join(app, "src-tauri/src/lib.rs"), "utf8");
+const watcherSource = readFileSync(join(app, "src-tauri/src/watcher.rs"), "utf8");
 
 /** Every `invoke("name", { a, b })` in the bridge, as name -> sorted argument names. */
 function commandsTheBridgeCalls() {
@@ -103,4 +104,26 @@ test("no file in the frontend except bridge.js touches a Tauri API", () => {
     .filter((path) => /__TAURI__|@tauri-apps|\binvoke\s*\(/.test(readFileSync(path, "utf8")))
     .map((path) => relative(app, path));
   assert.deepEqual(offenders, []);
+});
+
+
+/* Commands are only half the seam. The shell also **emits**, and an event name is a
+   string on both sides with nothing to catch a rename: `cargo test` green, `node --test`
+   green, CI green, and the window quietly stops following the store. This test exists
+   because that was the one direction the bridge test did not cover. */
+test("the event the shell emits is the event the bridge listens for", () => {
+  const emitted = watcherSource.match(/pub const STORE_CHANGED: &str = "([^"]+)"/);
+  assert.ok(emitted, "watcher.rs no longer declares STORE_CHANGED");
+
+  const listened = [...bridgeSource.matchAll(/event\.listen\(\s*"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(
+    listened.includes(emitted[1]),
+    `the shell emits "${emitted[1]}" and bridge.js listens for ${JSON.stringify(listened)}`
+  );
+
+  // And the shell must actually emit the constant, not a literal that drifted from it.
+  assert.ok(
+    /app\.emit\(STORE_CHANGED/.test(watcherSource),
+    "watcher.rs declares STORE_CHANGED but does not emit it"
+  );
 });
