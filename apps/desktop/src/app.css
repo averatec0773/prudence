@@ -96,6 +96,33 @@ body {
   color: var(--accent);
 }
 
+/* The panel arrives, rather than appearing.
+ *
+ * 180 ms, the tokens' own easing, and it plays when the shell **shows** the window, not
+ * when the page loads: the window is shown and hidden and the page stays loaded, so a
+ * load animation would play once in the app's life. The page learns it was shown from
+ * the focus the shell gives it.
+ *
+ * `prefers-reduced-motion` collapses it through `tokens.css`, which sets every
+ * animation to 1 ms. This is the first animation in the app, and wry issue 1848's
+ * reporter triggered their compositor stall with enter animations, so the stress run for
+ * this batch is 600 rounds with it on.
+ */
+@keyframes panel-arrives {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popover.is-arriving {
+  animation: panel-arrives var(--dur) var(--ease);
+}
+
 /* The footer's quiet actions sit on the block's own edges, which is what the button grid
    means: the caption column's left edge to the value column's right edge. They were
    inset by their own flex sizing before, about 30 pt inside the column. */

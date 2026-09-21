@@ -54,6 +54,12 @@
   --accent-text: #ffffff;
   --control: #ffffff;
   --control-2: #e9e9ed;
+  /* The secondary button's own fill: quiet, and a darkening rather than a lightening,
+     so it still reads as a control on a light surface. `--control` above is the
+     mockups' opaque white and is what a text field and a segmented track use. */
+  --control-quiet: rgba(0, 0, 0, 0.05);
+  --control-quiet-hover: rgba(0, 0, 0, 0.08);
+  --control-quiet-press: rgba(0, 0, 0, 0.03);
   --grid: rgba(0, 0, 0, 0.07);
   --coverage: rgba(0, 0, 0, 0.16);
   --shadow-card: 0 0 0 0.5px var(--hairline);
@@ -98,6 +104,9 @@
     --accent-text: #ffffff;
     --control: #3a3a3c;
     --control-2: #48484a;
+    --control-quiet: rgba(255, 255, 255, 0.08);
+    --control-quiet-hover: rgba(255, 255, 255, 0.12);
+    --control-quiet-press: rgba(255, 255, 255, 0.05);
     --grid: rgba(255, 255, 255, 0.09);
     --coverage: rgba(255, 255, 255, 0.24);
     --shadow-card: 0 0 0 0.5px var(--hairline);
@@ -133,6 +142,9 @@
   --accent-text: #ffffff;
   --control: #3a3a3c;
   --control-2: #48484a;
+  --control-quiet: rgba(255, 255, 255, 0.08);
+  --control-quiet-hover: rgba(255, 255, 255, 0.12);
+  --control-quiet-press: rgba(255, 255, 255, 0.05);
   --grid: rgba(255, 255, 255, 0.09);
   --coverage: rgba(255, 255, 255, 0.24);
   --shadow-card: 0 0 0 0.5px var(--hairline);
@@ -159,6 +171,17 @@ html,
 body {
   margin: 0;
   padding: 0;
+}
+
+/* `hidden` means hidden.
+ *
+ * The attribute's default is `display: none` at the lowest possible specificity, so any
+ * class that sets `display` silently defeats it. That shipped once: the panel's note is
+ * a `.coverage-chip`, the chip became `display: inline-flex`, and an empty capsule sat
+ * in the footer whenever the note was not showing. It is a whole class of bug and this
+ * is where the class is closed. */
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -427,12 +450,18 @@ a:hover {
 
 
 .coverage-chip {
-  display: flex;
+  display: inline-flex;
+  align-self: flex-start;
   align-items: baseline;
   gap: var(--s1);
   font-size: var(--t-caption2);
   color: var(--text-3);
   line-height: 1.4;
+  /* A capsule, not a bare line: the caveat is a qualification of the sentence above it,
+     and a chip is how the design says "this modifies that". */
+  padding: 2px var(--s2);
+  border-radius: var(--r-chip);
+  background: var(--surface-sunken);
 }
 
 .method {
@@ -712,7 +741,9 @@ figcaption.sr {
 .pop-sep {
   height: 0.5px;
   background: var(--separator);
-  margin: var(--s2) 0;
+  /* The body's gap is the space between blocks. A margin here would be a second helping
+     of it, which is what made the panel read loose around its two dividers. */
+  margin: 2px 0;
 }
 
 .pop-foot {
@@ -1042,7 +1073,10 @@ figcaption.sr {
 :root[data-material="glass"] .btn,
 :root[data-material="glass"] .select,
 :root[data-material="glass"] .segmented {
-  background-color: var(--glass-control);
+  /* The button family: "flat and quiet". A lightening frost on a light surface reads as
+     a white box held together by its border; the quiet fill reads as a control. The
+     frost stays: it is still the material, it is just no longer the whole of the fill. */
+  background-color: var(--control-quiet);
   backdrop-filter: var(--glass-filter);
   -webkit-backdrop-filter: var(--glass-filter);
   box-shadow: var(--glass-control-ring);
@@ -1071,11 +1105,11 @@ figcaption.sr {
 }
 
 :root[data-material="glass"] .btn:hover {
-  background-color: var(--glass-control-hover);
+  background-color: var(--control-quiet-hover);
 }
 
 :root[data-material="glass"] .btn:active {
-  background-color: var(--glass-control-active);
+  background-color: var(--control-quiet-press);
   transform: none;
 }
 

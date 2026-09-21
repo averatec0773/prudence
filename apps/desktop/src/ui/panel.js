@@ -181,5 +181,19 @@ export const page = {
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") Bridge.hidePanel();
     });
+
+    /* The shell focuses the panel when it shows it, which is the only signal the page
+       gets that it went from hidden to visible. The class is removed when the animation
+       ends so the next show replays it. */
+    const arrive = () => {
+      pop.classList.remove("is-arriving");
+      // Reading a layout property between the two lines is what makes the browser start
+      // the animation again instead of treating it as unchanged.
+      void pop.offsetWidth;
+      pop.classList.add("is-arriving");
+    };
+    pop.addEventListener("animationend", () => pop.classList.remove("is-arriving"));
+    globalThis.addEventListener("focus", arrive);
+    arrive();
   },
 };

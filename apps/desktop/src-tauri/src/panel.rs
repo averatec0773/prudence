@@ -43,6 +43,17 @@ pub fn show(app: &AppHandle) {
     );
 }
 
+/// Does dismissing the panel hide the application as well as the window?
+///
+/// Hiding the window alone is not enough on macOS: an app that stays active keeps the
+/// previous application from coming forward and leaves a ghost in Mission Control. But
+/// `hide` hides the *application*, which means **every** window it owns, so while the
+/// main window is open it would take the window down with the panel. That shipped once,
+/// in batch 1, and was found by a screenshot failing rather than by a test.
+fn hides_the_app(main_window_is_open: bool) -> bool {
+    !main_window_is_open
+}
+
 /// Under the status item, and wholly on the screen the status item is on.
 ///
 /// The platform's own answer is preferred because it is available on the first show; the
@@ -107,17 +118,11 @@ pub fn hide(app: &AppHandle) {
     let _ = window.hide();
     platform::set_tray_highlight(app, false);
 
-    // Hiding the window is not enough on macOS: an app that stays active keeps the
-    // previous application from coming forward and leaves a ghost in Mission Control.
-    //
-    // But `hide` hides the *application*, which means every window it owns. While the
-    // main window is open that is plainly wrong: dismissing the dropdown would take the
-    // window with it. The Swift app has the same split and hides only the popover.
     let window_is_open = app
         .get_webview_window(MAIN)
         .and_then(|main| main.is_visible().ok())
         .unwrap_or(false);
-    if !window_is_open {
+    if hides_the_app(window_is_open) {
         platform::hide_app(app);
     }
 }
@@ -136,6 +141,19 @@ mod tests {
             min_x: 1512.0,
             max_x: 1512.0 + 1920.0,
         }
+    }
+
+    /// The rule that dismissing the dropdown must not take the window with it.
+    #[test]
+    fn dismissing_the_panel_hides_the_app_only_when_no_window_is_open() {
+        assert!(
+            hides_the_app(false),
+            "with no window open, the app goes too"
+        );
+        assert!(
+            !hides_the_app(true),
+            "with the window open, only the panel is hidden"
+        );
     }
 
     #[test]
