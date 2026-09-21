@@ -49,7 +49,8 @@ private, harness-internal file and must never appear in this public repository (
 To cut a release:
 
 1. Bump the version in the two places it is written: `pyproject.toml` and
-   `src/prudence/__init__.py`.
+   `src/prudence/__init__.py`, then run `uv lock` so `uv.lock` carries the same version
+   (CI installs with `--locked` and fails otherwise).
 2. Add an entry to `RELEASES.md` for the new version: what changed, in a short
    paragraph, plus any known limits.
 3. Commit those changes.
