@@ -27,11 +27,18 @@
 
 ---
 
+## The problem
+
+Developers who build with AI agents ship faster than ever, and many of them are not getting better.
+
+- The code works, but the person who shipped it often cannot explain it.
+- Nothing tells them which ways of working lead to code that lasts and which lead to rework and bugs. Solo developers have no colleague, no code review, and often no users, so reality's feedback never reaches them.
+- Better methods exist, but they do not know which ones apply to what they are doing this week.
+- Their improvement comes mostly from the model getting better, not from themselves, and they can feel it.
+
 ## The loop
 
-Developers who build with AI agents ship faster than ever, and most of them work without a feedback loop. The code works, but nothing says which ways of working produced code that survived and which produced rework, so the next session starts from the same habits as the last one. Solo builders feel this most: no colleague, no reviewer, often no users.
-
-Prudence closes the loop.
+Prudence turns AI-assisted development into a feedback loop.
 
 ```
    record ──► link ──► learn ──► adjust
@@ -55,6 +62,16 @@ Each round makes the next one better informed. The record is yours and stays on 
 - **Reviews.** `prudence review` turns a period into a stored review whose every figure is computed; an optional model-written paragraph on top may only quote those figures and is refused if it invents one or grades you.
 - **Ask.** `prudence ask "why do my refactors on this project keep getting reverted"` answers from retrieved evidence and cites session ids.
 - **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a native macOS menu-bar app with charts.
+
+## Where it is going
+
+Three promises shape the roadmap:
+
+1. **Reality's feedback, delivered.** What survived, what was rewritten, what broke, where the time and tokens went: the colleague and the code review you do not have.
+2. **Growth that is yours.** How your way of working with AI evolves over months, what you shipped but did not understand, and help closing that gap only when you need it. Suggestions are tracked: the next review says whether one helped, and advice that does not work is retired.
+3. **A window to the outside.** Knowing what you are wrestling with right now, it goes out to see how the field solves it today and explains what applies to your project, with sources.
+
+The tools will keep changing; the record is built so that a new agent is a new source, a new way of reading it is a new lens, and a new way of reaching you is a new surface. Three years in, a developer should have an honest, evidence-backed record of every project, how their habits changed, and which advice worked for them, carried across every generation of AI tools they used. They would no more give it up than their git history.
 
 ## Principles
 
