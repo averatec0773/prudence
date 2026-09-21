@@ -147,6 +147,24 @@ end up in the page, which is what closes the door on Windows.
 Today that interface is five functions: apply the material, find the tray anchor, set the
 status item's highlight, show or hide the Dock icon, describe the platform.
 
+Two things macOS 26 does that cost us a day, written down so they cost nobody else one.
+
+**A status item is laid out in two steps, and the first one lies.** AppKit gives the
+status item window its size before it gives it a position, so the first frame it reports
+is a real 36 x 33 sitting at (0, -22) or (0, -33), off the bottom of the screen. Anything
+that treats a non-empty frame as a laid-out one anchors the panel to a corner. The test is
+where the frame is, not how big it is: a menu bar's top edge is its screen's top edge, and
+no unplaced frame satisfies that. `platform::macos::in_the_menu_bar` is that rule, unit
+tested against both observed bad frames.
+
+**A status item is hosted by Control Center, not by us.** Our process owns no window in
+the menu bar, so no outside script can find our item in `CGWindowListCopyWindowInfo`; it
+is attributed to Control Center along with everyone else's. `Scripts/menubar.py` cannot
+locate the item on its own and has the app report its own anchor instead, over a
+harness-only line that is not in a release build. Related: the menu bar takes its tint
+from the desktop picture rather than from the appearance setting, so there is no light
+menu bar to photograph without changing the wallpaper.
+
 ## The app owns no numbers
 
 `src-tauri/src/store.rs` opens the store read-only, refuses a contract version outside

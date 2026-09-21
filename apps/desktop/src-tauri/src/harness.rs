@@ -111,12 +111,16 @@ fn wait_for_the_status_item(app: &AppHandle) {
     for _ in 0..60 {
         let (tx, rx) = channel();
         let _ = app.run_on_main_thread(move || {
-            let _ = tx.send(crate::platform::tray_anchor().is_some());
+            let _ = tx.send(crate::platform::tray_anchor());
         });
-        if rx
-            .recv_timeout(std::time::Duration::from_millis(500))
-            .unwrap_or(false)
-        {
+        // Printed because on macOS 26 the status item is hosted by Control Center, so a
+        // script outside the process cannot find our item in the window list at all: this
+        // line is the only way `menubar.py` learns where to point the camera.
+        if let Ok(Some(anchor)) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            eprintln!(
+                "[harness] status item at center_x={} bottom={} min_x={} max_x={}",
+                anchor.center_x, anchor.bottom, anchor.min_x, anchor.max_x
+            );
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));

@@ -4,6 +4,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{ClassType, MainThreadMarker, Message};
 use objc2_app_kit::{NSApplication, NSButton, NSScreen, NSView, NSWindow};
+use objc2_foundation::NSRect;
 use tauri::{AppHandle, WebviewWindow};
 use window_vibrancy::{
     apply_liquid_glass, apply_vibrancy, LiquidGlassOptions, NSGlassEffectViewStyle,
@@ -170,6 +171,28 @@ fn first_view_named(view: &NSView, needle: &str) -> Option<Retained<NSView>> {
     None
 }
 
+/// Is this frame a status item that is actually in a menu bar?
+///
+/// The question the caller means is "has AppKit laid the status item out yet", and the
+/// obvious test for that - is the frame non-empty - is wrong. **AppKit gives the status
+/// item window its size before it gives it a position**: the first frame it reports is a
+/// real 36 x 33 sitting at (0, -22), off the bottom of the screen. A caller that trusts it
+/// anchors the panel to a corner.
+///
+/// So ask where it is, not how big it is. A menu bar runs the full width of its screen and
+/// its top edge *is* the screen's top edge, which no unplaced frame satisfies.
+fn in_the_menu_bar(frame: NSRect, screen: NSRect) -> bool {
+    if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
+        return false;
+    }
+    let horizontally_inside = frame.origin.x >= screen.origin.x
+        && frame.origin.x + frame.size.width <= screen.origin.x + screen.size.width;
+    // Exactly equal in every case seen, but a menu bar is not measured to the micron.
+    let flush_with_the_top =
+        ((frame.origin.y + frame.size.height) - (screen.origin.y + screen.size.height)).abs() <= 1.0;
+    horizontally_inside && flush_with_the_top
+}
+
 /// The status item's own frame, converted from AppKit's bottom-left screen space into the
 /// top-left one every window API here speaks. The positioner plugin can only answer this
 /// after a tray event has been delivered, which has not happened on the first show.
@@ -179,10 +202,15 @@ pub fn tray_anchor() -> Option<TrayAnchor> {
     let item_window = button.window()?;
     let frame = item_window.frame();
 
-    // AppKit has not laid the status item out yet during `setup`, and reports a zero-height
-    // frame at the origin. Answering with that would put the panel off the bottom of the
-    // screen, so say nothing and let the caller fall back.
-    if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
+    // Global coordinates are measured from the bottom-left of the primary screen, which is
+    // the first one in the list regardless of which screen anything is on.
+    let screens = NSScreen::screens(mtm);
+    let primary = screens.iter().next()?;
+
+    // AppKit has not laid the status item out yet during `setup`. Answering with the frame
+    // it reports then would put the panel off the screen, so say nothing and let the
+    // caller fall back.
+    if !screens.iter().any(|screen| in_the_menu_bar(frame, screen.frame())) {
         eprintln!(
             "[anchor] status item not laid out yet: {:?} ({})",
             frame,
@@ -191,10 +219,6 @@ pub fn tray_anchor() -> Option<TrayAnchor> {
         return None;
     }
 
-    // Global coordinates are measured from the bottom-left of the primary screen, which is
-    // the first one in the list regardless of which screen anything is on.
-    let screens = NSScreen::screens(mtm);
-    let primary = screens.iter().next()?;
     let flipped_bottom = primary.frame().size.height - frame.origin.y;
 
     // The screen the item is actually on decides how far the panel may slide.
@@ -286,4 +310,55 @@ pub fn describe() -> Vec<(String, String)> {
             format!("{APPKIT_MACOS_26} (macOS 26.0)"),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_the_menu_bar;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
+        NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
+    }
+
+    /// The built-in display on the machine this was found on.
+    fn screen() -> NSRect {
+        rect(0.0, 0.0, 1512.0, 982.0)
+    }
+
+    #[test]
+    fn a_laid_out_status_item_is_in_the_menu_bar() {
+        // What the app reports once AppKit has placed it: flush with the top of the screen.
+        assert!(in_the_menu_bar(rect(894.0, 949.0, 36.0, 33.0), screen()));
+    }
+
+    #[test]
+    fn the_frame_appkit_reports_before_it_places_the_item_is_not() {
+        // Both frames actually observed on 2026-09-21: full size, no position. This is
+        // the case the old "is it non-empty" test let through.
+        assert!(!in_the_menu_bar(rect(0.0, -22.0, 36.0, 33.0), screen()));
+        assert!(!in_the_menu_bar(rect(0.0, -33.0, 36.0, 33.0), screen()));
+    }
+
+    #[test]
+    fn an_empty_frame_is_not() {
+        assert!(!in_the_menu_bar(rect(0.0, 0.0, 0.0, 0.0), screen()));
+        assert!(!in_the_menu_bar(rect(894.0, 949.0, 36.0, 0.0), screen()));
+    }
+
+    #[test]
+    fn an_item_hanging_off_the_side_is_not() {
+        assert!(!in_the_menu_bar(rect(1500.0, 949.0, 36.0, 33.0), screen()));
+        assert!(!in_the_menu_bar(rect(-10.0, 949.0, 36.0, 33.0), screen()));
+    }
+
+    #[test]
+    fn a_second_screen_has_its_own_top() {
+        // Above and to the right of the primary, which is an ordinary arrangement and the
+        // reason the caller asks every screen rather than only the first.
+        let secondary = rect(1512.0, 400.0, 1920.0, 1080.0);
+        let item = rect(3300.0, 1447.0, 36.0, 33.0);
+        assert!(in_the_menu_bar(item, secondary));
+        assert!(!in_the_menu_bar(item, screen()));
+    }
 }
