@@ -8,8 +8,8 @@
 <h1 align="center">Prudence</h1>
 
 <p align="center">
-  A growth coach for developers who build with AI coding agents.<br>
-  It links how you worked with your agent to what became of the code in git.
+  Record how you build with AI coding agents. See what became of the code.<br>
+  Carry what worked into the next round.
 </p>
 
 <p align="center">
@@ -27,11 +27,24 @@
 
 ---
 
-## Why
+## The loop
 
-Developers who build with AI agents ship faster than ever, and many of them cannot tell whether they are getting better. The code works, but nobody says which working habits lead to code that survives and which lead to rework. Solo builders have no colleague, no reviewer, and often no users, so reality's feedback never reaches them.
+Developers who build with AI agents ship faster than ever, and most of them work without a feedback loop. The code works, but nothing says which ways of working produced code that survived and which produced rework, so the next session starts from the same habits as the last one. Solo builders feel this most: no colleague, no reviewer, often no users.
 
-Prudence is that feedback. It reads the sessions your coding agent already keeps on disk (Claude Code today; other agents are designed for and planned), follows every line those sessions produced through git, and reports what happened: what survived, what was rewritten, where the tokens and hours went, and which of your own habits went with which outcomes. The record is yours and stays on your machine.
+Prudence closes the loop.
+
+```
+   record ──► link ──► learn ──► adjust
+     ▲                              │
+     └────────── next round ◄───────┘
+```
+
+- **Record.** It reads the sessions your AI coding agent already keeps on disk and archives them unmodified.
+- **Link.** It follows every line those sessions produced through git: what survived at 7, 30 and 90 days, what was rewritten, where the tokens and hours went.
+- **Learn.** It joins how you worked to what happened: which of your own habits went with which outcomes, in your own projects, with the coverage behind every number.
+- **Adjust.** A review each period says what changed and what to try; the next review says whether it helped. What works stays, what does not is dropped.
+
+Each round makes the next one better informed. The record is yours and stays on your machine.
 
 ## What you get
 
@@ -100,7 +113,7 @@ Raw session data is archived unmodified in a local store with owner-only permiss
 ## How it works
 
 ```
-Claude Code transcripts and hooks ──► one local SQLite store (raw archive + derived tables)
+AI coding-agent transcripts and hooks ──► one local SQLite store (raw archive + derived tables)
         ──► attribution (which session made which commit, with confidence)
         ──► outcomes (survival, rework), facts, observations, reviews
         ──► CLI · Claude Code plugin and MCP · macOS app (app_* views)
@@ -110,7 +123,7 @@ Claude Code transcripts and hooks ──► one local SQLite store (raw archive 
 
 ## Status
 
-0.3.0. Claude Code is the agent read today; the source layer is one module per agent and a Codex adapter is next. Windows is untested. See [RELEASES.md](RELEASES.md).
+0.3.0. Supported agent source: Claude Code (the source layer is one module per agent). Windows is untested. See [RELEASES.md](RELEASES.md).
 
 ## Contributing
 
