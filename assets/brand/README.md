@@ -13,7 +13,7 @@ They contain the exact vector paths and can be used directly or exported at the
 required resolution. Scale uniformly and preserve the supplied spacing and three
 separate pieces. The SVGs retain the approved study framing; the visible mark is wider
 than tall, and its own bounding box inside the 512 × 512 frame is
-`49.573 116.072 414.094 279.857`.
+`58.094 116.072 397.052 279.857`.
 
 ## Uses
 
