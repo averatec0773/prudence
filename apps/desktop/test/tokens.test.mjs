@@ -6,7 +6,7 @@
  * theme was transcribed from, and in this stack it *is* the theme, so the same test has to
  * exist here: the document below, and the file, read against each other.
  *
- *     node --test test/
+ *     pnpm test
  */
 
 import { test } from "node:test";
