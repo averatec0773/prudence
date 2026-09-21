@@ -130,6 +130,35 @@ Two rules that exist because each was broken once.
   rectangle. The first run of `shot.py` photographed the founder's browser; the check
   exists because of it.
 
+## Localisation
+
+Two files, `src/design/strings.en.json` and `strings.zh-Hans.json`, 227 keys each. They
+were generated once from the Swift String Catalog by `Scripts/strings.py` and **are the
+source of truth from then on**; the generator and its `--check` test exist only to stop
+the two dictionaries drifting while `apps/mac/` is still in the repository, and both die
+with it.
+
+- **A missing key is a bug, not a fallback.** `Str.t` returns the key itself so a screen
+  still draws, and the suite fails on it.
+- **Placeholders are numbered and filled in each language's own order.** That is the whole
+  reason they are `%1$@` and not `%@`.
+- **Plurals are a plural entry, not a suffix.** The form comes from `Intl.PluralRules` in
+  the language in force, so English says "1 session" and "3 sessions" and Chinese says
+  "1 个会话" either way. The count inside it is formatted in the reader's locale first.
+- **Both tables are loaded at start-up**, because the language setting switches between
+  them without a relaunch.
+
+`src/design/fmt.js` is the port of `PrudenceUI/Fmt.swift`: counts, token abbreviations,
+hours, stamps, relative times, days, the four count phrases, the list separator, the
+purpose names. **Two things deliberately do not go through the locale** and are marked
+where they are: the `%.0f%%` share and the plain ungrouped integer inside an observation
+sentence, which have to match `store/observations.py` character for character or the
+word-for-word test against `app_observation.sentence` fails.
+
+The product's name is not a catalog key. It is `Str.productName`, because it is not
+translated and because the name research is still open: renaming is two edits, that
+constant and the bundle's display name.
+
 ## Components
 
 Grown by each batch. Batch 1 adds the window shell only.

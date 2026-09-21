@@ -17,14 +17,13 @@ because nothing in the issue says the stall needs activity.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
-
-import io
 
 from PIL import Image, ImageCms
 
@@ -93,22 +92,24 @@ def sample(image: Path) -> tuple[int, int, int]:
 
 
 def close_enough(got: tuple[int, int, int], want: tuple[int, int, int]) -> bool:
-    return all(abs(a - b) <= TOLERANCE for a, b in zip(got, want))
+    return all(abs(a - b) <= TOLERANCE for a, b in zip(got, want, strict=True))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=400)
-    parser.add_argument("--idle", type=int, default=0, help="seconds of idleness before the second probe")
+    parser.add_argument(
+        "--idle", type=int, default=0, help="seconds of idleness before the second probe"
+    )
     parser.add_argument("--store", required=True, help="a COPY of a store, never the real one")
     parser.add_argument("--out", required=True)
     parser.add_argument("--appearance", choices=["light", "dark"], default="light")
     parser.add_argument(
         "--no-backdrop",
         action="store_true",
-        help="skip the full-screen backdrop. Use it for a long idle run: the probe fills "
-        "the window's own content area, so the measurement does not need one, and ten "
-        "minutes of a full-screen window is ten minutes of the founder's screen.",
+        help="skip the full-screen backdrop. Reserved for a long idle run: the probe "
+        "fills the window's own content area, so the measurement does not need one, and "
+        "ten minutes of a full-screen window is ten minutes of the founder's screen.",
     )
     args = parser.parse_args()
 
@@ -149,6 +150,12 @@ def main() -> int:
         if wait_for(log, "[stress] settled", budget) is None:
             print(f"the run never settled within {budget:.0f} s", file=sys.stderr)
             return 1
+        if not args.no_backdrop:
+            from shot import BACKDROP_TITLE
+
+            if not any(w["name"] == BACKDROP_TITLE for w in windows_of(process.pid)):
+                print("the backdrop did not appear; refusing to capture", file=sys.stderr)
+                return 1
         print("settled; photographing the window")
         if capture(process.pid, "stress-settled", out) is None:
             failures.append("could not photograph the settled window")

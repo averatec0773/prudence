@@ -10,15 +10,15 @@
 (function (global) {
   "use strict";
 
-  var T, I, el;
+  var T, el;
 
   /* The four entries, in the order the sidebar shows them and the order Cmd-1 to Cmd-4
      follow. The keys are the ones the shell remembers, so they are not display strings. */
   var SECTIONS = [
-    { key: "overview", label: "overview" },
-    { key: "review", label: "review" },
-    { key: "observations", label: "observations" },
-    { key: "settings", label: "settings" },
+    { key: "overview", label: "section.overview" },
+    { key: "review", label: "section.review" },
+    { key: "observations", label: "section.observations" },
+    { key: "settings", label: "section.settings" },
   ];
 
   var state = { section: "overview", scroll: {} };
@@ -125,9 +125,9 @@
     head.appendChild(titles);
 
     var bar = el("div", { class: "toolbar" });
-    var review = el("button", { class: "btn", type: "button", text: T("reviewNow") });
+    var review = el("button", { class: "btn", type: "button", text: T("menu.reviewNow") });
     review.addEventListener("click", function () {
-      notYet(T("reviewNow"));
+      notYet(T("menu.reviewNow"));
     });
     bar.appendChild(review);
     head.appendChild(bar);
@@ -139,7 +139,7 @@
     var mark = global.Brand.mark(14 / global.Brand.ASPECT);
     mark.classList.add("brand-mark");
     bar.appendChild(mark);
-    bar.appendChild(el("span", { class: "name", text: T("app") }));
+    bar.appendChild(el("span", { class: "name", text: global.Str.productName }));
     return bar;
   }
 
@@ -159,7 +159,7 @@
       }
       if (event.key.toLowerCase() === "r") {
         event.preventDefault();
-        notYet(T("reviewNow"));
+        notYet(T("menu.reviewNow"));
       }
     });
   }
@@ -189,8 +189,7 @@
   };
 
   function render(container, info) {
-    I = global.I18N;
-    T = I.t;
+    T = global.Str.t;
     el = global.Charts.el;
 
     var win = el("div", { class: "window" });

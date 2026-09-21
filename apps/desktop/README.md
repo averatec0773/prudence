@@ -22,9 +22,29 @@ cd apps/desktop
 pnpm install                       # the Tauri CLI, nothing else
 pnpm tauri dev                     # the app, for working on the page
 pnpm tauri build --bundles app,dmg # Prudence.app and an unsigned DMG
-pnpm test                          # the token table, in node
+pnpm test                          # the token table and the strings, in node
 cd src-tauri && cargo test         # the store layer, the panel's placement, the memory
 ```
+
+### The checklist for every batch
+
+All of it, before the report is written. The last two are easy to forget because the
+scripts are the only Python in this folder, and **Python anywhere in this repository
+answers to the root `pyproject.toml`'s ruff settings**, not to anything under
+`apps/desktop/`. They are run from the repository root.
+
+```sh
+cd apps/desktop
+pnpm test
+python3 Scripts/strings.py --check         # the JSON still matches the String Catalog
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd ../../..                                 # the repository root
+uv run ruff check apps/desktop/Scripts
+uv run ruff format --check apps/desktop/Scripts
+```
+
+Plus, in every batch that adds a screen: `python3 Scripts/stress.py --rounds 400 ...`,
+with its one-line result in the report.
 
 Run it against a **copy** of the store, never the real one. The shell honours the same
 variables `src/prudence/paths.py` honours, so `prudence status` tells you where it will

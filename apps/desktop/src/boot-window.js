@@ -8,7 +8,17 @@
 (function (global) {
   "use strict";
 
-  var DESIGN = ["design/i18n.js", "design/brand.js", "design/derive.js", "design/charts.js"];
+  var DESIGN = [
+    // `strings.js` first and `fmt.js` second: `Fmt` reads `Str` as it is evaluated, and
+    // everything after them reads both.
+    "design/strings.js",
+    "design/fmt.js",
+    "design/i18n.js",
+    "design/brand.js",
+    "design/derive.js",
+    "design/charts.js",
+  ];
+
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -28,6 +38,19 @@
         return loadScript(src);
       });
     }, Promise.resolve());
+  }
+
+  /* One language for both dictionaries while `i18n.js` still has two callers. The shell
+     answers with the screenshot hook's choice, or null, in which case the reader's own
+     system language decides between the two the app ships. */
+  function setLanguage(info) {
+    var wanted =
+      (info && info.language) ||
+      (String(global.navigator.language || "en").toLowerCase().indexOf("zh") === 0
+        ? "zh-Hans"
+        : "en");
+    global.Str.setLang(wanted);
+    global.I18N.setLang(wanted);
   }
 
   function applyAppearance() {
@@ -89,7 +112,10 @@
         return loadAll(DESIGN);
       })
       .then(function () {
-        if (info && info.language) global.I18N.setLang(info.language);
+        return global.Str.loadAll();
+      })
+      .then(function () {
+        setLanguage(info);
         global.WindowScreen.render(document.getElementById("root"), info);
         /* Showing a window focuses its webview, which focuses the first control it finds
            and draws a ring on it. A window opens with nothing selected; Tab from there

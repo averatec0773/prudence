@@ -11,8 +11,11 @@ Three things it is careful about, each one a mistake already made once:
   founder's own `Prudence.app` has the same name, and on 2026-09-21 a `pkill` by path quit
   it out from under them.
 * **It puts a backdrop under the window** (`PRUDENCE_BACKDROP=1`, a plain full-screen
-  window of the app's own). A frosted surface photographed over whatever happened to be on
-  the screen is neither reproducible nor the founder's to publish.
+  window of the app's own) and **refuses to run if that backdrop did not appear**. A
+  frosted surface photographed over whatever happened to be on the screen is neither
+  reproducible nor the founder's to publish, and a backdrop that silently failed to build
+  leaves exactly that. `--no-backdrop` is for the idle probe alone, where the sampled
+  rectangle is entirely our own opaque content.
 * **It captures a screen region, not the window's own buffer.** `screencapture -l` copies a
   window's surface, and a window whose material is composited by the window server from
   what is behind it does not carry that composite in its own surface. The region is the
@@ -143,6 +146,12 @@ def main() -> int:
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")
     parser.add_argument(
+        "--no-backdrop-is-deliberate",
+        action="store_true",
+        help="allow --no-backdrop. Reserved for the idle probe, where the rectangle that "
+        "is sampled is entirely our own opaque content.",
+    )
+    parser.add_argument(
         "--binary",
         help="photograph another application instead, for a side-by-side with the frozen "
         "Swift app. The backdrop is still ours, launched as a second process.",
@@ -155,6 +164,14 @@ def main() -> int:
         help="extra environment for --binary, repeatable",
     )
     args = parser.parse_args()
+
+    if args.no_backdrop and not args.no_backdrop_is_deliberate:
+        print(
+            "--no-backdrop is reserved for the idle probe; pass "
+            "--no-backdrop-is-deliberate if you mean it",
+            file=sys.stderr,
+        )
+        return 2
 
     binary = Path(args.binary) if args.binary else (DEBUG_BINARY if args.debug_build else BINARY)
     if not binary.exists():
@@ -197,7 +214,12 @@ def main() -> int:
         if args.binary:
             backdrop_env = dict(os.environ)
             backdrop_env.update(
-                {"PRUDENCE_BACKDROP": "1", "PRUDENCE_UI_MEMORY": "off", "PRUDENCE_DATA_DIR": str(store), "PRUDENCE_CONFIG_DIR": str(store)}
+                {
+                    "PRUDENCE_BACKDROP": "1",
+                    "PRUDENCE_UI_MEMORY": "off",
+                    "PRUDENCE_DATA_DIR": str(store),
+                    "PRUDENCE_CONFIG_DIR": str(store),
+                }
             )
             with (out / f"{args.name}-backdrop.log").open("w") as handle:
                 started.append(
@@ -214,6 +236,15 @@ def main() -> int:
 
     try:
         time.sleep(args.wait)
+
+        # A backdrop that failed to build is the difference between a reproducible picture
+        # and a picture of the founder's screen showing through the glass.
+        if not args.no_backdrop:
+            mine = [w for p in pids for w in windows_of(p)]
+            if not any(w["name"] == BACKDROP_TITLE for w in mine):
+                print("the backdrop did not appear; refusing to capture", file=sys.stderr)
+                return 1
+
         window = pick(windows_of(process.pid), args.window)
         if window is None:
             names = [(w["name"], w["w"], w["h"]) for w in windows_of(process.pid)]

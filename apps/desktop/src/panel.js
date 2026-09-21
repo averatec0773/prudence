@@ -12,8 +12,12 @@
   "use strict";
 
   /* Bound in `render`, not here: the design scripts are injected once the payload exists
-     (see boot.js), so at the time this file is evaluated none of them is loaded yet. */
-  var T, I, D, el;
+     (see boot.js), so at the time this file is evaluated none of them is loaded yet.
+
+     `I` is the mockups' dictionary and is down to two callers: the observation sentence
+     and the review headline. Both are *composed* rather than looked up, so they move with
+     their rules, in batches 3 and 6a, and `design/i18n.js` goes with the second one. */
+  var T, F, I, D, el;
 
   function text(content, className) {
     return el("span", { class: className || "", text: content });
@@ -101,7 +105,7 @@
 
   function purposeShares(week) {
     if (!week || !week.total) return [];
-    return I.PURPOSE_ORDER.filter(function (purpose) {
+    return F.PURPOSES.filter(function (purpose) {
       return week.byPurpose[purpose] > 0;
     }).map(function (purpose) {
       return {
@@ -113,11 +117,11 @@
   }
 
   function weekSummaryText(week) {
-    return purposeShares(week)
-      .map(function (part) {
-        return I.purposeLabel(part.purpose) + " " + I.percent(part.share);
+    return F.list(
+      purposeShares(week).map(function (part) {
+        return F.purpose(part.purpose) + " " + F.percent(part.share);
       })
-      .join(", ");
+    );
   }
 
   function popHead() {
@@ -125,7 +129,7 @@
     var mark = global.Brand.mark(18);
     mark.classList.add("brand-mark");
     head.appendChild(mark);
-    head.appendChild(el("span", { class: "name", text: T("app") }));
+    head.appendChild(el("span", { class: "name", text: global.Str.productName }));
     head.appendChild(
       el("span", { class: "ver", text: "prudence " + D.DATA.status.engine_version })
     );
@@ -147,34 +151,28 @@
 
   function weekBlock(week) {
     var wrap = el("div", { class: "week-row" });
-    wrap.appendChild(text(weekSummaryText(week) || T("noSessionsYet"), "obs-line"));
+    wrap.appendChild(text(weekSummaryText(week) || T("menu.noTokensThisWeek"), "obs-line"));
     wrap.appendChild(
       global.Charts.miniStack({
         byPurpose: week ? week.byPurpose : D.emptyPurposes(),
         height: 8,
         caption:
-          T("thisWeek") +
+          T("menu.thisWeek") +
           ": " +
-          (weekSummaryText(week) || T("noSessionsYet")) +
+          (weekSummaryText(week) || T("menu.noTokensThisWeek")) +
           " (" +
-          I.tokens(week ? week.total : 0) +
-          " " +
-          T("tokens") +
+          F.tokenPhrase(week ? week.total : 0) +
           ", " +
-          (week ? week.measured : 0) +
-          "/" +
-          (week ? week.sessions : 0) +
-          " " +
-          T("sessions") +
+          F.sessions(week ? week.sessions : 0) +
           ")",
       })
     );
     if (week && week.total) {
       wrap.appendChild(
         el("div", { class: "week-figures" }, [
-          text(I.tokens(week.total) + " " + T("tokens")),
-          text(week.sessions + " " + T("sessions")),
-          text(I.oneDecimal(week.hours) + " " + T("hours")),
+          text(F.tokenPhrase(week.total)),
+          text(F.sessions(week.sessions)),
+          text(F.hourPhrase(week.hours)),
         ])
       );
     }
@@ -183,22 +181,19 @@
 
   function observationBlock() {
     var row = D.DATA.observations[0];
-    if (!row) return text(T("noSessionsYet"), "obs-line");
+    if (!row) return text(T("menu.noObservation"), "obs-line");
     var wrap = el("div");
     wrap.appendChild(text(I.observationSentence(row), "obs-sentence"));
     wrap.appendChild(el("div", { class: "coverage-chip", text: I.observationCaveat(row) }));
     return wrap;
   }
 
+  /* `21 Sep 01:45 (12 hours ago)`. Both halves go through the locale, and the shape is
+     the catalog's own `menu.stamped`, which is what the Swift popover prints. */
   function lastIngestText() {
     var iso = D.DATA.status.last_ingest_at;
-    if (!iso) return "--";
-    return new Date(iso).toLocaleString(I.lang() === "en" ? "en-GB" : "zh-CN", {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    if (!iso) return T("menu.never");
+    return T("menu.stamped", F.stamp(iso), F.relative(iso));
   }
 
   /* Batch 7 replaces this with the engine's own answer. Until then the panel says which
@@ -213,11 +208,15 @@
   /* The button grid of DESIGN.md: the primary full width, two equal cells under it, and
      one baseline carrying the two quiet actions out to both outer edges. */
   function footer() {
-    var open = el("button", { class: "btn primary wide", type: "button", text: T("openPrudence") });
-    var review = el("button", { class: "btn", type: "button", text: T("reviewNow") });
-    var ingest = el("button", { class: "btn", type: "button", text: T("ingestNow") });
-    var settings = el("button", { class: "btn plain", type: "button", text: T("settingsEllipsis") });
-    var quit = el("button", { class: "btn plain", type: "button", text: T("quit") });
+    var open = el("button", {
+      class: "btn primary wide",
+      type: "button",
+      text: T("menu.openPrudence"),
+    });
+    var review = el("button", { class: "btn", type: "button", text: T("menu.reviewNow") });
+    var ingest = el("button", { class: "btn", type: "button", text: T("menu.ingestNow") });
+    var settings = el("button", { class: "btn plain", type: "button", text: T("menu.settings") });
+    var quit = el("button", { class: "btn plain", type: "button", text: T("menu.quit") });
 
     /* Open Prudence and Settings go to the window, which exists from batch 1. Review now
        and Ingest now need the engine, which is batch 7; they answer with a line rather
@@ -230,10 +229,10 @@
       global.Bridge.openWindow();
     });
     review.addEventListener("click", function () {
-      notYet(T("reviewNow"));
+      notYet(T("menu.reviewNow"));
     });
     ingest.addEventListener("click", function () {
-      notYet(T("ingestNow"));
+      notYet(T("menu.ingestNow"));
     });
     quit.addEventListener("click", function () {
       global.Bridge.quit();
@@ -248,8 +247,9 @@
   }
 
   function render(container) {
+    T = global.Str.t;
+    F = global.Fmt;
     I = global.I18N;
-    T = I.t;
     D = global.Derive;
     el = global.Charts.el;
 
@@ -269,11 +269,13 @@
     headline.appendChild(
       el("div", {
         class: counted ? "headline" : "obs-line",
-        text: counted ? T("sessionsCommits", { s: now.sessions, c: now.commits }) : T("noSessionsYet"),
+        text: counted
+          ? F.list([F.sessions(now.sessions), F.commits(now.commits)])
+          : T("menu.noSessionsToday"),
       })
     );
-    headline.appendChild(el("div", { class: "headline-sub", text: I.longDate(now.day) }));
-    body.appendChild(block(T("today"), headline));
+    headline.appendChild(el("div", { class: "headline-sub", text: F.day(now.day) }));
+    body.appendChild(block(T("menu.today"), headline));
 
     var weekWrap = el("div");
     weekWrap.appendChild(weekBlock(week));
@@ -283,21 +285,22 @@
       var swatch = document.createElement("i");
       swatch.style.background = "var(--p-" + part.purpose + ")";
       key.appendChild(swatch);
-      key.appendChild(
-        document.createTextNode(I.purposeLabel(part.purpose) + " " + I.percent(part.share))
-      );
+      key.appendChild(document.createTextNode(F.purpose(part.purpose)));
       legend.appendChild(key);
     });
     weekWrap.appendChild(legend);
-    body.appendChild(block(T("thisWeek"), weekWrap));
+    body.appendChild(block(T("menu.thisWeek"), weekWrap));
 
     body.appendChild(el("div", { class: "pop-sep" }));
-    body.appendChild(block(T("latestObservation"), observationBlock()));
+    body.appendChild(block(T("menu.latestObservation"), observationBlock()));
     body.appendChild(el("div", { class: "pop-sep" }));
-    body.appendChild(block(T("lastIngest"), text(lastIngestText(), "obs-line")));
+    body.appendChild(block(T("menu.lastIngest"), text(lastIngestText(), "obs-line")));
     var review = D.DATA.reviews[0];
     body.appendChild(
-      block(T("lastReview"), text(review ? I.reviewHeadline(review) : "--", "obs-line"))
+      block(
+        T("menu.lastReview"),
+        text(review ? I.reviewHeadline(review) : T("menu.noReview"), "obs-line")
+      )
     );
     pop.appendChild(body);
 
