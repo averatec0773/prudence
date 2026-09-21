@@ -40,16 +40,48 @@ const RETRIES: u32 = 8;
 /// Is this event about the store?
 ///
 /// The engine keeps its config and its line-hash key in the same directory, and the
-/// directory is what is watched, because SQLite writes `-wal` and `-shm` beside the
-/// database and a restore replaces the database outright.
+/// directory is what is watched, because SQLite writes `-wal` beside the database and a
+/// restore replaces the database outright.
+///
+/// **Two names, not a prefix.** `-shm` is deliberately excluded: it is the shared-memory
+/// index, and *a reader writes it*. A read-only connection to a WAL database stamps its
+/// read mark into `-shm` on every read transaction, so treating it as evidence of a
+/// change makes this watcher react to its own probe and to both pages' reads, forever.
+/// A prefix would also match `prudence.db.bak` and `prudence.db.tmp`, which a backup or a
+/// `VACUUM INTO` puts in this directory and which no figure depends on.
 fn concerns_the_store(paths: &[PathBuf], database: &str) -> bool {
     if database.is_empty() {
         return false;
     }
+    let wal = format!("{database}-wal");
     paths.iter().any(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(database))
+            .is_some_and(|name| name == database || name == wal)
+    })
+}
+
+/// What the store's own files look like right now: the size and modification time of the
+/// database and of its write-ahead log, or `None` for one that is not there.
+///
+/// This is the answer to "did anything actually change", and it is asked because a file
+/// event is not that answer. Measured on 2026-09-21: three read-only reads of a WAL store
+/// left both files byte-identical, size and mtime, while one write changed them. So a
+/// fingerprint that does not move means no ingest happened, whatever the file system said.
+type Fingerprint = [Option<(u64, std::time::SystemTime)>; 2];
+
+fn fingerprint(database: &Path) -> Fingerprint {
+    let wal = database.with_file_name(format!(
+        "{}-wal",
+        database
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+    ));
+    [database, wal.as_path()].map(|path| {
+        std::fs::metadata(path)
+            .ok()
+            .and_then(|meta| Some((meta.len(), meta.modified().ok()?)))
     })
 }
 
@@ -80,6 +112,13 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
             .unwrap_or_default();
         let mut due: Option<Instant> = None;
         let mut tries = 0;
+        // What the store looks like once it has been opened the way we will keep opening
+        // it. The open matters: a read-only connection to a WAL store *creates* `-wal` if
+        // it is absent, so fingerprinting before the first open would record a state the
+        // very next read destroys, and the app would announce a change nobody made.
+        // Anything equal to this is not news, which is what stops it chasing its own reads.
+        let _ = crate::store::readable(&database);
+        let mut last = fingerprint(&database);
 
         loop {
             let timeout = due
@@ -100,10 +139,21 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                     if due.take().is_none() {
                         continue;
                     }
+                    // Nothing actually moved: the event was somebody reading, including
+                    // very possibly us. Say nothing, and do not read the store to find out.
+                    let now = fingerprint(&database);
+                    if now == last {
+                        tries = 0;
+                        continue;
+                    }
+
                     // The read is the test. A store mid-write answers with an error, and
                     // announcing a refresh then would make every page draw the failure.
-                    match crate::store::read(&database) {
+                    // It is the cheap read: the pages fetch the payload themselves, and
+                    // pulling all seven views here only to drop them tripled the work.
+                    match crate::store::readable(&database) {
                         Ok(_) => {
+                            last = now;
                             tries = 0;
                             if let Err(error) = app.emit(STORE_CHANGED, ()) {
                                 eprintln!("[watch] could not announce: {error}");
@@ -139,16 +189,38 @@ mod tests {
     }
 
     #[test]
-    fn the_database_and_its_journals_are_the_store() {
+    fn the_database_and_its_write_ahead_log_are_the_store() {
         assert!(concerns_the_store(&paths(&["prudence.db"]), "prudence.db"));
         assert!(concerns_the_store(
             &paths(&["prudence.db-wal"]),
             "prudence.db"
         ));
-        assert!(concerns_the_store(
+    }
+
+    /// A reader writes `-shm`. Reacting to it made the app refresh every 750 ms forever
+    /// against any WAL store, which is every store the engine produces.
+    #[test]
+    fn the_shared_memory_index_is_not_evidence_of_a_change() {
+        assert!(!concerns_the_store(
             &paths(&["prudence.db-shm"]),
             "prudence.db"
         ));
+    }
+
+    /// A backup, a `VACUUM INTO` or a restore staging a temp file beside the target.
+    #[test]
+    fn a_file_that_merely_starts_with_the_name_is_not_the_store() {
+        for name in [
+            "prudence.db.bak",
+            "prudence.db.tmp",
+            "prudence.db2",
+            "prudence.db-journal",
+        ] {
+            assert!(
+                !concerns_the_store(&paths(&[name]), "prudence.db"),
+                "{name} should not be the store"
+            );
+        }
     }
 
     /// The engine keeps its config and its line-hash key in the same directory. A

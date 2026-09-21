@@ -79,16 +79,45 @@ fn data_dir() -> PathBuf {
     }
 }
 
+/// An override from the environment, with `~` expanded.
+///
+/// The engine's `paths.py` does `Path(override).expanduser()`. Anywhere a shell is not
+/// the one setting the variable (a plist, a launchd `EnvironmentVariables`, a runner
+/// reading a file) the value arrives with the tilde intact, and without this the engine
+/// ingests into `/Users/someone/stores/copy` while the app reports no store at a literal
+/// directory called `~`. The whole reason this variable is honoured is that the two can
+/// never disagree about which store is which.
 fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
+        .map(expand_tilde)
+}
+
+fn expand_tilde(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    if text == "~" {
+        return raw_home();
+    }
+    match text.strip_prefix("~/") {
+        Some(rest) => raw_home().join(rest),
+        None => path,
+    }
+}
+
+/// The home directory, read without going back through [`env_path`], which would recurse.
+fn raw_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn home() -> PathBuf {
-    env_path("HOME")
-        .or_else(|| env_path("USERPROFILE"))
-        .unwrap_or_else(|| PathBuf::from("."))
+    raw_home()
 }
 
 /// A view's answer as the page wants it: the column names once, then the rows.
@@ -97,6 +126,24 @@ fn home() -> PathBuf {
 struct Block {
     columns: Vec<String>,
     rows: Vec<Vec<Value>>,
+}
+
+/// Can the store be read right now?
+///
+/// The watcher's question, and it used to be answered by calling [`read`] and dropping
+/// the result: seven views pulled across, then pulled again by each page. This asks the
+/// contract row, which is the same "is it open and sane" test for a rounding error of the
+/// cost, and is the one query [`read`] itself starts with.
+pub fn readable(path: &Path) -> Result<u32, StoreError> {
+    if !path.exists() {
+        return Err(StoreError::Missing(path.to_path_buf()));
+    }
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| StoreError::Open(error.to_string()))?;
+    contract_version(&connection)
 }
 
 pub fn read(path: &Path) -> Result<Value, StoreError> {
@@ -165,13 +212,18 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
 /// question "may I read the views at all", which the views themselves cannot answer for a
 /// store older than the column that carries it.
 fn contract_version(connection: &Connection) -> Result<u32, StoreError> {
-    let found: Option<String> = connection
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'app_contract_version'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    // `QueryReturnedNoRows` is a contract answer: this store predates the column. Any
+    // other error is the file being unreadable, and telling somebody to upgrade their
+    // engine because the database is corrupt sends them to fix the wrong thing.
+    let found: Option<String> = match connection.query_row(
+        "SELECT value FROM meta WHERE key = 'app_contract_version'",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(value) => Some(value),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(error) => return Err(StoreError::Read(error.to_string())),
+    };
 
     let Some(found) = found else {
         return Err(StoreError::Contract {
@@ -283,9 +335,11 @@ mod tests {
     #[test]
     fn every_block_the_page_reads_answers() {
         let payload = read(&fixture()).expect("the fixture reads");
+        // Not `.is_some()`: `json!` serialises a missing block to `Value::Null` and
+        // **still inserts the key**, so that assertion held for every key whatever
+        // happened. Rename a view in `contract.rs` and it stayed green while the screen
+        // went blank. The shape is the thing the page needs.
         for key in [
-            "status",
-            "projects",
             "usage",
             "outcomes",
             "commits",
@@ -293,11 +347,38 @@ mod tests {
             "observations",
             "reviews",
         ] {
-            assert!(payload.get(key).is_some(), "payload has no {key}");
+            let block = &payload[key];
+            assert!(
+                block["columns"].is_array() && block["rows"].is_array(),
+                "payload block {key} is {block}"
+            );
         }
+        assert!(payload["status"].is_object(), "status is not an object");
+        assert!(payload["projects"].is_array(), "projects is not an array");
         assert!(
             !payload["usage"]["rows"].as_array().unwrap().is_empty(),
             "the fixture has usage rows"
+        );
+    }
+
+    #[test]
+    fn a_store_override_expands_a_leading_tilde() {
+        // The engine's `paths.py` expands it, so a value that arrives from a plist or a
+        // launchd environment must land in the same directory for both.
+        let home = super::raw_home();
+        assert_eq!(super::expand_tilde(PathBuf::from("~")), home);
+        assert_eq!(
+            super::expand_tilde(PathBuf::from("~/stores/copy")),
+            home.join("stores/copy")
+        );
+        // Only a leading `~/`, and never inside a name.
+        assert_eq!(
+            super::expand_tilde(PathBuf::from("/tmp/~/copy")),
+            PathBuf::from("/tmp/~/copy")
+        );
+        assert_eq!(
+            super::expand_tilde(PathBuf::from("~copy")),
+            PathBuf::from("~copy")
         );
     }
 
