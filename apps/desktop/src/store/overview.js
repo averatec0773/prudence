@@ -47,6 +47,50 @@ export function mondayOf(day) {
   return localDay(date);
 }
 
+/**
+ * Every ISO week in the range, oldest first, whether or not anything happened in it.
+ *
+ * **This is the x axis of every weekly chart, and both Overview charts share it**, so a
+ * week sits at the same place in each and the two can be read against one another. It is
+ * an ordinal axis over a complete list, not a date scale: the slots are equal width.
+ *
+ * The completeness is the point. A week with no row used to produce no slot at all, so a
+ * line ran straight from one side of a four-week silence to the other and nobody could
+ * see the silence. Here the week exists, the value is missing, and the chart draws the
+ * hole it actually is.
+ *
+ * For "all" the axis starts at the earliest week anything was recorded in, taken across
+ * usage, outcomes and commits together so that the two charts still agree.
+ */
+export function axisWeeks(data, { range = "8w", now = new Date() } = {}) {
+  const from = firstDay(range, now) ?? earliestRecordedDay(data);
+  if (!from) return [];
+  const last = mondayOf(localDay(now));
+  const out = [];
+  let cursor = mondayOf(from);
+  // A guard, not a rule: a store with a nonsense future date should not spin here.
+  for (let i = 0; cursor <= last && i < 520; i += 1) {
+    out.push(cursor);
+    const next = startOfLocalDay(cursor);
+    next.setDate(next.getDate() + 7);
+    cursor = localDay(next);
+  }
+  return out;
+}
+
+/** The earliest local day any of the three weekly sources recorded. */
+function earliestRecordedDay(data) {
+  let earliest = null;
+  const consider = (value) => {
+    const day = String(value).slice(0, 10);
+    if (day && (earliest === null || day < earliest)) earliest = day;
+  };
+  for (const row of data.usage) consider(row.day);
+  for (const row of data.commits ?? []) consider(row.day);
+  for (const row of data.outcomes ?? []) consider(row.week_start);
+  return earliest;
+}
+
 /** Monday first, which is how the heat strip's seven rows read. */
 export const WEEKDAYS = /** @type {const} */ (["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
@@ -111,31 +155,34 @@ function lastDayOfWeek(monday) {
 }
 
 /**
- * Tokens by purpose, summed into the ISO week each local day falls in.
+ * Tokens by purpose, summed into the ISO week each local day falls in, over the whole
+ * range's axis.
  *
- * Weeks with no row at all are **left out**, not filled with zeros: the chart's job is
- * to show what was measured. Weeks are returned oldest first.
+ * Every week in the range is here, in order. A week the store has no row for carries
+ * `measured: false`, and the chart draws an **empty slot** rather than a zero-height bar:
+ * nothing was recorded is not the same statement as nothing was spent, and the two must
+ * not look alike.
  */
 export function weeks(data, { project = null, range = "8w", now = new Date() } = {}) {
-  const from = firstDay(range, now);
-  /** @type {Map<string, {week: string, byPurpose: Record<string, number>, total: number}>} */
-  const found = new Map();
+  const axis = axisWeeks(data, { range, now });
+  /** @type {Map<string, {week: string, byPurpose: Record<string, number>, total: number, measured: boolean}>} */
+  const found = new Map(
+    axis.map((week) => [week, { week, byPurpose: emptyBuckets(), total: 0, measured: false }])
+  );
 
   for (const row of data.usage) {
-    if (!inRange(row.day, from)) continue;
     if (!matchesProject(row, project)) continue;
     const week = mondayOf(String(row.day));
-    let bucket = found.get(week);
-    if (!bucket) {
-      bucket = { week, byPurpose: emptyBuckets(), total: 0 };
-      found.set(week, bucket);
-    }
+    const bucket = found.get(week);
+    // Outside the axis, which is the range's own test now that the axis defines it.
+    if (!bucket) continue;
     const tokens = Number(row.total_tokens) || 0;
     bucket.byPurpose[known(String(row.purpose))] += tokens;
     bucket.total += tokens;
+    bucket.measured = true;
   }
 
-  return [...found.values()].sort((a, b) => a.week.localeCompare(b.week));
+  return axis.map((week) => /** @type {any} */ (found.get(week)));
 }
 
 /**
@@ -146,33 +193,40 @@ export function weeks(data, { project = null, range = "8w", now = new Date() } =
  * has not arrived has `measured_30d = 0`: that is a **hole**, and the run ends there.
  */
 export function outcomes(data, { project = null, range = "8w", now = new Date() } = {}) {
-  const from = firstDay(range, now);
-  /** @type {Map<string, any[]>} */
+  const axis = axisWeeks(data, { range, now });
+  const onAxis = new Set(axis);
+  /** @type {Map<string, Map<string, any>>} */
   const byProject = new Map();
 
   for (const row of data.outcomes) {
-    if (from !== null && String(row.week_start).slice(0, 10) < from) continue;
+    const week = mondayOf(String(row.week_start).slice(0, 10));
+    if (!onAxis.has(week)) continue;
     if (!matchesProject(row, project)) continue;
     const name = String(row.project ?? row.repo_key ?? "");
-    if (!byProject.has(name)) byProject.set(name, []);
-    byProject.get(name).push(row);
+    if (!byProject.has(name)) byProject.set(name, new Map());
+    byProject.get(name).set(week, row);
   }
 
   return [...byProject.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, rows]) => {
-      rows.sort((a, b) => String(a.week_start).localeCompare(String(b.week_start)));
-      const points = rows.map((row) => {
-        const measured = Number(row.measured_30d) || 0;
-        const lines = Number(row.lines) || 0;
+      // One point per week on the shared axis, present or not. A week this project has
+      // no row for is a hole, so `runs` cuts there and no line is drawn across it; before
+      // the axis existed such a week produced no point at all and the line ran straight
+      // through the silence.
+      const points = axis.map((week) => {
+        const row = rows.get(week);
+        const measured = Number(row?.measured_30d) || 0;
+        const lines = Number(row?.lines) || 0;
         return {
-          week: String(row.week_start).slice(0, 10),
+          week,
           // Null, not zero: nothing measured is not "none survived".
           alive: measured > 0 ? Number(row.alive_30d) / measured : null,
           measured30d: measured,
           rework: lines > 0 ? Number(row.reworked) / lines : null,
           lines,
-          coverage: row.coverage === null || row.coverage === undefined ? null : Number(row.coverage),
+          coverage:
+            row?.coverage === null || row?.coverage === undefined ? null : Number(row.coverage),
         };
       });
       // Coverage is cut on **coverage**, not on alive. A week can have a measured

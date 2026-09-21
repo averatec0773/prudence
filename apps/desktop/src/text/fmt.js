@@ -37,9 +37,43 @@ export function decimal(value, places, language) {
 /** `1.2M`, `43.1k`, `812`. The unit letters are not translated: they are the same in
  *  both languages the app ships. */
 export function tokens(value, language) {
+  // Billions are not hypothetical: the founder's own store holds 9.7 billion tokens, and
+  // without this rung a single week reads "1,316.1M" on a chart axis. Found by drawing
+  // the Overview against a copy of the real store rather than the fixture.
+  if (value >= 1_000_000_000) return `${decimal(value / 1_000_000_000, 1, language)}B`;
   if (value >= 1_000_000) return `${decimal(value / 1_000_000, 1, language)}M`;
   if (value >= 1_000) return `${decimal(value / 1_000, 1, language)}k`;
   return count(value, language);
+}
+
+/**
+ * A scale of token values that all read in the same unit.
+ *
+ * `tokens` picks a unit per value, which is right in a sentence and wrong on an axis: a
+ * chart whose labels ran "1.5B, 1.1B, 750.0M, 375.0M" made the reader convert between
+ * two units to compare four gridlines. The unit comes from the largest value and every
+ * label uses it.
+ *
+ * @param {number} max the top of the scale
+ * @param {string} [language]
+ * @returns {(value: number) => string}
+ */
+export function tokenScale(max, language) {
+  const [size, suffix] =
+    max >= 1_000_000_000
+      ? [1_000_000_000, "B"]
+      : max >= 1_000_000
+        ? [1_000_000, "M"]
+        : max >= 1_000
+          ? [1_000, "k"]
+          : [1, ""];
+  // The number of decimals comes from the top of the scale, not from each value, or one
+  // axis reads "3.0k, 6.0k, 9.0k, 12k".
+  const places = max / size < 10 ? 1 : 0;
+  return (value) => {
+    if (value === 0) return count(0, language);
+    return size === 1 ? count(value, language) : `${decimal(value / size, places, language)}${suffix}`;
+  };
 }
 
 export function hours(value, language) {
@@ -169,6 +203,19 @@ export function day(value, language) {
     month: "short",
     year: "numeric",
   }).format(date);
+}
+
+/**
+ * A day with the year left off: what goes under a bar on an axis.
+ *
+ * The full form is about eleven characters and there can be twenty of them across one
+ * card. The year is the same for every label in a range anyway, and the card's own
+ * subtitle carries the range, so it is the part that can go.
+ */
+export function shortDay(value, language) {
+  const date = fromDay(value);
+  if (!date) return String(value);
+  return new Intl.DateTimeFormat(langOf(language), { day: "numeric", month: "short" }).format(date);
 }
 
 /* --- phrases built from a count ----------------------------------------------------- */

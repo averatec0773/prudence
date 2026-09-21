@@ -137,6 +137,60 @@ catching here are shape defects: a JSON string where an array was expected, an o
 read as if it were present, a language argument accepted and then ignored. `tsc` sees
 those; eslint does not. It runs in the batch checklist and in CI.
 
+## The page contract
+
+**A screen is one module, one stylesheet and one line in a table.** This exists so that
+several screens can be written at the same time without two of them touching the same
+file, and so that a screen can be read on its own by somebody who has not read the rest.
+
+To add a screen:
+
+1. `src/ui/<screen>.js`, exporting one function named after the screen.
+2. `src/ui/<screen>.css`, and a `<link>` for it in `window.html`.
+3. One line in `src/ui/screens.js`.
+
+That is the whole surface. Nothing else in the app names a screen.
+
+### What a screen may and may not do
+
+**It is handed everything and reaches for nothing.** The one argument carries `data` (the
+whole store payload), `info` (`shell_info`), the scope (`project`, `range`, `week`), and
+two callbacks (`onWeek`, `redraw`). A screen does not import the bridge, does not read the
+store, does not touch `document` outside the tree it is building, and keeps no state
+between renders: it is called again from scratch whenever anything changes.
+
+**It returns one element** and appends nothing to the page itself.
+
+**It owns no numbers.** Everything a screen prints comes from a reader in `src/store/`,
+which is where the rule about sums and ratios is kept and tested. A screen that needs a
+figure no reader provides adds the reader, with a test, rather than computing it inline.
+This is the rule the whole app rests on, and a screen is where it would first be broken.
+
+**Its stylesheet declares no design token** and holds only what that screen alone needs.
+A rule two screens want moves to `design/components.css` in the same change; it is never
+copied. A test reads every stylesheet on disk and fails on a token declared outside
+`design/tokens.css`.
+
+**Its strings are keys.** No English in a screen module, and no sentence assembled from
+fragments with punctuation in JavaScript: one key with numbered placeholders, so another
+language can order it differently. New keys go in `Scripts/strings.py`'s `DESKTOP_ONLY`
+with a reason, and the script regenerates both tables.
+
+**The pickers are declared, not assumed.** `scope: true` in the route table puts the
+project and range controls above the screen. A screen that does not read them sets it
+`false`, because a control that changes nothing is worse than no control.
+
+### What is shared
+
+| Shared | Where | Who may change it |
+|---|---|---|
+| Chart primitives | `design/charts.js` | by agreement; every screen draws with these |
+| The DOM helpers | `design/dom.js` | by agreement |
+| Store readers | `store/*.js` | the screen that needs a new one adds it, with a test |
+| Formatters and strings | `text/` | additive only, via `DESKTOP_ONLY` |
+| Shared components | `design/components.css` | additive; move, never copy |
+| The window shell | `window.css`, `ui/window.js` | not from a screen |
+
 ## Platform differences
 
 **They live in `src-tauri/src/platform/`**, behind one interface with three
@@ -223,19 +277,6 @@ would be worse than being briefly stale. The shell's log carries the reason.
   becomes permanently unreadable while the app is open looks fine until it is relaunched.
 - **Removed when:** the page can show a quiet "these numbers are from HH:MM" line, which
   is the right answer and is a design question, not a bug fix.
-
-### `PRUDENCE_UI_MEMORY` is not behind the `harness` feature
-
-`ui_state.rs`. It is an automation hook by the definition used everywhere else here (it is
-what every screenshot run sets), and the rule is that automation is compiled out of a
-release build. This one is not.
-
-- **Assumes:** nothing reads it by accident, being an undocumented variable.
-- **When it breaks:** a release build can be made to forget its window geometry by
-  anything that sets the variable in the app's environment.
-- **Removed when:** it is gated like `PRUDENCE_GLASS_OPAQUE` is. The shots are taken with
-  a bundle built `--features harness`, so gating costs nothing; it is listed here rather
-  than fixed because `ui_state.rs` is outside the batch that found it.
 
 ### The status item's button is found by class name
 

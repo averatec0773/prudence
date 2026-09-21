@@ -58,6 +58,32 @@ test("tokens abbreviate the way the mockups print them", () => {
   assert.equal(Fmt.tokens(5955), "6.0k");
   assert.equal(Fmt.tokens(43_100), "43.1k");
   assert.equal(Fmt.tokens(1_200_000), "1.2M");
+  // A real store reaches here. The rung was missing until the Overview was drawn against
+  // a copy of one and an axis label read "1,316.1M".
+  assert.equal(Fmt.tokens(1_316_100_000), "1.3B");
+  assert.equal(Fmt.tokens(9_669_002_000), "9.7B");
+  // Each rung takes over exactly where the one below it stops.
+  assert.equal(Fmt.tokens(999_999_999), "1,000.0M");
+  assert.equal(Fmt.tokens(1_000_000_000), "1.0B");
+});
+
+test("an axis of token values reads in one unit, with one number of decimals", () => {
+  // Per-value units made one axis read "1.5B, 1.1B, 750.0M, 375.0M", which asks the
+  // reader to convert between two units to compare four gridlines.
+  const billions = Fmt.tokenScale(1_500_000_000);
+  assert.deepEqual(
+    [0, 0.25, 0.5, 0.75, 1].map((q) => billions(1_500_000_000 * q)),
+    ["0", "0.4B", "0.8B", "1.1B", "1.5B"]
+  );
+  // And the decimals come from the top of the scale, or one axis reads "9.0k, 12k".
+  const thousands = Fmt.tokenScale(12_000);
+  assert.deepEqual(
+    [0, 0.25, 0.5, 0.75, 1].map((q) => thousands(12_000 * q)),
+    ["0", "3k", "6k", "9k", "12k"]
+  );
+  // Small scales stay plain counts rather than becoming "0.1k".
+  const few = Fmt.tokenScale(8);
+  assert.deepEqual([0, 4, 8].map(few), ["0", "4", "8"]);
 });
 
 test("a count carries its language's grouping", () => {

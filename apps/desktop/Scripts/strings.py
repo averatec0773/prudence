@@ -49,6 +49,60 @@ NOTE = (
 
 # Keys the desktop added after the Swift app was frozen. Nothing in `apps/mac/` uses them.
 DESKTOP_ONLY = {
+    # The method line under each chart, rewritten for a reader. The view and column names
+    # moved into `*.method`, which the page puts behind a disclosure: principle 3 asks for
+    # the method stated, and a caption that opens with `alive_30d / measured_30d` states
+    # it to whoever wrote the query, not to whoever is reading the chart.
+    "overview.tokensByPurpose.note2": {
+        "en": "What each week's tokens went on. A session counts on the day it started; a week nothing was recorded in is left empty rather than drawn as zero.",
+        "zh-Hans": "每一周的 token 花在了什么上。一个会话计在它开始的那天；没有任何记录的那一周留空，而不是画成零。",
+    },
+    "overview.tokensByPurpose.method": {
+        "en": "Summed from the app_usage_by_purpose_day view into the ISO week each local day falls in, over total_tokens.",
+        "zh-Hans": "由 app_usage_by_purpose_day 视图按本地日期所属的 ISO 周汇总 total_tokens。",
+    },
+    "overview.whatBecame.note2": {
+        "en": "Of the lines written in a week, how many were still in the code thirty days later, and how many had been rewritten. The pale band behind them is how much of that week's committed work the sessions themselves wrote. A week whose thirty days are not up yet is a gap, never a zero.",
+        "zh-Hans": "某一周写下的代码，三十天后还有多少留在代码里，又有多少被改写。它们背后那条浅色的带子，是那一周提交的工作里由会话本人写下的比例。三十天还没到的那一周是断口，不是零。",
+    },
+    "overview.whatBecame.method": {
+        "en": "alive_30d / measured_30d and reworked / lines, both from the app_outcomes_by_week view; the band is that view's coverage.",
+        "zh-Hans": "alive_30d / measured_30d 与 reworked / lines，都来自 app_outcomes_by_week 视图；带子是该视图的 coverage。",
+    },
+    "overview.whereTime.note2": {
+        "en": "Which days the work happened on. A darker square is a longer day; a day with no session at all is left blank rather than shaded as zero.",
+        "zh-Hans": "工作发生在哪些日子。颜色越深，那天越长；完全没有会话的日子留白，而不是按零着色。",
+    },
+    "overview.whereTime.method": {
+        "en": "Active minutes per local day, summed from the app_usage_by_purpose_day view.",
+        "zh-Hans": "按本地日期汇总 app_usage_by_purpose_day 视图的 active_minutes。",
+    },
+    "chart.method": {"en": "How this is measured", "zh-Hans": "这张图是怎么算出来的"},
+    # The honest placeholder, in place of forty fake rows. A screen that is not written
+    # should say so rather than imitate one that is.
+    "screen.notBuilt.title": {"en": "Not built yet", "zh-Hans": "这个页面还没写"},
+    "screen.notBuilt.detail": {
+        "en": "This screen arrives in the next delivery. Nothing is wrong with your store.",
+        "zh-Hans": "这个页面会在下一次交付里出现。你的库没有问题。",
+    },
+    # Two line charts stacked in one card with identical furniture. The legend said which
+    # stroke meant what, which was no use when they are separate pictures.
+    "overview.stillAlive": {"en": "Still there after 30 days", "zh-Hans": "三十天后仍然还在"},
+    "overview.reworkedLater": {"en": "Rewritten later", "zh-Hans": "后来被改写"},
+    # Fewer than two measured weeks is not an empty chart, it is a chart that cannot be
+    # drawn yet, and it should say so in words rather than leave one dot in a wide card.
+    "overview.tooFewWeeks.title": {
+        "en": "Not enough weeks to draw a line yet",
+        "zh-Hans": "还不够画出一条线",
+    },
+    "overview.tooFewWeeks.detail": {
+        "en": "A trend needs two measured weeks. %1$@ so far; the table below has it in full.",
+        "zh-Hans": "一条趋势线至少需要两个有测量的周。目前有 %1$@；下面的表格里是完整的数字。",
+    },
+    "unit.measuredWeeks": {
+        "en": {"one": "%1$lld measured week", "other": "%1$lld measured weeks"},
+        "zh-Hans": {"other": "%1$lld 个有测量的周"},
+    },
     # The Overview's hover line, its heat-cell label and its chart caption, each composed
     # as one sentence per language rather than assembled from fragments in JavaScript.
     "overview.weekReading": {"en": "%1$@: %2$@. %3$@", "zh-Hans": "%1$@：%2$@。%3$@"},

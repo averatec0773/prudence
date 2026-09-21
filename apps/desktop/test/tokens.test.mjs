@@ -11,7 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -145,12 +145,35 @@ test("no outcome colour is a purpose colour", () => {
   }
 });
 
-/* Design decisions live in the design system, not in the app's own stylesheet. `app.css`
+/* Design decisions live in the design system, not in any other stylesheet. A stylesheet
    may say where a surface goes and what a control's *token* is; the moment it declares a
-   token of its own, two files disagree about what the product's blue is. */
-test("app.css declares no token of its own", () => {
-  const declared = [...appCss.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)].map((m) => m[1]);
-  assert.deepEqual(declared, [], `app.css declares ${declared.join(", ")}`);
+   token of its own, two files disagree about what the product's blue is.
+
+   Every stylesheet, found on disk rather than listed here, because the page contract lets
+   a new screen add `ui/<screen>.css` without touching a shared file and the rule has to
+   reach a file nobody remembered to add to a list. `window.css` is the exception it was
+   already: `--paired-label` and friends are geometry the shell computes, and the earlier
+   batch registered that in DESIGN.md. */
+test("no stylesheet but the design system declares a token", () => {
+  const sheets = readdirSync(join(app, "src"), { recursive: true })
+    .map(String)
+    .filter((name) => name.endsWith(".css"))
+    .filter((name) => name !== join("design", "tokens.css"))
+    .sort();
+
+  assert.ok(sheets.length >= 6, `found only ${sheets.length} stylesheets`);
+  assert.ok(sheets.includes("app.css"), "app.css is not in the list");
+  assert.ok(sheets.includes(join("ui", "overview.css")), "the screen sheets are not in the list");
+
+  const offenders = [];
+  for (const name of sheets) {
+    const text = readFileSync(join(app, "src", name), "utf8");
+    for (const match of text.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)) {
+      if (name === "window.css") continue;
+      offenders.push(`${name} declares ${match[1]}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
 });
 
 /* Colour never means good or bad, and the quiet actions are quiet. Batch 3 settled the

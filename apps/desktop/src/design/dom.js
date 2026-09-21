@@ -31,6 +31,7 @@ export function el(name, attrs, children) {
 /**
  * @param {string} name
  * @param {Record<string, string | number | null | undefined>} [attrs]
+ *   `text` is a shorthand, as in `el`; everything else becomes an attribute.
  * @param {Element[]} [children]
  * @returns {SVGElement}
  */
@@ -39,7 +40,12 @@ export function svgEl(name, attrs, children) {
   if (attrs) {
     for (const [key, value] of Object.entries(attrs)) {
       if (value === null || value === undefined) continue;
-      node.setAttribute(key, String(value));
+      // `<text>` and `<title>` carry their content, and spelling that out at every call
+      // site was two lines of `createTextNode` each. Note there is no `class` shorthand:
+      // an SVG element's `className` is read-only, so `class` goes through `setAttribute`
+      // like everything else.
+      if (key === "text") node.textContent = String(value);
+      else node.setAttribute(key, String(value));
     }
   }
   for (const child of children || []) node.appendChild(child);

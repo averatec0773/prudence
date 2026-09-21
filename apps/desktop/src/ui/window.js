@@ -11,19 +11,17 @@ import { icon } from "../design/icons.js";
 import { mark } from "../design/brand.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
 import { RANGES } from "../store/overview.js";
-import { overview } from "./overview.js";
+import { SCREENS, screenExists, screenFor } from "./screens.js";
 
 /** The four entries, in the order the sidebar shows them and Cmd-1 to Cmd-4 follow.
  *  The keys are what the shell remembers, so they are not display strings. */
-export const SECTIONS = /** @type {const} */ ([
-  { key: "overview", label: "section.overview" },
-  { key: "review", label: "section.review" },
-  { key: "observations", label: "section.observations" },
-  { key: "settings", label: "section.settings" },
-]);
+/** The sidebar's rows, and the keyboard's order, are the route table's order. */
+export const SECTIONS = SCREENS;
 
 const state = {
   section: "overview",
+  /** `shell_info`, handed to every screen: the platform, the language, the material. */
+  info: /** @type {any} */ (null),
   /** null is "all projects". */
   project: /** @type {string|null} */ (null),
   range: "8w",
@@ -39,23 +37,7 @@ function labelOf(key) {
 }
 
 function exists(key) {
-  return SECTIONS.some((entry) => entry.key === key);
-}
-
-/** One placeholder row, for the screens batches 6a to 8 still owe. Deterministic: two
- *  screenshots of the same screen are the same picture, and nothing animates. */
-function placeholderRow(section, index) {
-  const share = ((index * 37) % 90) + 8;
-  const fill = document.createElement("i");
-  fill.style.width = `${share}%`;
-  return el("div", { class: "placeholder" }, [
-    el("span", { class: "k", text: `${section} placeholder row ${index + 1}` }),
-    el("div", { class: "bar" }, [fill]),
-    el("span", {
-      class: "k",
-      text: "Batch 1 draws the shell, not the screen. This row is here to make the container tall.",
-    }),
-  ]);
+  return screenExists(key);
 }
 
 function show(section, { remember = true } = {}) {
@@ -69,26 +51,28 @@ function show(section, { remember = true } = {}) {
   }
   nodes.title.textContent = t(labelOf(next));
   nodes.sub.textContent = subtitleFor(next);
-  nodes.scope.hidden = next !== "overview";
+  // A screen that does not read the pickers must not show them: a control that changes
+  // nothing is worse than no control. The route table says which do.
+  nodes.scope.hidden = !screenFor(next).scope;
   nodes.screen.classList.remove("is-probe");
   nodes.screen.innerHTML = "";
 
-  if (next === "overview") {
-    nodes.screen.appendChild(
-      overview({
-        data: state.data,
-        project: state.project,
-        range: state.range,
-        week: state.week,
-        onWeek: (week) => {
-          state.week = week;
-          redraw();
-        },
-      })
-    );
-  } else {
-    for (let i = 0; i < 40; i += 1) nodes.screen.appendChild(placeholderRow(next, i));
-  }
+  // Every screen is drawn the same way: the route table names the function, and the
+  // function is handed everything it needs. Nothing here knows what any screen contains.
+  nodes.screen.appendChild(
+    screenFor(next).render({
+      data: state.data,
+      info: state.info,
+      project: state.project,
+      range: state.range,
+      week: state.week,
+      onWeek: (week) => {
+        state.week = week;
+        redraw();
+      },
+      redraw,
+    })
+  );
 
   nodes.screen.scrollTop = state.scroll[next] ?? 0;
   if (remember) Bridge.setSection(next);
@@ -263,6 +247,7 @@ export const page = {
   /** @param {HTMLElement} container */
   render(container, { info, data }) {
     state.data = data;
+    state.info = info;
     nodes.screen = el("div", { class: "screen" });
     nodes.note = el("div", { class: "note", text: "" });
     nodes.note.hidden = true;

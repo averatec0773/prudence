@@ -48,15 +48,24 @@ test("weeks come out oldest first, in the fixed purpose order", () => {
     ],
   });
   const out = weeks(data, { range: "8w", now: NOW });
-  assert.deepEqual(out.map((w) => w.week), ["2026-09-14", "2026-09-21"]);
-  assert.equal(out[0].total, 25, "the two days of one week are summed");
+  // Every week the range touches, not only the ones with rows: one shared axis, and a
+  // week with nothing in it is a slot rather than an absence (delivery A review, ruling 1).
+  assert.deepEqual(out.map((w) => w.week).slice(-2), ["2026-09-14", "2026-09-21"]);
+  assert.equal(out.length, 9, "a 56-day range touches nine ISO weeks");
+  assert.deepEqual(
+    out.filter((w) => w.measured).map((w) => w.week),
+    ["2026-09-14", "2026-09-21"]
+  );
+  const fourteenth = out.find((w) => w.week === "2026-09-14");
+  assert.equal(fourteenth.total, 25, "the two days of one week are summed");
   // The buckets, not the key order of `byPurpose`: that order is `emptyBuckets()`
   // whatever the data is, so asserting it could not fail. The order the legend and the
   // table walk is `PURPOSES`, which `purposes.test.mjs` pins against the engine.
-  assert.equal(out[0].byPurpose.development, 25);
-  assert.equal(out[0].byPurpose.research, 0);
-  assert.equal(out[1].byPurpose.research, 10);
-  assert.equal(out[1].byPurpose.development, 0);
+  assert.equal(fourteenth.byPurpose.development, 25);
+  assert.equal(fourteenth.byPurpose.research, 0);
+  const twentyFirst = out.find((w) => w.week === "2026-09-21");
+  assert.equal(twentyFirst.byPurpose.research, 10);
+  assert.equal(twentyFirst.byPurpose.development, 0);
 });
 
 test("a week outside the range is not in the answer", () => {
@@ -66,8 +75,19 @@ test("a week outside the range is not in the answer", () => {
       { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 1, active_minutes: 1 },
     ],
   });
-  assert.equal(weeks(data, { range: "8w", now: NOW }).length, 1);
-  assert.equal(weeks(data, { range: "all", now: NOW }).length, 2);
+  // The January row is outside an eight-week range, so no slot is drawn for it at all;
+  // the axis starts where the range does, not where the data does.
+  const eight = weeks(data, { range: "8w", now: NOW });
+  assert.equal(eight.length, 9, "nine slots for the range");
+  assert.deepEqual(eight.filter((w) => w.measured).map((w) => w.week), ["2026-09-21"]);
+
+  // "All" reaches back to the January row, so the axis spans every week between the two
+  // and the thirty-six silent weeks in the middle are slots, not an absence.
+  const all = weeks(data, { range: "all", now: NOW });
+  assert.equal(all[0].week, "2026-01-05");
+  assert.equal(all[all.length - 1].week, "2026-09-21");
+  assert.deepEqual(all.filter((w) => w.measured).map((w) => w.week), ["2026-01-05", "2026-09-21"]);
+  assert.equal(all.length, 38, "every week between the two, inclusive");
 });
 
 test("the ranges look back as far as they say", () => {
@@ -177,7 +197,10 @@ test("a project filter applies to every figure on the screen", () => {
   const onlyA = cards(data, { project: "a", range: "8w", now: NOW });
   assert.equal(onlyA.commits, 1);
   assert.equal(onlyA.hours, 1);
-  assert.equal(weeks(data, { project: "a", range: "8w", now: NOW })[0].total, 10);
+  const weekOfA = weeks(data, { project: "a", range: "8w", now: NOW }).find(
+    (one) => one.week === "2026-09-21"
+  );
+  assert.equal(weekOfA.total, 10);
 });
 
 /* --- the heat strip --------------------------------------------------------------------- */

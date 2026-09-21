@@ -1,0 +1,9 @@
+/* Rules only the settings screen needs.
+ *
+ * Shared pieces (card, stat, chart furniture, data table, empty state, the method
+ * disclosure) live in `design/components.css`. Put a rule here only when this screen is
+ * the only screen that wants it; if a second screen wants it, move it to the shared file
+ * in the same change rather than copying it.
+ *
+ * No design token may be declared here. A test asserts it.
+ */

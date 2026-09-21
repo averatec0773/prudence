@@ -382,6 +382,126 @@ mod tests {
         );
     }
 
+    /// The columns a **contract 2** store answers with, written out here rather than
+    /// derived from `contract::ADDED_AT_3`.
+    ///
+    /// That is the whole point of the test below. Asserting `columns_at(name, 2)` against
+    /// the constant it is implemented from proves only that the constant is itself, and
+    /// until now nothing opened a contract-2 database at all: the fixture is contract 3,
+    /// so `columns_at(name, 2)` was dead code everywhere except in an assertion about
+    /// itself. If `ADDED_AT_3` were missing an entry, the first person to find out would
+    /// be a user on an older engine.
+    ///
+    /// These two lists are the independent statement. They come from `app_views.py` at
+    /// the commit that introduced contract 3, reading what the columns were *before* it.
+    const OBSERVATION_AT_2: &[&str] = &[
+        "repo_key",
+        "project",
+        "pooled",
+        "fact",
+        "threshold_text",
+        "outcome",
+        "direction",
+        "with_n",
+        "without_n",
+        "with_value",
+        "without_value",
+        "coverage",
+        "fact_commits",
+        "inferred_commits",
+        "fact_version",
+        "observation_id",
+        "sentence",
+    ];
+    const REVIEW_AT_2: &[&str] = &[
+        "id",
+        "created_at",
+        "range_start",
+        "range_end",
+        "outcome_range_start",
+        "outcome_range_end",
+        "repo_key",
+        "project",
+        "headline",
+        "sections",
+        "numbers",
+        "coverage",
+        "segment_text",
+        "segment_model",
+        "segment_created_at",
+    ];
+
+    /// A contract-2 store, built rather than committed: a binary fixture would drift and
+    /// nobody would notice until it mattered.
+    fn contract_two_store(directory: &Path) -> PathBuf {
+        let path = directory.join("prudence.db");
+        let connection = Connection::open(&path).expect("a new database");
+        connection
+            .execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)", [])
+            .expect("meta");
+        connection
+            .execute("INSERT INTO meta VALUES ('app_contract_version', '2')", [])
+            .expect("the version");
+
+        for view in contract::VIEWS {
+            let columns: Vec<&str> = match view.name {
+                "app_observation" => OBSERVATION_AT_2.to_vec(),
+                "app_review" => REVIEW_AT_2.to_vec(),
+                other => contract::view(other).unwrap().columns.to_vec(),
+            };
+            let spec = columns
+                .iter()
+                .map(|column| format!("\"{column}\" TEXT"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            connection
+                .execute(&format!("CREATE TABLE {} ({spec})", view.name), [])
+                .expect("a view");
+            let values = columns.iter().map(|_| "'x'").collect::<Vec<_>>().join(", ");
+            connection
+                .execute(&format!("INSERT INTO {} VALUES ({values})", view.name), [])
+                .expect("a row");
+        }
+        path
+    }
+
+    /// The contract-2 path, exercised against an actual database.
+    #[test]
+    fn a_contract_two_store_reads_without_the_columns_it_does_not_have() {
+        let directory =
+            std::env::temp_dir().join(format!("prudence-contract-2-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let path = contract_two_store(&directory);
+
+        let payload = read(&path).expect("a contract 2 store reads");
+        assert_eq!(payload["app_contract_version"], 2);
+
+        let columns = |block: &str| -> Vec<String> {
+            payload[block]["columns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(columns("observations"), OBSERVATION_AT_2);
+        assert_eq!(columns("reviews"), REVIEW_AT_2);
+        // And the three that arrived at contract 3 really are the ones left out.
+        for (view, column) in contract::ADDED_AT_3 {
+            let block = match *view {
+                "app_observation" => "observations",
+                "app_review" => "reviews",
+                other => panic!("no block for {other}"),
+            };
+            assert!(
+                !columns(block).iter().any(|have| have == column),
+                "{column} should not be selected from a contract 2 store"
+            );
+        }
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
     /// No figure on a screen may be one this shell invented: the payload's status block is
     /// the view's own row, column for column.
     #[test]

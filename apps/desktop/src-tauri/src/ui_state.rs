@@ -69,12 +69,28 @@ pub struct Memory {
     enabled: bool,
 }
 
+/// Compiled in only for the harness; a release build always remembers.
+#[cfg(feature = "harness")]
+fn memory_is_off() -> bool {
+    std::env::var("PRUDENCE_UI_MEMORY").as_deref() == Ok("off")
+}
+
+#[cfg(not(feature = "harness"))]
+fn memory_is_off() -> bool {
+    false
+}
+
 impl Memory {
     /// `PRUDENCE_UI_MEMORY=off` starts with nothing remembered and writes nothing, so a
     /// screenshot is of the state the caller asked for and not of whatever the machine last
     /// left behind. The Swift render harness does the same with `restoringMemory: false`.
+    ///
+    /// **Behind the `harness` feature**, like every other automation hook. It is what the
+    /// screenshot runs set, and the rule is that automation is compiled out of a release
+    /// build; this one shipped in one until the delivery A review noticed. The shots are
+    /// taken with a bundle built `--features harness`, so the gate costs nothing.
     pub fn load(app: &AppHandle) -> Self {
-        let enabled = std::env::var("PRUDENCE_UI_MEMORY").as_deref() != Ok("off");
+        let enabled = !memory_is_off();
         let path = app
             .path()
             .app_config_dir()

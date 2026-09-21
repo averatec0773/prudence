@@ -4,7 +4,7 @@
  * share carries the number it is over, and colour is identity rather than judgement.
  */
 
-import { heatStrip, linesWithGaps, stackedBars } from "../design/charts.js";
+import { heatStrip, linesWithGaps, niceMax, stackedBars } from "../design/charts.js";
 import { el } from "../design/dom.js";
 import { PURPOSES } from "../design/purposes.js";
 import {
@@ -17,15 +17,17 @@ import {
 import {
   count,
   day as formatDay,
+  shortDay,
   hourPhrase,
   hours as formatHours,
   list,
   percent,
   purpose,
   sessions,
+  tokenScale,
   tokens,
 } from "../text/fmt.js";
-import { t } from "../text/strings.js";
+import { plural, t } from "../text/strings.js";
 
 /** A figure with its caption above and its qualification below. */
 function statCard(caption, value, detail) {
@@ -36,14 +38,30 @@ function statCard(caption, value, detail) {
   ]);
 }
 
-function panel(title, note, body, extra) {
+/**
+ * A chart card: a title, one sentence of plain method for a reader, the chart, and the
+ * view and column names folded away behind a disclosure.
+ *
+ * The split is principle 3 read properly. The method has to be stated, but stating it as
+ * `alive_30d / measured_30d ... from app_outcomes_by_week` states it to whoever wrote the
+ * query. The sentence says what is counted and over what; the disclosure says where to go
+ * and check.
+ */
+function panel(title, note, body, extra, method) {
   const head = el("div", { class: "panel-head" }, [el("h2", { text: title })]);
   if (extra) head.appendChild(extra);
-  return el("div", { class: "card panel" }, [
+  const card = el("div", { class: "card panel" }, [
     head,
     el("p", { class: "panel-note", text: note }),
     body,
   ]);
+  if (method) {
+    const how = el("details", { class: "method" });
+    how.appendChild(el("summary", { text: t("chart.method") }));
+    how.appendChild(el("p", { text: method }));
+    card.appendChild(how);
+  }
+  return card;
 }
 
 /** Swatch and label per purpose, in the fixed order, wrapping. */
@@ -72,15 +90,27 @@ function weekTable(weeks) {
 
   const body = el("tbody");
   for (const week of weeks) {
-    const row = el("tr", {}, [el("td", { text: t("overview.weekOf", formatDay(week.week)) })]);
+    const row = el("tr", { class: week.measured ? "" : "unmeasured" }, [
+      el("td", { text: t("overview.weekOf", formatDay(week.week)) }),
+    ]);
     for (const key of present) {
-      row.appendChild(el("td", { text: week.byPurpose[key] ? tokens(week.byPurpose[key]) : t("common.dash") }));
+      row.appendChild(
+        el("td", { text: week.byPurpose[key] ? tokens(week.byPurpose[key]) : t("common.dash") })
+      );
     }
-    row.appendChild(el("td", { text: tokens(week.total) }));
+    // A week with no row at all has no total either. Printing 0 here would say the work
+    // was measured and came to nothing, which is the one thing the chart above is careful
+    // not to say.
+    row.appendChild(el("td", { text: week.measured ? tokens(week.total) : t("common.dash") }));
     body.appendChild(row);
   }
   table.appendChild(body);
   return table;
+}
+
+/** "3 measured weeks", through the catalogue's plural entry. */
+function measuredWeeksPhrase(howMany) {
+  return plural("unit.measuredWeeks", howMany, count(howMany));
 }
 
 function emptyState(title, detail) {
@@ -102,6 +132,9 @@ export function overview(state) {
 
   const totals = readCards(data, { project, range, week });
   const weeks = readWeeks(data, { project, range });
+  // One list of weeks, both charts. Ruling 1 of the delivery A review: the x axis is the
+  // range's complete week list, so a week is in the same place in each chart.
+  const axis = weeks.map((one) => one.week);
   const cardRow = el("div", { class: "card-row" }, [
     statCard(
       t("overview.sessionsInRange"),
@@ -144,12 +177,14 @@ export function overview(state) {
 
   const hover = el("div", { class: "hover-value", text: t("chart.hint.weeks") });
 
-  if (!weeks.length) {
+  if (!weeks.some((week) => week.measured)) {
     screen.appendChild(
       panel(
         t("overview.tokensByPurpose"),
-        t("overview.tokensByPurpose.note"),
-        emptyState(t("overview.noTokens.title"), t("overview.noTokens.detail"))
+        t("overview.tokensByPurpose.note2"),
+        emptyState(t("overview.noTokens.title"), t("overview.noTokens.detail")),
+        null,
+        t("overview.tokensByPurpose.method")
       )
     );
   } else {
@@ -175,9 +210,12 @@ export function overview(state) {
     const chart = stackedBars({
       weeks,
       selected: week,
-      label: formatDay,
+      label: shortDay,
+      axisFormat: tokenScale(niceMax(Math.max(0, ...weeks.map((one) => one.total)))),
       caption: list(
-        weeks.map((w) => `${t("overview.weekOf", formatDay(w.week))} ${tokens(w.total)}`)
+        weeks
+          .filter((w) => w.measured)
+          .map((w) => `${t("overview.weekOf", formatDay(w.week))} ${tokens(w.total)}`)
       ),
       onHover: say,
       onSelect: state.onWeek,
@@ -186,8 +224,10 @@ export function overview(state) {
     screen.appendChild(
       panel(
         t("overview.tokensByPurpose"),
-        t("overview.tokensByPurpose.note"),
-        el("div", {}, [chart, hover, purposeLegend(present), weekTable(weeks)])
+        t("overview.tokensByPurpose.note2"),
+        el("div", {}, [chart, hover, purposeLegend(present), weekTable(weeks)]),
+        null,
+        t("overview.tokensByPurpose.method")
       )
     );
   }
@@ -195,7 +235,8 @@ export function overview(state) {
   /* --- what became of each week's work -------------------------------------------- */
 
   const series = readOutcomes(data, { project, range });
-  const allWeeks = [...new Set(series.flatMap((s) => s.points.map((p) => p.week)))].sort();
+  // The same axis the bars above use, so a week sits at the same x in both charts.
+  const allWeeks = axis;
   // Every project that appears anywhere, not only those with a usage row: `data.projects`
   // comes from `app_usage_by_purpose_day`, so a repository with counted commits and no
   // session usage fell through `indexOf` to -1 and drew in the first project's colour.
@@ -203,17 +244,46 @@ export function overview(state) {
     ...new Set([...data.projects.map((row) => String(row.name)), ...series.map((one) => one.project)]),
   ];
 
-  if (!series.length || !allWeeks.length) {
+  // How many weeks actually carry a measurement decides which of three things this card
+  // is: an empty state, a sentence saying a trend needs two points, or a chart.
+  const measuredWeeks = new Set(
+    series.flatMap((one) =>
+      one.points.filter((p) => p.alive !== null || p.rework !== null).map((p) => p.week)
+    )
+  );
+
+  if (!series.length || measuredWeeks.size === 0) {
     screen.appendChild(
       panel(
         t("overview.whatBecame"),
-        t("overview.whatBecame.note"),
-        emptyState(t("overview.noOutcomes.title"), t("overview.noOutcomes.detail"))
+        t("overview.whatBecame.note2"),
+        emptyState(t("overview.noOutcomes.title"), t("overview.noOutcomes.detail")),
+        null,
+        t("overview.whatBecame.method")
+      )
+    );
+  } else if (measuredWeeks.size < 2) {
+    // One dot in six hundred points of empty card is not a chart. Say it in words, and
+    // keep the table, which is where the one measurement can actually be read.
+    screen.appendChild(
+      panel(
+        t("overview.whatBecame"),
+        t("overview.whatBecame.note2"),
+        el("div", {}, [
+          emptyState(
+            t("overview.tooFewWeeks.title"),
+            t("overview.tooFewWeeks.detail", measuredWeeksPhrase(measuredWeeks.size))
+          ),
+          outcomeTable(series),
+        ]),
+        null,
+        t("overview.whatBecame.method")
       )
     );
   } else {
     const alive = linesWithGaps({
       weeks: allWeeks,
+      label: shortDay,
       series: series.map((one) => ({
         project: one.project,
         colour: projectColour(one.project, names),
@@ -229,6 +299,7 @@ export function overview(state) {
     });
     const rework = linesWithGaps({
       weeks: allWeeks,
+      label: shortDay,
       dashed: true,
       series: series.map((one) => ({
         project: one.project,
@@ -238,9 +309,9 @@ export function overview(state) {
       caption: outcomeCaption(series, "rework"),
     });
 
+    // The two charts are separate pictures with the same furniture, so each says which
+    // it is. The legend keeps only what a picture cannot: which colour is which project.
     const legend = el("div", { class: "legend" }, [
-      el("span", { class: "key", text: t("overview.legend.alive") }),
-      el("span", { class: "key", text: t("overview.legend.rework") }),
       el("span", { class: "key", text: t("overview.legend.coverage") }),
     ]);
     for (const one of series) {
@@ -255,8 +326,17 @@ export function overview(state) {
     screen.appendChild(
       panel(
         t("overview.whatBecame"),
-        t("overview.whatBecame.note"),
-        el("div", {}, [alive, rework, legend, outcomeTable(series)])
+        t("overview.whatBecame.note2"),
+        el("div", {}, [
+          el("h3", { class: "chart-name", text: t("overview.stillAlive") }),
+          alive,
+          el("h3", { class: "chart-name", text: t("overview.reworkedLater") }),
+          rework,
+          legend,
+          outcomeTable(series),
+        ]),
+        null,
+        t("overview.whatBecame.method")
       )
     );
   }
@@ -268,8 +348,10 @@ export function overview(state) {
     screen.appendChild(
       panel(
         t("overview.whereTime"),
-        t("overview.whereTime.note"),
-        emptyState(t("overview.noHours.title"), t("overview.noHours.detail"))
+        t("overview.whereTime.note2"),
+        emptyState(t("overview.noHours.title"), t("overview.noHours.detail")),
+        null,
+        t("overview.whereTime.method")
       )
     );
   } else {
@@ -279,7 +361,7 @@ export function overview(state) {
     screen.appendChild(
       panel(
         t("overview.whereTime"),
-        t("overview.whereTime.note"),
+        t("overview.whereTime.note2"),
         heatStrip({
           weeks: strip.weeks,
           max: strip.max,
@@ -294,7 +376,9 @@ export function overview(state) {
           caption: list(
             measured.map((cell) => t("overview.dayHours", formatDay(cell.day), hourPhrase(cell.hours)))
           ),
-        })
+        }),
+        null,
+        t("overview.whereTime.method")
       )
     );
   }
