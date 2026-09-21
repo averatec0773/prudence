@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the two pages are allowed to ask of the shell.",
-  "windows": ["panel", "main"],
-  "permissions": []
+  "description": "What the two pages are allowed to ask of the shell. The app's own commands need no permission; this is here for the one core API the pages use, which is listening for the shell's store-changed event.",
+  "windows": [
+    "panel",
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }

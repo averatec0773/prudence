@@ -37,6 +37,28 @@ export function rowsOf(value) {
 }
 
 /**
+ * A column the engine stores as JSON text.
+ *
+ * `app_review.sections` and `.numbers` are JSON documents in a TEXT column, so they
+ * arrive as strings. The mockups' version called `.forEach` on them, which throws; it
+ * was never reached because no screen used it yet, and the review screen would have
+ * found it the hard way. Parsed once, here, where the payload is read.
+ *
+ * A column that will not parse is **null**, not an empty array: a review whose sections
+ * cannot be read is a review the screen must say it cannot read, not one that looks
+ * empty.
+ */
+function jsonColumn(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {any} payload the shell's `store_read` answer
  */
 export function readPayload(payload) {
@@ -49,7 +71,11 @@ export function readPayload(payload) {
     sessions: rowsOf(source.sessions),
     outcomes: rowsOf(source.outcomes),
     observations: rowsOf(source.observations),
-    reviews: rowsOf(source.reviews),
+    reviews: rowsOf(source.reviews).map((review) => ({
+      ...review,
+      sections: jsonColumn(review.sections),
+      numbers: jsonColumn(review.numbers),
+    })),
     projects: rowsOf(source.projects),
     contract: source.app_contract_version ?? null,
   };

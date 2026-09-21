@@ -27,6 +27,10 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# The store is watched so the window follows an ingest instead of showing an hour-old
+# figure. The debounce is ours (see `watcher.rs`): the policy is the interesting part and
+# a second crate would not know it.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.8"

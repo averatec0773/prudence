@@ -52,16 +52,29 @@ function dropFocus() {
  * script and a typo in a renderer. The store's own errors are sentences a user can act
  * on (`store.rs`), so they are shown as they come; everything else says what it was.
  */
-function failure(container, title, detail) {
+function failure(container, title, detail, note) {
   container.innerHTML = "";
   const shell = el("div", { class: "startup-error" });
   shell.appendChild(el("div", { class: "headline", text: title }));
   if (detail) shell.appendChild(el("div", { class: "obs-line", text: detail }));
+  // `store.rs` names both contract versions and says which side to update; this is the
+  // sentence that says why the app draws nothing rather than drawing half a schema.
+  if (note) shell.appendChild(el("div", { class: "coverage-chip", text: note }));
   container.appendChild(shell);
 }
 
 function message(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Read the store and draw. Called at start-up and again whenever the shell says an
+ * ingest has landed.
+ */
+async function draw(page, root, info) {
+  const payload = readPayload(await Bridge.readStore());
+  page.render(root, { info, data: payload });
+  dropFocus();
 }
 
 /**
@@ -89,16 +102,6 @@ export async function boot(page) {
     return;
   }
 
-  let payload;
-  try {
-    payload = readPayload(await Bridge.readStore());
-  } catch (error) {
-    // `store.rs` writes sentences that name both contract versions and say which side to
-    // update, so its message is the whole message.
-    failure(root, "Prudence cannot read this store", message(error));
-    return;
-  }
-
   try {
     await loadAll();
   } catch (error) {
@@ -109,15 +112,25 @@ export async function boot(page) {
   setLang(chooseLanguage(info));
 
   try {
-    page.render(root, { info, data: payload });
+    await draw(page, root, info);
   } catch (error) {
-    failure(root, t("contract.title"), message(error));
+    // `store.rs` writes sentences that name both contract versions and say which side
+    // to update, so where the store is the cause its message is the whole message.
+    failure(root, t("contract.title"), message(error), t("contract.note"));
     Bridge.log(`${page.name} failed to draw: ${message(error)}`);
     return;
   }
 
   globalThis.addEventListener("focus", dropFocus);
-  dropFocus();
+
+  /* An ingest that lands while the app is open redraws the page. A failure here is not
+     a failure of the app: the store was readable a moment ago and will be again, so the
+     old numbers stay on screen and the shell's log says what happened. */
+  Bridge.onStoreChanged(() => {
+    draw(page, root, info).catch((error) => {
+      Bridge.log(`${page.name} could not follow the store: ${message(error)}`);
+    });
+  });
 
   // The shell's log is the only place an agent or a founder can see that the page got
   // all the way to the end, since a menu-bar app has no console anybody is watching.

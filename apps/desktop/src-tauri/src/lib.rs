@@ -4,10 +4,12 @@
 //! Phase 1, batch 1. The window's screens are placeholders; what this batch is really for
 //! is whether the compositor holds. See `docs/reports/desktop/02-window-shell.md`.
 
+mod contract;
 mod panel;
 mod platform;
 mod store;
 mod ui_state;
+mod watcher;
 mod window;
 
 /// Everything that exists only so a script can drive the app. Absent from a release
@@ -50,7 +52,7 @@ pub struct ShellInfo {
     material: platform::MaterialReport,
     tray_highlight: bool,
     platform: Vec<(String, String)>,
-    supported_contract: Vec<i64>,
+    supported_contract: Vec<u32>,
     /// `en` or `zh-Hans` when the screenshot hook forced one, otherwise null and the page
     /// keeps the frontend's default. Proper language selection is batch 8.
     language: Option<String>,
@@ -78,7 +80,7 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         material: shell.material.lock().unwrap().clone(),
         tray_highlight: *shell.tray_highlight_works.lock().unwrap(),
         platform: platform::describe(),
-        supported_contract: store::SUPPORTED_CONTRACT.to_vec(),
+        supported_contract: store::supported_contract(),
         language: forced_language(),
         section: shell.memory.read().usable_section().map(str::to_string),
         harness: cfg!(feature = "harness"),
@@ -268,6 +270,10 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // The window follows the store: an ingest that lands while the app is open
+            // refreshes the pages instead of leaving them an hour behind.
+            watcher::watch(app.handle(), app.state::<Shell>().database.clone());
 
             #[cfg(feature = "harness")]
             harness::start(app.handle());

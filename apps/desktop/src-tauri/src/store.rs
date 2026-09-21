@@ -11,9 +11,13 @@ use rusqlite::{types::ValueRef, Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
-/// The contract versions this build renders. Version 3 is additive over 2, so both are
-/// drawn from one code path and every column 3 added is read as optional.
-pub const SUPPORTED_CONTRACT: &[i64] = &[2, 3];
+use crate::contract;
+
+/// The contract versions this build renders. The list, and the column tables behind it,
+/// are in `contract.rs`.
+pub fn supported_contract() -> Vec<u32> {
+    contract::SUPPORTED.to_vec()
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -32,7 +36,7 @@ pub enum StoreError {
 
 impl StoreError {
     fn supported_list() -> String {
-        SUPPORTED_CONTRACT
+        contract::SUPPORTED
             .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
@@ -108,48 +112,32 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
 
     let contract = contract_version(&connection)?;
 
-    let status = one_row(&connection, "SELECT * FROM app_status")?;
-    let usage = block(
-        &connection,
-        "SELECT day, project, purpose, total_tokens, active_minutes, sessions, \
-         measured_sessions FROM app_usage_by_purpose_day",
-    )?;
-    let outcomes = block(
-        &connection,
-        "SELECT project, week_start, commits, commits_fact, commits_inferred, lines, \
-         measured_7d, alive_7d, measured_30d, alive_30d, measured_90d, alive_90d, \
-         alive_head, reworked, coverage FROM app_outcomes_by_week",
-    )?;
-    let commits = block(
-        &connection,
-        "SELECT day, project, commits, commits_fact, commits_inferred FROM app_commits_by_day",
-    )?;
+    // Every view, with the columns its contract version has. Generated from the
+    // contract rather than hand-written, so a column added in Python and listed in
+    // `contract.rs` is selected here without a second edit, and so the two cannot drift.
+    let mut blocks = Map::new();
+    for view in contract::VIEWS {
+        let columns = contract::columns_at(view.name, contract);
+        let sql = format!("SELECT {} FROM {}", columns.join(", "), view.name);
+        blocks.insert(
+            view.name.to_string(),
+            serde_json::to_value(block(&connection, &sql)?).unwrap(),
+        );
+    }
+
+    // `app_status` is one row, and every page reads it as an object rather than as a
+    // block of one.
+    let status = blocks
+        .get("app_status")
+        .and_then(first_object)
+        .unwrap_or(Value::Null);
+
+    // The projects a surface can pick between, which is a distinct over one view rather
+    // than a view of its own.
     let projects = rows(
         &connection,
         "SELECT DISTINCT repo_key AS key, project AS name FROM app_usage_by_purpose_day \
          ORDER BY project",
-    )?;
-    // The view's own order, not one this shell invented: the dropdown shows the first
-    // row, and `Snapshot.read` in the Swift app takes `observationRows.first` off the same
-    // unordered select. A re-sort here would make the two apps disagree about which
-    // observation is the latest one.
-    let observations = rows(
-        &connection,
-        "SELECT observation_id AS id, project, pooled, fact, threshold_text, outcome, \
-         direction, with_n, without_n, with_value, without_value, coverage, fact_commits, \
-         inferred_commits, sentence AS sentence_en_engine FROM app_observation",
-    )?;
-    // Sessions are counted as rows of this view, never as a sum of
-    // `app_usage_by_purpose_day.sessions`, which is per purpose per day.
-    let sessions = block(
-        &connection,
-        "SELECT session_id, project, started_at, purpose, total_tokens, edits \
-         FROM app_session_list",
-    )?;
-    let reviews = rows(
-        &connection,
-        "SELECT id, created_at, range_start, range_end, project, headline, coverage \
-         FROM app_review ORDER BY created_at DESC",
     )?;
 
     let engine_version = status
@@ -161,22 +149,22 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
     Ok(json!({
         "source": path.display().to_string(),
         "engine_version": engine_version,
-        "app_contract_version": contract.to_string(),
+        "app_contract_version": contract,
         "status": status,
         "projects": projects,
-        "usage": usage,
-        "outcomes": outcomes,
-        "commits": commits,
-        "sessions": sessions,
-        "observations": observations,
-        "reviews": reviews,
+        "usage": blocks.get("app_usage_by_purpose_day"),
+        "outcomes": blocks.get("app_outcomes_by_week"),
+        "commits": blocks.get("app_commits_by_day"),
+        "sessions": blocks.get("app_session_list"),
+        "observations": blocks.get("app_observation"),
+        "reviews": blocks.get("app_review"),
     }))
 }
 
 /// The contract check, and the one place a table rather than a view is read: it is the
 /// question "may I read the views at all", which the views themselves cannot answer for a
 /// store older than the column that carries it.
-fn contract_version(connection: &Connection) -> Result<i64, StoreError> {
+fn contract_version(connection: &Connection) -> Result<u32, StoreError> {
     let found: Option<String> = connection
         .query_row(
             "SELECT value FROM meta WHERE key = 'app_contract_version'",
@@ -192,9 +180,9 @@ fn contract_version(connection: &Connection) -> Result<i64, StoreError> {
         });
     };
 
-    let parsed = found.trim().parse::<i64>().ok();
+    let parsed = found.trim().parse::<u32>().ok();
     match parsed {
-        Some(version) if SUPPORTED_CONTRACT.contains(&version) => Ok(version),
+        Some(version) if contract::SUPPORTED.contains(&version) => Ok(version),
         _ => Err(StoreError::Contract {
             found,
             supported: StoreError::supported_list(),
@@ -242,11 +230,16 @@ fn rows(connection: &Connection, sql: &str) -> Result<Vec<Value>, StoreError> {
         .collect())
 }
 
-fn one_row(connection: &Connection, sql: &str) -> Result<Value, StoreError> {
-    Ok(rows(connection, sql)?
-        .into_iter()
-        .next()
-        .unwrap_or(Value::Null))
+/// The first row of a `{columns, rows}` block, as an object. `app_status` is one row and
+/// every page reads it as an object rather than as a block of one.
+fn first_object(value: &Value) -> Option<Value> {
+    let columns = value.get("columns")?.as_array()?;
+    let row = value.get("rows")?.as_array()?.first()?.as_array()?;
+    let mut object = Map::new();
+    for (name, cell) in columns.iter().zip(row) {
+        object.insert(name.as_str()?.to_string(), cell.clone());
+    }
+    Some(Value::Object(object))
 }
 
 fn cell(row: &rusqlite::Row<'_>, index: usize) -> Result<Value, StoreError> {
@@ -284,7 +277,7 @@ mod tests {
         )
         .expect("fixture opens");
         let version = contract_version(&connection).expect("a supported contract");
-        assert!(SUPPORTED_CONTRACT.contains(&version));
+        assert!(contract::SUPPORTED.contains(&version));
     }
 
     #[test]
@@ -323,6 +316,54 @@ mod tests {
             .query_row("SELECT sessions FROM app_status", [], |row| row.get(0))
             .unwrap();
         assert_eq!(status["sessions"].as_i64(), Some(sessions));
+    }
+
+    /// The whole point of the contract being a list: a Python change that adds, removes
+    /// or reorders a column and forgets to bump `meta.APP_CONTRACT_VERSION` fails here
+    /// rather than in front of the user.
+    #[test]
+    fn every_view_answers_with_exactly_the_columns_the_contract_lists() {
+        let connection = Connection::open_with_flags(
+            fixture(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .unwrap();
+        for view in contract::VIEWS {
+            let statement = connection
+                .prepare(&format!("SELECT * FROM {}", view.name))
+                .unwrap_or_else(|error| panic!("{}: {error}", view.name));
+            let actual: Vec<String> = statement
+                .column_names()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            let expected: Vec<String> = view.columns.iter().map(|c| c.to_string()).collect();
+            assert_eq!(actual, expected, "{} answers with other columns", view.name);
+        }
+    }
+
+    /// Contract 3 is additive, so a contract-2 store is read by selecting the columns
+    /// that existed then. If this list is wrong, a 2 store fails at the first select.
+    #[test]
+    fn a_contract_two_store_is_selected_without_the_columns_three_added() {
+        let at_two = contract::columns_at("app_observation", 2);
+        let at_three = contract::columns_at("app_observation", 3);
+        assert!(!at_two.contains(&"threshold_value"));
+        assert!(at_three.contains(&"threshold_value"));
+        assert_eq!(at_three.len(), at_two.len() + 2);
+        assert!(!contract::columns_at("app_review", 2).contains(&"segment_language"));
+    }
+
+    /// Seven, not the eleven an earlier note claimed: `app_session_time` and
+    /// `app_observation_text` are helper tables and `app_views.py` says they are not
+    /// contract.
+    #[test]
+    fn the_contract_is_the_seven_views_the_engine_publishes() {
+        assert_eq!(contract::VIEWS.len(), 7);
+        for view in contract::VIEWS {
+            assert!(view.name.starts_with("app_"));
+            assert!(!view.columns.is_empty());
+        }
     }
 
     #[test]

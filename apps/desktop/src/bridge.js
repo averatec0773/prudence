@@ -70,3 +70,17 @@ export function setSection(section) {
 export function quit() {
   return core().invoke("app_quit");
 }
+
+/**
+ * The shell watches the store and says when an ingest has landed. The payload is
+ * deliberately empty: the page re-reads through `readStore`, so there is one way to get
+ * the store's contents and not two.
+ *
+ * @param {() => void} handler
+ * @returns {Promise<() => void>} a function that stops listening
+ */
+export function onStoreChanged(handler) {
+  const tauri = /** @type {any} */ (globalThis).__TAURI__;
+  if (!tauri?.event) return Promise.resolve(() => {});
+  return tauri.event.listen("store-changed", () => handler());
+}
