@@ -24,8 +24,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from prudence.paths import claude_file_history_dir, claude_projects_dir, spool_file
-from prudence.sources import claude_code
+from prudence import sources
+from prudence.paths import spool_file
+from prudence.sources import base
 from prudence.store.identity import identify
 from prudence.store.repos import Resolver
 
@@ -57,33 +58,28 @@ class IngestStats:
 
 def collect_targets(
     enabled_keys: set[str],
-    projects_dir: Path | None = None,
-    file_history_dir: Path | None = None,
     resolver: Resolver | None = None,
+    kind: str = sources.DEFAULT_KIND,
 ) -> list[Target]:
     """Every file belonging to an enabled repository: transcript, subagents, spills, history.
 
-    A session's repository comes from the first record's working directory. When that
-    directory no longer exists, which is the normal case for a Claude Desktop worktree,
-    `store.repos` maps it back by prefix or pattern and the session is archived like any
-    other. Without a resolver only the directory itself is consulted.
+    Which files exist is the adapter's knowledge (`sources/`); which of them belong to a
+    repository the user enabled is this module's. A session's repository comes from the
+    first record's working directory. When that directory no longer exists, which is the
+    normal case for a Claude Desktop worktree, `store.repos` maps it back by prefix or
+    pattern and the session is archived like any other. Without a resolver only the
+    directory itself is consulted.
     """
-    root = projects_dir or claude_projects_dir()
-    history_root = file_history_dir or claude_file_history_dir()
+    adapter = sources.source(kind)
     targets: list[Target] = []
-    for path in claude_code.list_session_files(root):
-        session = claude_code.read_session_file(path)
+    for session in adapter.session_files():
         key = _repo_key(session, resolver)
         if key is None or key not in enabled_keys:
             continue
-        targets.append(Target(path, "transcript", session.session_id, key))
-        session_dir = path.parent / session.session_id
-        targets.extend(_files_in(session_dir / "subagents", "subagent", session.session_id, key))
+        targets.append(Target(session.path, base.SESSION, session.session_id, key))
         targets.extend(
-            _files_in(session_dir / "tool-results", "tool-result", session.session_id, key)
-        )
-        targets.extend(
-            _files_in(history_root / session.session_id, "file-history", session.session_id, key)
+            Target(companion.path, companion.kind, session.session_id, key)
+            for companion in adapter.companion_files(session)
         )
     return targets
 
@@ -225,21 +221,11 @@ def archive_totals(connection: sqlite3.Connection) -> tuple[int, int, int]:
     return row["files"], row["size"], stored["stored"]
 
 
-def _repo_key(session: claude_code.SessionFile, resolver: Resolver | None) -> str | None:
+def _repo_key(session: base.SessionFile, resolver: Resolver | None) -> str | None:
     if resolver is not None:
         return resolver.resolve(session.cwd, session.git_branch).repo_key
     identity = identify(session.cwd) if session.cwd else None
     return identity.key if identity else None
-
-
-def _files_in(directory: Path, source: str, session_id: str, repo_key: str) -> list[Target]:
-    if not directory.is_dir():
-        return []
-    return [
-        Target(path, source, session_id, repo_key)
-        for path in sorted(directory.rglob("*"))
-        if path.is_file()
-    ]
 
 
 def _prefix_matches(path: Path, size: int, expected_sha: str | None) -> bool:

@@ -1,0 +1,209 @@
+"""What every source hands the store, and nothing about any particular agent.
+
+One agent writes JSONL records with a `uuid` on each line; another writes rollout
+items with no per-record id at all, tool calls under a different name and token
+counts in their own event. The store must not care. So a source adapter turns one
+agent's files into a stream of `Event`s, and `store/derived.py` builds its tables
+from that stream alone.
+
+An `Event` is one record of the agent's own log: the identity and time the record
+carries, plus the payloads it happens to hold. A record usually holds none (it is
+bookkeeping) or one; an assistant record that both answers and calls a tool holds
+several, which is why `payloads` is a tuple rather than a single field. Keeping a
+record whole is what lets the store write one `record` row per record and settle
+ownership and duplicates once per record rather than once per payload.
+
+Two fields carry the whole fork problem between them. `Event.session_id` is the
+session the record *declares it belongs to*, which is not always the session whose
+file it was read from: Claude Code's fork copies a parent's history into the new
+file record for record, parent's `sessionId` and all. `Event.stable_id` says whether
+`record_id` is the agent's own identifier or one the adapter had to derive from the
+file position, because a derived id names the same record differently in every file
+that copies it. `store/derived.py` reads both; no adapter has to know what they are for.
+
+What is deliberately not here: message text. An adapter may read it, and does (a
+prompt's length, an edit's lines, a command's text), but nothing text-shaped reaches a
+table: `store/derived.py` is the one place that decides what becomes a count, a keyed
+hash or nothing at all, so that the capture level means the same thing for every source.
+And nothing is in `Event` that no derived table uses; assistant text, for one, is read
+by nothing today and so is not carried.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Protocol
+
+from prudence.store.edits import CommandFacts, EditFacts
+
+# What a file beside a session's own transcript is. The store stores these words on
+# `archive_file.source` and asks for them back by name, so they are the shared
+# vocabulary rather than one agent's directory layout.
+SESSION = "transcript"
+SUBAGENT = "subagent"
+TOOL_RESULT = "tool-result"
+FILE_HISTORY = "file-history"
+
+
+@dataclass(frozen=True)
+class SessionFile:
+    """One session's own file on disk, as a scan sees it.
+
+    Read from the head and the tail of the file only: no message content, no writes.
+    """
+
+    path: Path
+    session_id: str
+    cwd: str | None
+    first_at: datetime | None
+    last_at: datetime | None
+    size_bytes: int
+    entrypoint: str | None
+    git_branch: str | None = None
+
+
+@dataclass(frozen=True)
+class CompanionFile:
+    """A file that belongs to a session but is not its transcript."""
+
+    path: Path
+    kind: str  # one of SUBAGENT, TOOL_RESULT, FILE_HISTORY
+
+
+@dataclass
+class FileHead:
+    """What the first records of an archived file say about when and where it ran.
+
+    Enough to sort the files and to ask `store/repos.py` which repository they belong
+    to, without decompressing more than the first chunk.
+    """
+
+    first_at: str | None = None
+    cwd: str | None = None
+    git_branch: str | None = None
+
+
+@dataclass(frozen=True)
+class Prompt:
+    """Something the person typed. Its length crosses; the text never does."""
+
+    chars: int
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What one response to the model cost, as the agent reports it.
+
+    `request_id` is the agent's own id for the response. Agents write several records
+    for one response and repeat the usage on each; the store counts the first and skips
+    the rest by this id. Any count the format does not carry is None, never zero.
+    """
+
+    request_id: str | None
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_creation_tokens: int | None
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A tool the agent invoked, read from the call itself."""
+
+    call_id: str
+    tool_name: str | None
+    file_path: str | None
+    input_bytes: int
+    edit: EditFacts | None
+    command: CommandFacts | None
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """How that tool call came back, which the agent reports in a later record.
+
+    `error_content` is the failure as the agent wrote it, and it is here only because
+    `facts.repeated_errors` counts identical failures: the store keys a digest of it and
+    stores that, never the content. It is None unless the call failed.
+    """
+
+    call_id: str
+    is_error: bool
+    result_bytes: int
+    error_content: object | None
+    edit: EditFacts | None
+    exit_code: int | None
+    commit_hash: str | None
+
+
+Payload = Prompt | Usage | ToolCall | ToolResult
+
+
+@dataclass(frozen=True)
+class Event:
+    """One record of an agent's log, normalised.
+
+    `session_id` is the session the record declares, which for a record copied into a
+    fork is the parent's. None when the format puts no session on this record at all.
+    """
+
+    record_id: str
+    stable_id: bool
+    session_id: str | None
+    parent_id: str | None
+    timestamp: str | None
+    record_type: str
+    known_type: bool
+    subtype: str | None = None
+    source_version: str | None = None
+    sidechain: bool = False
+    agent_id: str | None = None
+    prompt_id: str | None = None
+    cwd: str | None = None
+    entrypoint: str | None = None
+    payloads: tuple[Payload, ...] = field(default_factory=tuple)
+
+
+class Source(Protocol):
+    """One agent's files, turned into events. Implemented once per agent.
+
+    Every method is lenient by contract: an agent's log format is internal to it and
+    changes between releases, so a missing or odd field is skipped and never fatal.
+    """
+
+    kind: str
+
+    def session_files(self) -> list[SessionFile]:
+        """Every session this agent has left on this machine, one entry per session."""
+        ...
+
+    def companion_files(self, session: SessionFile) -> list[CompanionFile]:
+        """The files beside one session's own: subagent logs, spilled results, history.
+
+        Empty for an agent that keeps everything in the one file.
+        """
+        ...
+
+    def head(self, lines: Iterable[bytes]) -> FileHead:
+        """When and where a file's first records say the session ran."""
+        ...
+
+    def events(
+        self,
+        lines: Iterable[tuple[int, bytes]],
+        path: str,
+        file_session_id: str,
+        agent_id: str | None,
+    ) -> Iterator[Event]:
+        """One event per record of one archived file, in file order.
+
+        `lines` is (byte offset, line) as the archive stored them. `path` and
+        `file_session_id` identify the file itself, for an adapter that has to derive a
+        record id; `agent_id` names the subagent whose file this is, or is None for a
+        session's own transcript.
+        """
+        ...

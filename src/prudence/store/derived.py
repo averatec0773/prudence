@@ -5,13 +5,19 @@ original files, so a parser change is a rebuild rather than a migration, and eve
 row carries the `parser_version` that produced it. Tables are built under `__new`
 names and swapped in one transaction so a reader never sees a table disappear.
 
-The transcript format is internal to Claude Code and changed 24 times in five months
-on the founder's machine, so nothing here is allowed to fail on a surprise: a record
-type the parser does not know is counted in `unknown_record_type` and otherwise
-treated as a plain record.
+This module knows no agent's file format. It reads the events a source adapter yields
+(`sources/base.py`) and builds tables from those alone, so that a second agent is a new
+adapter rather than a second set of branches in here. Nothing here names Claude Code,
+and a test asserts that (`tests/test_sources.py`).
 
-What is deliberately not stored: message text, in any table, at any capture level.
-`metadata-only` additionally stores no file paths, no working directory, no command
+Nothing here is allowed to fail on a surprise either: an adapter reports a record type
+it does not recognise rather than raising, and such a record is counted in
+`unknown_record_type` and otherwise treated as a plain record.
+
+What is deliberately not stored: message text, in any table, at any capture level. An
+adapter may read text, and does, but this is the one module that decides what becomes a
+count, a keyed hash or nothing at all, so the capture level means the same thing for
+every source. `metadata-only` stores no file paths, no working directory, no command
 text and no line hashes, so an employer's repository leaves nothing but shape and
 counts. A keyed line hash is not readable, but it is still a fingerprint of their code,
 and the promise made for that level is shape only.
@@ -35,18 +41,14 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from prudence import sources
+from prudence.sources import base
 from prudence.store import archive, repos
 from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
 
 PARSER_VERSION = 4
-
-# Record types this version understands. Anything else is counted and kept as a record.
-KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
-
-# Tool inputs whose file path is a fact worth keeping (at `full` capture only).
-PATH_TOOLS = frozenset({"Edit", "Write", "Read", "NotebookEdit"})
 
 TABLES = (
     "session",
@@ -256,11 +258,12 @@ def build(
     stats = BuildStats()
     _create_new_tables(connection)
     resolver = resolver if resolver is not None else repos.resolver(connection)
+    adapter = sources.source()
     key = lines_module.load_key()
     seen_records: set[str] = set()
     unknown: dict[tuple[str, str | None], list] = {}
 
-    for row, head in _transcripts_in_order(connection):
+    for row, head in _transcripts_in_order(connection, adapter):
         match = resolver.resolve(head.cwd, head.git_branch)
         repo_key = match.repo_key or row["repo_key"]
         stats.mapping_methods[match.method] += 1
@@ -272,24 +275,28 @@ def build(
             capture_level=levels.get(repo_key, "full"),
             mapping_method=match.method,
         )
-        files = [(row["path"], None)]
-        files += [
-            (sub["path"], sub["path"].rsplit("/", 1)[-1].rsplit(".", 1)[0])
-            for sub in connection.execute(
-                "SELECT path FROM archive_file WHERE session_id = ? AND source = 'subagent'"
-                " ORDER BY path",
-                (row["session_id"],),
-            )
-        ]
-        for path, agent_id in files:
-            _read_file(connection, path, session, agent_id, seen_records, unknown, key)
-        _flush_session(connection, session, stats, resolver, key)
+        for path, agent_id in _files_of(connection, row):
+            _read_file(connection, adapter, path, session, agent_id, seen_records, unknown, key)
+        _flush_session(connection, session, stats, resolver, key, adapter.kind)
 
     _flush_unknown(connection, unknown, stats)
     _swap(connection)
     repos.save_discoveries(connection, resolver)
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+def _files_of(connection: sqlite3.Connection, row: sqlite3.Row) -> list[tuple[str, str | None]]:
+    """A session's own file first, then each subagent file with the agent id it carries."""
+    files: list[tuple[str, str | None]] = [(row["path"], None)]
+    files += [
+        (sub["path"], sub["path"].rsplit("/", 1)[-1].rsplit(".", 1)[0])
+        for sub in connection.execute(
+            "SELECT path FROM archive_file WHERE session_id = ? AND source = ? ORDER BY path",
+            (row["session_id"], base.SUBAGENT),
+        )
+    ]
+    return files
 
 
 def counts(connection: sqlite3.Connection) -> dict[str, int]:
@@ -303,48 +310,23 @@ def counts(connection: sqlite3.Connection) -> dict[str, int]:
     return result
 
 
-@dataclass
-class _Head:
-    """What the first records of a transcript say about when and where it ran."""
-
-    first_at: str | None = None
-    cwd: str | None = None
-    git_branch: str | None = None
-
-
 def _transcripts_in_order(
-    connection: sqlite3.Connection,
-) -> list[tuple[sqlite3.Row, _Head]]:
+    connection: sqlite3.Connection, adapter: base.Source
+) -> list[tuple[sqlite3.Row, base.FileHead]]:
     """Transcripts oldest first, so a resumed session is the one that carries the note."""
     rows = [
-        (row, _head(connection, row["path"]))
+        (row, adapter.head(archive.head_lines(connection, row["path"])))
         for row in connection.execute(
-            "SELECT path, session_id, repo_key FROM archive_file WHERE source = 'transcript'"
+            "SELECT path, session_id, repo_key FROM archive_file WHERE source = ?",
+            (base.SESSION,),
         )
     ]
     return sorted(rows, key=lambda item: (item[1].first_at or "", item[0]["path"]))
 
 
-def _head(connection: sqlite3.Connection, path: str) -> _Head:
-    """When a transcript starts and where it ran, from its first chunk alone."""
-    head = _Head()
-    for line in archive.head_lines(connection, path):
-        record = _parse(line)
-        if record is None:
-            continue
-        if head.first_at is None and isinstance(record.get("timestamp"), str):
-            head.first_at = record["timestamp"]
-        if head.cwd is None and isinstance(record.get("cwd"), str):
-            head.cwd = record["cwd"]
-        if head.git_branch is None and isinstance(record.get("gitBranch"), str):
-            head.git_branch = record["gitBranch"]
-        if head.first_at and head.cwd and head.git_branch:
-            break
-    return head
-
-
 def _read_file(
     connection: sqlite3.Connection,
+    adapter: base.Source,
     path: str,
     session: _Session,
     agent_id: str | None,
@@ -352,177 +334,150 @@ def _read_file(
     unknown: dict[tuple[str, str | None], list],
     key: bytes,
 ) -> None:
-    full = session.capture_level == "full"
-    for offset, line in archive.iter_lines(connection, path):
-        record = _parse(line)
-        if record is None:
-            continue
-        record_type = record.get("type")
-        if not isinstance(record_type, str):
-            record_type = "unknown"
-        version = record.get("version") if isinstance(record.get("version"), str) else None
-        if record_type not in KNOWN_RECORD_TYPES:
-            entry = unknown.setdefault((record_type, version), [0, None])
+    """Fold one archived file's events into the session it belongs to."""
+    lines = archive.iter_lines(connection, path)
+    for event in adapter.events(lines, path, session.session_id, agent_id):
+        if not event.known_type:
+            entry = unknown.setdefault((event.record_type, event.source_version), [0, None])
             entry[0] += 1
             if entry[1] is None:
-                entry[1] = _timestamp(record) or datetime.now(UTC).isoformat()
-
-        record_id = record.get("uuid")
-        if not isinstance(record_id, str) or not record_id:
-            record_id = hashlib.sha256(f"{path}:{offset}".encode()).hexdigest()
-        if record_id in seen_records:
+                entry[1] = event.timestamp or datetime.now(UTC).isoformat()
+        if event.record_id in seen_records:
             session.replayed += 1
             session.resumed = True
             continue
-        seen_records.add(record_id)
+        seen_records.add(event.record_id)
+        _fold_event(session, event, key)
 
-        stamp = _timestamp(record)
-        if stamp:
-            if session.first_at is None or stamp < session.first_at:
-                session.first_at = stamp
-            if session.last_at is None or stamp > session.last_at:
-                session.last_at = stamp
-        if session.entrypoint is None and isinstance(record.get("entrypoint"), str):
-            session.entrypoint = record["entrypoint"]
-        if full and session.cwd is None and isinstance(record.get("cwd"), str):
-            session.cwd = record["cwd"]
 
-        turn_id = _turn_id(record, session)
-        session.record_count += 1
-        session.records.append(
-            (
-                record_id,
-                session.session_id,
-                record.get("parentUuid") if isinstance(record.get("parentUuid"), str) else None,
-                record_type,
-                _subtype(record),
-                stamp,
-                1 if record.get("isSidechain") else 0,
-                agent_id or _text_or_none(record.get("agentId")),
-                _text_or_none(record.get("promptId")),
-                PARSER_VERSION,
-            )
+def _fold_event(session: _Session, event: base.Event, key: bytes) -> None:
+    """One record: its own row, its turn, and whatever payloads it carried."""
+    stamp = event.timestamp
+    if stamp:
+        if session.first_at is None or stamp < session.first_at:
+            session.first_at = stamp
+        if session.last_at is None or stamp > session.last_at:
+            session.last_at = stamp
+    if session.entrypoint is None and event.entrypoint is not None:
+        session.entrypoint = event.entrypoint
+    if session.cwd is None and event.cwd is not None:
+        session.cwd = event.cwd
+
+    turn_id = _turn_id(event, session)
+    session.record_count += 1
+    session.records.append(
+        (
+            event.record_id,
+            session.session_id,
+            event.parent_id,
+            event.record_type,
+            event.subtype,
+            stamp,
+            1 if event.sidechain else 0,
+            event.agent_id,
+            event.prompt_id,
+            PARSER_VERSION,
         )
-        _note_turn(session, turn_id, stamp, record)
-        _note_usage(session, turn_id, record_id, record)
-        _note_tools(
-            session, turn_id, record_id, turn_stamp=stamp, record=record, full=full, key=key
-        )
+    )
+    _note_turn(session, turn_id, stamp, event)
+    for payload in event.payloads:
+        if isinstance(payload, base.Usage):
+            _note_usage(session, turn_id, event.record_id, payload)
+        elif isinstance(payload, base.ToolCall):
+            _note_call(session, turn_id, event.record_id, stamp, payload)
+        elif isinstance(payload, base.ToolResult):
+            _note_result(session, payload, key)
 
 
-def _turn_id(record: dict, session: _Session) -> str:
-    prompt_id = record.get("promptId")
-    if isinstance(prompt_id, str) and prompt_id:
-        return prompt_id
-    if _is_user_prompt(record):
+def _turn_id(event: base.Event, session: _Session) -> str:
+    if event.prompt_id is not None:
+        return event.prompt_id
+    if any(isinstance(payload, base.Prompt) for payload in event.payloads):
         session.ordinal += 1
     return f"{session.session_id}:{session.ordinal}"
 
 
-def _note_turn(session: _Session, turn_id: str, stamp: str | None, record: dict) -> None:
+def _note_turn(session: _Session, turn_id: str, stamp: str | None, event: base.Event) -> None:
     turn = session.turns.setdefault(turn_id, [None, None, 0])
     if stamp:
         if turn[0] is None or stamp < turn[0]:
             turn[0] = stamp
         if turn[1] is None or stamp > turn[1]:
             turn[1] = stamp
-    if _is_user_prompt(record):
-        turn[2] += _prompt_chars(record)
+    for payload in event.payloads:
+        if isinstance(payload, base.Prompt):
+            turn[2] += payload.chars
 
 
-def _note_usage(session: _Session, turn_id: str, record_id: str, record: dict) -> None:
-    """What one API response cost, from the assistant record that carries `message.usage`.
+def _note_usage(session: _Session, turn_id: str, record_id: str, usage: base.Usage) -> None:
+    """What one API response cost, counted once however many records reported it.
 
-    Two things make this less obvious than it looks. Claude Code writes several records
-    for one response (a text block and a tool call each get their own) and repeats the
-    same usage on all of them under one `requestId`, so the first record of a request is
-    counted and the rest are skipped; on the founder's store that is 157,868 records for
-    71,763 responses, so counting records would inflate the total by more than half.
-    And a version that writes no usage at all is not an error: it simply produces no row,
-    and every surface shows the absence rather than a zero.
+    An agent writes several records for one response (a text block and a tool call each
+    get their own) and repeats the same usage on all of them under one request id, so
+    the first record of a request is counted and the rest are skipped; on the founder's
+    store that is 157,868 records for 71,763 responses, so counting records would
+    inflate the total by more than half.
     """
-    if record.get("type") != "assistant":
-        return
-    message = record.get("message")
-    if not isinstance(message, dict):
-        return
-    usage = message.get("usage")
-    if not isinstance(usage, dict):
-        return
-    request_id = _text_or_none(record.get("requestId"))
-    if request_id is not None:
-        if request_id in session.request_ids:
+    if usage.request_id is not None:
+        if usage.request_id in session.request_ids:
             return
-        session.request_ids.add(request_id)
+        session.request_ids.add(usage.request_id)
     session.usage.append(
         (
             record_id,
             session.session_id,
             turn_id,
-            request_id,
-            _text_or_none(message.get("model")),
-            _token_count(usage, "input_tokens"),
-            _token_count(usage, "output_tokens"),
-            _token_count(usage, "cache_read_input_tokens"),
-            _token_count(usage, "cache_creation_input_tokens"),
+            usage.request_id,
+            usage.model,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens,
+            usage.cache_creation_tokens,
             PARSER_VERSION,
         )
     )
 
 
-def _token_count(usage: dict, key: str) -> int | None:
-    """A token count, or NULL when this version of the format does not carry that key."""
-    value = usage.get(key)
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _note_tools(
-    session: _Session,
-    turn_id: str,
-    record_id: str,
-    turn_stamp: str | None,
-    record: dict,
-    full: bool,
-    key: bytes,
+def _note_call(
+    session: _Session, turn_id: str, record_id: str, stamp: str | None, call: base.ToolCall
 ) -> None:
-    """Fold a tool use, and later its result, into one call, an edit and a command.
+    """A tool the agent invoked, waiting for the result that arrives records later."""
+    held = session.tool_calls.setdefault(call.call_id, _ToolCall(session.session_id))
+    held.record_id = record_id
+    held.turn_id = turn_id
+    held.tool_name = call.tool_name
+    held.started_at = stamp
+    held.file_path = call.file_path
+    held.input_bytes = call.input_bytes
+    held.edit = call.edit
+    held.command = call.command
 
-    Edits are read as soon as the call is seen, from the input alone, and read again
-    from the result's `structuredPatch` when one arrives, because the spike measured
-    that a quarter of edit results never arrive at all. Keeping only the hashes means
-    no file content is held between the two records.
+
+def _note_result(session: _Session, result: base.ToolResult, key: bytes) -> None:
+    """The result of a call, folded into it: the real patch, the exit code, the commit.
+
+    The pairing is by call id and belongs here rather than in an adapter, because a call
+    and its result can be records apart and even files apart. An error cancels the
+    edit the call's own input suggested; otherwise the result's reading of the change
+    wins over the input's, with anything it leaves out filled in from the call.
     """
-    outcome = record.get("toolUseResult")
-    for block in _content_blocks(record):
-        kind = block.get("type")
-        if kind == "tool_use":
-            tool_use_id = block.get("id")
-            if not isinstance(tool_use_id, str):
-                continue
-            payload = block.get("input") if isinstance(block.get("input"), dict) else {}
-            name = block.get("name") if isinstance(block.get("name"), str) else None
-            call = session.tool_calls.setdefault(tool_use_id, _ToolCall(session.session_id))
-            call.record_id = record_id
-            call.turn_id = turn_id
-            call.tool_name = name
-            call.started_at = turn_stamp
-            call.file_path = _file_path(name, payload) if full else None
-            call.input_bytes = len(json.dumps(payload, ensure_ascii=False).encode())
-            call.edit = edits_module.extract_edit(name, payload, None)
-            call.command = edits_module.extract_command(name, payload, full)
-        elif kind == "tool_result":
-            tool_use_id = block.get("tool_use_id")
-            if not isinstance(tool_use_id, str):
-                continue
-            call = session.tool_calls.setdefault(tool_use_id, _ToolCall(session.session_id))
-            call.is_error = 1 if block.get("is_error") else 0
-            content = block.get("content")
-            call.result_bytes = (
-                len(json.dumps(content, ensure_ascii=False).encode()) if content else 0
-            )
-            if full and call.is_error and content is not None:
-                call.error_hash = _hash_error(key, content)
-            _fold_result(call, outcome)
+    held = session.tool_calls.setdefault(result.call_id, _ToolCall(session.session_id))
+    held.is_error = 1 if result.is_error else 0
+    held.result_bytes = result.result_bytes
+    if session.capture_level == "full" and result.error_content is not None:
+        held.error_hash = _hash_error(key, result.error_content)
+    if result.is_error:
+        held.edit = None
+    elif result.edit is not None:
+        better = result.edit
+        better.file_path = better.file_path or (held.edit.file_path if held.edit else None)
+        better.is_new_file = better.is_new_file or bool(held.edit and held.edit.is_new_file)
+        held.edit = better
+    if held.command is None:
+        return
+    held.command.exit_code = result.exit_code
+    if held.command.command_class == "git_commit":
+        held.command.commit_hash = result.commit_hash
 
 
 def _hash_error(key: bytes, content: object) -> str:
@@ -533,33 +488,17 @@ def _hash_error(key: bytes, content: object) -> str:
     return digest.hexdigest()[:16]
 
 
-def _fold_result(call: _ToolCall, outcome: object) -> None:
-    """What the result adds: the real patch, the exit code, the commit git announced."""
-    if call.is_error:
-        call.edit = None
-    elif isinstance(outcome, dict):
-        better = edits_module.extract_edit(call.tool_name, {}, outcome)
-        if better is not None:
-            better.file_path = better.file_path or (call.edit.file_path if call.edit else None)
-            better.is_new_file = better.is_new_file or bool(call.edit and call.edit.is_new_file)
-            call.edit = better
-    if call.command is None:
-        return
-    exit_code, commit_hash = edits_module.read_result(outcome)
-    call.command.exit_code = exit_code
-    if call.command.command_class == "git_commit":
-        call.command.commit_hash = commit_hash
-
-
 def _flush_session(
     connection: sqlite3.Connection,
     session: _Session,
     stats: BuildStats,
     resolver: repos.Resolver,
     key: bytes,
+    kind: str,
 ) -> None:
     if session.record_count == 0 and not session.records:
         return
+    full = session.capture_level == "full"
     notes = []
     if session.resumed:
         notes.append("resumed")
@@ -589,7 +528,7 @@ def _flush_session(
                 call.turn_id,
                 call.tool_name,
                 call.started_at,
-                call.file_path,
+                call.file_path if full else None,
                 call.input_bytes,
                 call.result_bytes,
                 call.is_error,
@@ -612,9 +551,9 @@ def _flush_session(
         (
             session.session_id,
             session.repo_key,
-            "claude_code",
+            kind,
             session.entrypoint,
-            session.cwd,
+            session.cwd if full else None,
             session.first_at,
             session.last_at,
             session.record_count,
@@ -675,7 +614,12 @@ def _flush_edits(
 
 
 def _flush_commands(connection: sqlite3.Connection, session: _Session, stats: BuildStats) -> None:
-    """One row per shell call: what it was for, and what git said if it committed."""
+    """One row per shell call: what it was for, and what git said if it committed.
+
+    The command text is the one string the founder asked to be able to read back, so it
+    is kept at `full` capture and dropped entirely at `metadata-only`.
+    """
+    full = session.capture_level == "full"
     rows: list[tuple] = []
     for tool_use_id, call in sorted(session.tool_calls.items()):
         facts = call.command
@@ -689,7 +633,7 @@ def _flush_commands(connection: sqlite3.Connection, session: _Session, stats: Bu
                 facts.command_class,
                 facts.exit_code,
                 facts.commit_hash,
-                facts.command_text,
+                facts.command_text if full else None,
                 edits_module.COMMAND_FACT_VERSION,
             )
         )
@@ -735,78 +679,3 @@ def _swap(connection: sqlite3.Connection) -> None:
         raise
     for statement in INDEXES:
         connection.execute(statement)
-
-
-def _parse(line: bytes) -> dict | None:
-    try:
-        record = json.loads(line)
-    except ValueError:
-        return None
-    return record if isinstance(record, dict) else None
-
-
-def _timestamp(record: dict) -> str | None:
-    raw = record.get("timestamp")
-    return raw if isinstance(raw, str) else None
-
-
-def _text_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _subtype(record: dict) -> str | None:
-    subtype = record.get("subtype")
-    if isinstance(subtype, str):
-        return subtype
-    message = record.get("message")
-    if isinstance(message, dict) and isinstance(message.get("role"), str):
-        return message["role"]
-    return None
-
-
-def _content_blocks(record: dict) -> list[dict]:
-    message = record.get("message")
-    if not isinstance(message, dict):
-        return []
-    content = message.get("content")
-    if not isinstance(content, list):
-        return []
-    return [block for block in content if isinstance(block, dict)]
-
-
-def _is_user_prompt(record: dict) -> bool:
-    """A record the user typed, as opposed to a tool result wearing the user role."""
-    if record.get("type") != "user":
-        return False
-    message = record.get("message")
-    if not isinstance(message, dict):
-        return False
-    content = message.get("content")
-    if isinstance(content, str):
-        return True
-    return any(block.get("type") == "text" for block in _content_blocks(record))
-
-
-def _prompt_chars(record: dict) -> int:
-    """How long the prompt was. A length is a measure; the text itself is never stored."""
-    message = record.get("message")
-    if not isinstance(message, dict):
-        return 0
-    content = message.get("content")
-    if isinstance(content, str):
-        return len(content)
-    return sum(
-        len(block.get("text", ""))
-        for block in _content_blocks(record)
-        if block.get("type") == "text" and isinstance(block.get("text"), str)
-    )
-
-
-def _file_path(tool_name: str | None, payload: dict) -> str | None:
-    if tool_name not in PATH_TOOLS:
-        return None
-    for key in ("file_path", "notebook_path", "path"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None

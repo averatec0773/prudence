@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from prudence.sources import claude_code
+from prudence.sources.base import SessionFile
 from prudence.store.identity import RepoIdentity, identify
 
 NO_REPOSITORY = "no repository"
@@ -26,7 +27,7 @@ class ProjectGroup:
     last_at: datetime | None = None
     directories: set[str] = field(default_factory=set)
 
-    def add(self, session: claude_code.SessionFile) -> None:
+    def add(self, session: SessionFile) -> None:
         self.sessions += 1
         self.size_bytes += session.size_bytes
         if session.cwd:
