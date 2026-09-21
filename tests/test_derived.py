@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
-from conftest import Workspace
+from conftest import Workspace, prompt, write_transcript
 
 from prudence.cli import main
-from prudence.store import db
+from prudence.store import db, derived
 
 SESSION_ONE = "11111111-1111-4111-8111-111111111111"
 SESSION_TWO = "22222222-2222-4222-8222-222222222222"
 SESSION_RESUMED = "44444444-4444-4444-8444-444444444444"
+UNDATED_SESSION = "55555555-5555-4555-8555-555555555555"
 
 
 def _ingest(level: str = "full") -> None:
@@ -21,10 +22,10 @@ def _ingest(level: str = "full") -> None:
     assert result.exit_code == 0, result.output
 
 
-def _rows(query: str) -> list[tuple]:
+def _rows(query: str, parameters: tuple = ()) -> list[tuple]:
     connection = db.connect()
     try:
-        return [tuple(row) for row in connection.execute(query)]
+        return [tuple(row) for row in connection.execute(query, parameters)]
     finally:
         connection.close()
 
@@ -138,13 +139,50 @@ def test_metadata_only_stores_no_paths_and_no_working_directory(workspace: Works
     assert files[0][0] == 4, "the archive keeps the same bytes at either level"
 
 
+def _every_derived_table() -> dict[str, list[tuple]]:
+    return {table: sorted(_rows(f"SELECT * FROM {table}")) for table in derived.TABLES}
+
+
 def test_rebuild_reproduces_the_same_tables(workspace: Workspace) -> None:
+    """Every table, not a sample of two: a value read off the clock would show up here."""
     _ingest()
-    before_sessions = sorted(_rows("SELECT * FROM session"))
-    before_tools = sorted(_rows("SELECT * FROM tool_call"))
+    before = _every_derived_table()
+    assert before["session"] and before["tool_call"], "there is something to compare"
 
     result = CliRunner().invoke(main, ["rebuild"])
     assert result.exit_code == 0, result.output
 
-    assert sorted(_rows("SELECT * FROM session")) == before_sessions
-    assert sorted(_rows("SELECT * FROM tool_call")) == before_tools
+    assert _every_derived_table() == before
+
+
+def test_an_unknown_type_whose_first_record_has_no_timestamp_is_still_reproducible(
+    lab: Workspace,
+) -> None:
+    """`first_seen` is a fact about the archive, so it may not come from the clock.
+
+    Some record types carry no timestamp at all. The fallback is the moment Prudence
+    first archived the file the record sits in, which is stored in `archive_file` and so
+    is the same on every rebuild; reading `datetime.now()` there made two rebuilds of one
+    archive disagree.
+    """
+    cwd = str(lab.repo)
+    write_transcript(
+        lab.project,
+        UNDATED_SESSION,
+        [
+            prompt(UNDATED_SESSION, cwd, "Start.", at="2026-09-17T09:00:00.000Z"),
+            {"type": "atis-latch", "sessionId": UNDATED_SESSION, "cwd": cwd},
+        ],
+    )
+    _ingest()
+    first = _rows("SELECT type, claude_version, count, first_seen FROM unknown_record_type")
+    archived = _rows(
+        "SELECT first_seen FROM archive_file WHERE session_id = ? AND source = 'transcript'",
+        (UNDATED_SESSION,),
+    )
+    assert first == [("atis-latch", None, 1, archived[0][0])]
+
+    result = CliRunner().invoke(main, ["rebuild"])
+    assert result.exit_code == 0, result.output
+
+    assert _rows("SELECT type, claude_version, count, first_seen FROM unknown_record_type") == first

@@ -48,6 +48,12 @@ which file was read first. Two rules decide ownership, and both are agent-agnost
    are read out of the files themselves, so the order files were ingested in cannot
    change the answer. What it assumes, and what happens when the assumption is false, is
    written down as a known compromise in ARCHITECTURE.md (rule 17).
+
+Parser version 5 also made `unknown_record_type.first_seen` a fact about the archive
+rather than about the build. A record type whose first record carries no timestamp used
+to be stamped with `datetime.now()`, so two rebuilds of one archive disagreed on that
+column and the promise that every derived table is reproducible was quietly broken. It
+now falls back to when Prudence first stored the file the record sits in.
 """
 
 from __future__ import annotations
@@ -59,7 +65,6 @@ import sqlite3
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from prudence import sources
 from prudence.sources import base
@@ -304,13 +309,12 @@ def build(
             capture_level=levels.get(repo_key, "full"),
             mapping_method=match.method,
         )
-        for path, agent_id in _files_of(connection, row):
+        for archived in _files_of(connection, row):
             _read_file(
                 connection,
                 adapter,
-                path,
+                archived,
                 session,
-                agent_id,
                 _Ownership(own_files, orphans),
                 seen_records,
                 unknown,
@@ -332,13 +336,23 @@ def _session_id(row: sqlite3.Row) -> str:
     return row["session_id"] or row["path"]
 
 
-def _files_of(connection: sqlite3.Connection, row: sqlite3.Row) -> list[tuple[str, str | None]]:
+@dataclass(frozen=True)
+class _File:
+    """One archived file of a session, and what reading it needs besides its bytes."""
+
+    path: str
+    agent_id: str | None  # the subagent whose file this is; None for the session's own
+    archived_at: str  # `archive_file.first_seen`: when Prudence first stored these bytes
+
+
+def _files_of(connection: sqlite3.Connection, row: sqlite3.Row) -> list[_File]:
     """A session's own file first, then each subagent file with the agent id it carries."""
-    files: list[tuple[str, str | None]] = [(row["path"], None)]
+    files = [_File(row["path"], None, row["first_seen"])]
     files += [
-        (sub["path"], sub["path"].rsplit("/", 1)[-1].rsplit(".", 1)[0])
+        _File(sub["path"], sub["path"].rsplit("/", 1)[-1].rsplit(".", 1)[0], sub["first_seen"])
         for sub in connection.execute(
-            "SELECT path FROM archive_file WHERE session_id = ? AND source = ? ORDER BY path",
+            "SELECT path, first_seen FROM archive_file WHERE session_id = ? AND source = ?"
+            " ORDER BY path",
             (row["session_id"], base.SUBAGENT),
         )
     ]
@@ -374,7 +388,7 @@ def _transcripts_in_order(
     rows = [
         (row, adapter.head(archive.head_lines(connection, row["path"])))
         for row in connection.execute(
-            "SELECT path, session_id, repo_key FROM archive_file WHERE source = ?",
+            "SELECT path, session_id, repo_key, first_seen FROM archive_file WHERE source = ?",
             (base.SESSION,),
         )
     ]
@@ -396,9 +410,8 @@ class _Ownership:
 def _read_file(
     connection: sqlite3.Connection,
     adapter: base.Source,
-    path: str,
+    archived: _File,
     session: _Session,
-    agent_id: str | None,
     ownership: _Ownership,
     seen_records: set[str],
     unknown: dict[tuple[str, str | None], list],
@@ -420,13 +433,19 @@ def _read_file(
     every record here is the file's own and none of this does anything.
     """
     declared = session.session_id
-    lines = archive.iter_lines(connection, path)
-    for event in adapter.events(lines, path, session.session_id, agent_id):
+    lines = archive.iter_lines(connection, archived.path)
+    for event in adapter.events(lines, archived.path, session.session_id, archived.agent_id):
         if not event.known_type:
             entry = unknown.setdefault((event.record_type, event.source_version), [0, None])
             entry[0] += 1
             if entry[1] is None:
-                entry[1] = event.timestamp or datetime.now(UTC).isoformat()
+                # When the record carries no time of its own, the moment Prudence first
+                # stored the file is the earliest time the record is known to have
+                # existed. It is chosen over the session's or the file's first timestamp
+                # because `archive_file.first_seen` is NOT NULL and so is always there,
+                # and because it is stored rather than recomputed, which is what makes
+                # two rebuilds of one archive identical.
+                entry[1] = event.timestamp or archived.archived_at
         if event.session_id is not None:
             declared = event.session_id
         owner = session
