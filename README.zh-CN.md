@@ -140,7 +140,7 @@ AI 编码代理的记录和钩子 ──► 一个本地 SQLite 库（原始归�
 
 ## 状态
 
-0.3.0。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。Windows 未测试。见 [RELEASES.md](RELEASES.md)。
+0.4.0。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。Windows 未测试。见 [RELEASES.md](RELEASES.md)。
 
 ## 参与贡献
 

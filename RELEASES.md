@@ -25,6 +25,52 @@ Before the first tag can publish, the project owner does this once, on pypi.org:
 
 Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
 
+## 0.4.0 - 2026-09-21
+
+M4: the app looks and reads like a product. The macOS app was redesigned from a set of
+clickable HTML mockups the founder chose between, then rebuilt screen by screen on a
+design system of its own: tokens, components, one chart per data shape, Liquid Glass on
+the control layer (macOS 26, with `NSVisualEffectView` materials on macOS 14 and 15), the
+brand mark as the icon set, and English plus Simplified Chinese throughout. Underneath,
+the read contract moved to version 3 and the model can write its prose in the user's
+language.
+
+What's included:
+
+- The macOS app (`apps/mac`, version 0.2.0): a one-column menu-bar dropdown (today, this
+  week by purpose, the latest observation, the last review; Open Prudence, Review now,
+  Ingest now; Settings and Quit as plain labels) that closes on an outside click, Esc or
+  app deactivation; a window with Overview (tokens by purpose per week, survival and rework
+  per project with coverage bands, where the hours went), Review (the stored review as
+  cards and charts, earlier reviews), Observations (paired bars for with-against-without,
+  grouped by project under All projects) and Settings (engine, database, timed ingest,
+  open at login, model language). One button family: an accent primary, a flat secondary
+  with a hairline, plain labels; no bevel, gradient or shadow on any control. Window frame
+  memory; Cmd-1 to Cmd-4, Cmd-R, Cmd-comma. Design rules written in `apps/mac/DESIGN.md`
+  and enforced by tests: glass only on the control and navigation layer, colour never
+  means good or bad, every figure in monospaced digits, an observation sentence composed
+  per language rather than translated. 147 Swift tests; CI renders every screen in both
+  languages and both appearances.
+- Read contract version 3 (`meta.app_contract_version`): `app_observation` gains
+  `threshold_value` and `threshold_op` so a surface can draw the split, plus the CLI's
+  exact `sentence`; `app_review` gains `segment_language`; `app_session_list` gains
+  `edits`; `app_commits_by_day` is new. Review JSON carries `with_n`, `without_n`,
+  `value` and `previous_value` per figure. The app accepts versions 2 and 3.
+- `--language en|zh-Hans|system` on `review --explain`, `explain` and `ask`, and
+  `prudence config model --language`: the model writes its paragraph or answer in that
+  language and nothing else changes (the review page, the CLI and every computed figure
+  stay English). `system` reads the machine's locale at each call and the "Sending" line
+  prints what it resolved to. The number and tone guards check Chinese prose with the same
+  rules; the tone word lists exist per language.
+- `prudence review --json` lists every number the review contains (the inventory the
+  guard checks the model against), `REVIEW_VERSION` 2.
+
+Known limits: the app is still published unsigned (right-click, Open, on first launch)
+while the Developer ID enrolment is in progress; Sparkle updates and the Homebrew tap
+follow the certificate. A behaviour split at the median is headed "above your median"
+in the Observations list. Windows is untested; a cross-platform client is under
+evaluation.
+
 ## 0.3.0 - 2026-09-21
 
 M3: the app and the review. Two products now ship from this repository: the Python

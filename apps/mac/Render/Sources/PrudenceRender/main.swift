@@ -72,7 +72,7 @@ func renderEverything() {
 
     let model = MenuViewModel.preview(
         snapshot: snapshot,
-        engineVersion: "prudence, version 0.3.0",
+        engineVersion: "prudence, version 0.4.0",
         actionMessage: nil
     )
 

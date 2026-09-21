@@ -140,7 +140,7 @@ AI coding-agent transcripts and hooks ──► one local SQLite store (raw arch
 
 ## Status
 
-0.3.0. Supported agent source: Claude Code (the source layer is one module per agent). Windows is untested. See [RELEASES.md](RELEASES.md).
+0.4.0. Supported agent source: Claude Code (the source layer is one module per agent). Windows is untested. See [RELEASES.md](RELEASES.md).
 
 ## Contributing
 
