@@ -50,9 +50,21 @@ impl MaterialReport {
     }
 }
 
-/// Frost the panel with the best material this machine has, and say which one that was.
-pub fn apply_material(window: &tauri::WebviewWindow) -> MaterialReport {
-    imp::apply_material(window)
+/// Which of the app's two surfaces is being frosted.
+///
+/// They want different things from the same material. The panel is navigation layer all
+/// the way down, so it carries a filled backing and keeps its own tone; the window's
+/// screens are the content layer and are opaque in CSS, so its material must stay clear
+/// or the sidebar and the toolbar would be frosting a solid colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Surface {
+    Panel,
+    Window,
+}
+
+/// Frost a surface with the best material this machine has, and say which one that was.
+pub fn apply_material(window: &tauri::WebviewWindow, surface: Surface) -> MaterialReport {
+    imp::apply_material(window, surface)
 }
 
 /// Where the status item is, in top-left logical screen coordinates, so a panel can hang
@@ -76,6 +88,12 @@ pub struct TrayAnchor {
 /// Returns whether the shell was able to set it, which is a spike question of its own.
 pub fn set_tray_highlight(app: &tauri::AppHandle, on: bool) -> bool {
     imp::set_tray_highlight(app, on)
+}
+
+/// Show or hide the Dock icon. A menu bar app has none until it opens a window, and a
+/// window nobody can reach from the app switcher is a window that gets lost.
+pub fn set_dock_visible(app: &tauri::AppHandle, visible: bool) {
+    imp::set_dock_visible(app, visible);
 }
 
 /// Hide the application itself, not just the window. On macOS a hidden panel whose app is

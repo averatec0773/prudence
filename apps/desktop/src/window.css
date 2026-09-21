@@ -1,0 +1,177 @@
+/* The window, where a mockup of a window differs from one.
+
+   `design/tokens.css` draws `.window` as a 1120 px card with its own shadow, sitting on a
+   page. Here the window is the window: it fills the viewport, the operating system draws
+   its frame and shadow, and the material under the navigation layer is native. */
+
+body.is-window {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+body.is-window #root,
+.window {
+  height: 100%;
+}
+
+.window {
+  width: 100%;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* The titlebar is the real one. This row exists to reserve its height and to give the
+   window something to be dragged by; the traffic lights are the system's own and sit in
+   the left inset, which is why the row starts past them. */
+.titlebar {
+  height: 38px;
+  padding-left: 78px;
+  background: transparent;
+  border-bottom: 0;
+  -webkit-app-region: drag;
+  flex: none;
+}
+
+.titlebar button,
+.titlebar .select {
+  -webkit-app-region: no-drag;
+}
+
+.split {
+  display: flex;
+  min-height: 0;
+  height: calc(100% - 38px);
+}
+
+.sidebar {
+  background: transparent;
+  border-right: 0.5px solid var(--glass-edge, var(--separator));
+  overflow-y: auto;
+}
+
+.sidebar .group {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  padding: var(--s2) var(--s3) 4px;
+}
+
+.content {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* The toolbar strip: the control and navigation layer, so it stays on the material. */
+.toolbar {
+  /* `tokens.css` draws `.toolbar` as a right-aligned cluster inside a heading row. Here
+     it is the strip across the top of the content, which is the navigation layer. */
+  margin-left: 0;
+  width: 100%;
+  flex: none;
+  padding: var(--s2) var(--s5);
+  border-bottom: 0.5px solid var(--glass-edge, var(--separator));
+  gap: var(--s3);
+  -webkit-app-region: drag;
+}
+
+.toolbar > * {
+  -webkit-app-region: no-drag;
+}
+
+.toolbar .title {
+  font-size: var(--t-headline);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+/* The content layer. Opaque, always: a figure read against a moving backdrop is a figure
+   the reader cannot check, which is design rule 1. */
+.screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s5) var(--s5) var(--s7);
+  background: var(--canvas);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.screen-head h1 {
+  font-size: var(--t-title2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.screen-head .sub {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+/* Batch 1 has no charts and no screen content. These placeholders are not decoration:
+   they are a tall scroll container per screen, which together with switching between
+   screens is the interaction pattern wry issue 1848 reports the compositor giving up on. */
+.placeholder {
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.placeholder .k {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.placeholder .bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.placeholder .bar i {
+  display: block;
+  height: 100%;
+  background: var(--p-development);
+}
+
+.note {
+  flex: none;
+  margin: var(--s2) var(--s5) var(--s3);
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-control);
+  padding: 6px var(--s3);
+  align-self: flex-start;
+}
+
+/* The paint probe fills this element, and a checker reads the colour out of a screenshot.
+   It is the one check a stale compositor cannot pass by reporting a healthy DOM. */
+.screen.is-probe > *:not(.probe-fill) {
+  display: none;
+}
+
+.probe-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.screen {
+  position: relative;
+}

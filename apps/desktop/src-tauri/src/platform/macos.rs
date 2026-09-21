@@ -10,7 +10,7 @@ use window_vibrancy::{
     NSVisualEffectMaterial, NSVisualEffectState,
 };
 
-use super::{Attempt, MaterialReport, TrayAnchor};
+use super::{Attempt, MaterialReport, Surface, TrayAnchor};
 
 /// `apply_liquid_glass` refuses below this, and the crate reads the same number off
 /// `NSAppKitVersionNumber`. Kept here so the log can say which side said no.
@@ -20,7 +20,7 @@ const APPKIT_MACOS_26: f64 = 2685.0;
 /// takes one step larger, which is the rule in DESIGN.md.
 const PANEL_RADIUS: f64 = 16.0;
 
-pub fn apply_material(window: &WebviewWindow) -> MaterialReport {
+pub fn apply_material(window: &WebviewWindow, surface: Surface) -> MaterialReport {
     let mut attempts = Vec::new();
 
     // The WKWebView, so the glass view can take it as its own content view rather than
@@ -45,8 +45,14 @@ pub fn apply_material(window: &WebviewWindow) -> MaterialReport {
         // about. Default on; `PRUDENCE_GLASS_OPAQUE=0` photographs the other reading.
         let opaque = std::env::var("PRUDENCE_GLASS_OPAQUE")
             .map_or(true, |value| !value.is_empty() && value != "0");
+        // A decorated window is rounded by the system; only the frameless panel has to
+        // round its own layer.
+        let radius = match surface {
+            Surface::Panel => PANEL_RADIUS,
+            Surface::Window => 0.0,
+        };
         let mut options = LiquidGlassOptions::new(NSGlassEffectViewStyle::Regular)
-            .radius(PANEL_RADIUS)
+            .radius(radius)
             .opaque(opaque);
         if let Some(view) = webview.as_deref() {
             options = options.content_view(view);
@@ -57,7 +63,7 @@ pub fn apply_material(window: &WebviewWindow) -> MaterialReport {
                     api: "window_vibrancy::apply_liquid_glass".into(),
                     ok: true,
                     detail: format!(
-                        "NSGlassEffectView, style Regular, radius {PANEL_RADIUS}, opaque {opaque}"
+                        "NSGlassEffectView, style Regular, radius {radius}, opaque {opaque}"
                     ),
                 });
                 return MaterialReport {
@@ -80,13 +86,21 @@ pub fn apply_material(window: &WebviewWindow) -> MaterialReport {
         });
     }
 
-    // The fallback every macOS since 10.10 has. `.popover` is the material AppKit gives an
-    // NSPopover, which is the thing this window is pretending to be.
+    // The fallback every macOS since 10.10 has: the material AppKit would give each of
+    // these surfaces natively, which is `.popover` for a popover and `.sidebar` for the
+    // navigation side of a split view.
+    let fallback = match surface {
+        Surface::Panel => NSVisualEffectMaterial::Popover,
+        Surface::Window => NSVisualEffectMaterial::Sidebar,
+    };
     match apply_vibrancy(
         window,
-        NSVisualEffectMaterial::Popover,
+        fallback,
         Some(NSVisualEffectState::Active),
-        Some(PANEL_RADIUS),
+        Some(match surface {
+            Surface::Panel => PANEL_RADIUS,
+            Surface::Window => 0.0,
+        }),
     ) {
         Ok(()) => {
             attempts.push(Attempt {
@@ -229,6 +243,19 @@ fn first_button(view: &NSView) -> Option<Retained<NSButton>> {
         }
     }
     None
+}
+
+/// `Regular` puts the app in the Dock and the app switcher; `Accessory` takes it out.
+/// Toggled at runtime rather than fixed at launch, so "show in Dock" needs no restart.
+pub fn set_dock_visible(app: &AppHandle, visible: bool) {
+    let policy = if visible {
+        tauri::ActivationPolicy::Regular
+    } else {
+        tauri::ActivationPolicy::Accessory
+    };
+    if let Err(error) = app.set_activation_policy(policy) {
+        eprintln!("[prudence] could not set the activation policy: {error}");
+    }
 }
 
 pub fn hide_app(app: &AppHandle) {

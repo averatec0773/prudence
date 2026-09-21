@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The panel window talks to the shell through the bridge commands only.",
+  "description": "The panel and the window talk to the shell through the bridge commands only.",
   "windows": [
-    "panel"
+    "panel",
+    "main"
   ],
   "permissions": [
     "core:default",

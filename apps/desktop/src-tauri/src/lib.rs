@@ -1,11 +1,15 @@
-//! The shell: a status item, a panel that hangs under it, and a read-only view of the store.
+//! The shell: a status item, a panel that hangs under it, a window with the screens in it,
+//! and a read-only view of the store.
 //!
-//! Spike scope. Nothing here writes to the store, runs the CLI, updates itself or signs
-//! anything; see `docs/reports/desktop/00-spike.md` for what was proved and what was not.
+//! Phase 1, batch 1. The window's screens are placeholders; what this batch is really for
+//! is whether the compositor holds. See `docs/reports/desktop/02-window-shell.md`.
 
 mod panel;
 mod platform;
 mod store;
+mod stress;
+mod ui_state;
+mod window;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -16,14 +20,20 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
-/// The one window. The frontend never names it; `panel.rs` does.
+use ui_state::Memory;
+
+/// The two windows. The frontend never names either; `panel.rs` and `window.rs` do.
 pub const PANEL: &str = "panel";
+pub const MAIN: &str = "main";
+/// The screenshot backdrop, built only when the hook asks for it.
+pub const BACKDROP: &str = "backdrop";
 
 pub struct Shell {
     pub database: PathBuf,
     pub started: std::time::Instant,
     pub material: Mutex<platform::MaterialReport>,
     pub tray_highlight_works: Mutex<bool>,
+    pub memory: Memory,
 }
 
 #[derive(Serialize)]
@@ -35,8 +45,10 @@ pub struct ShellInfo {
     platform: Vec<(String, String)>,
     supported_contract: Vec<i64>,
     /// `en` or `zh-Hans` when the screenshot hook forced one, otherwise null and the page
-    /// keeps the frontend's default. Proper language selection is not in the spike.
+    /// keeps the frontend's default. Proper language selection is batch 8.
     language: Option<String>,
+    /// The section the window last had, or null when this build no longer has it.
+    section: Option<String>,
 }
 
 #[tauri::command]
@@ -54,6 +66,7 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         platform: platform::describe(),
         supported_contract: store::SUPPORTED_CONTRACT.to_vec(),
         language: forced_language(),
+        section: shell.memory.read().usable_section().map(str::to_string),
     }
 }
 
@@ -68,34 +81,39 @@ fn panel_hide(app: AppHandle) {
     panel::hide(&app);
 }
 
+#[tauri::command]
+fn window_open(app: AppHandle) {
+    window::open(&app);
+}
+
+#[tauri::command]
+fn window_close(app: AppHandle) {
+    window::close(&app);
+}
+
+/// The window's current section, so the next launch opens on it.
+#[tauri::command]
+fn section_set(shell: State<'_, Shell>, section: String) {
+    shell.memory.set_section(&section);
+}
+
 /// The page's own report of what it ended up drawing, on the shell's standard error.
 /// An agent cannot open the web inspector of a window it did not click, and a spike that
 /// cannot say what the page computed is a spike that guesses.
 #[tauri::command]
 fn page_log(app: AppHandle, line: String) {
     let elapsed = app.state::<Shell>().started.elapsed().as_millis();
-    let geometry = app
-        .get_webview_window(PANEL)
-        .map(|window| {
-            format!(
-                "visible={:?} position={:?} size={:?} scale={:?}",
-                window.is_visible(),
-                window.outer_position(),
-                window.outer_size(),
-                window.scale_factor()
-            )
-        })
-        .unwrap_or_else(|| "no panel window".into());
-    eprintln!("[page] {elapsed} ms: {line}\n[panel] {geometry}");
+    eprintln!("[page] {elapsed} ms: {line}");
 }
 
 #[tauri::command]
 fn app_quit(app: AppHandle) {
+    app.state::<Shell>().memory.save();
     app.exit(0);
 }
 
 /// An agent cannot click a menu-bar icon and there is no supported way to script one, so
-/// the two hooks the Swift app grew for screenshots exist here too. Neither is reachable
+/// the hooks the Swift app grew for screenshots exist here too. None of them is reachable
 /// by anything a user does.
 fn screenshot_hooks(window: &WebviewWindow) {
     if let Ok(appearance) = std::env::var("PRUDENCE_FORCE_APPEARANCE") {
@@ -118,54 +136,65 @@ fn forced_language() -> Option<String> {
     }
 }
 
-/// `PRUDENCE_PANEL_STRESS=n` opens and closes the panel n times and leaves it open.
-///
-/// Wry issue 1848 reports the macOS 26 WKWebView compositor giving up after a dozen or so
-/// interactions. This is the only repeated interaction the spike's panel has, so it is the
-/// only form of that question the spike can answer; the screenshot after it is the check.
-fn stress_rounds() -> u32 {
-    std::env::var("PRUDENCE_PANEL_STRESS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
-}
-
 fn panel_stays_open() -> bool {
     std::env::var("PRUDENCE_PANEL_OPEN").is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+fn backdrop_wanted() -> bool {
+    std::env::var("PRUDENCE_BACKDROP").is_ok_and(|value| !value.is_empty() && value != "0")
+}
+
+fn window_opens_at_launch() -> bool {
+    std::env::var("PRUDENCE_WINDOW_OPEN").is_ok_and(|value| !value.is_empty() && value != "0")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started = std::time::Instant::now();
-    let database = std::env::var_os("PRUDENCE_DB")
-        .map(PathBuf::from)
-        .unwrap_or_else(store::database_file);
+    // The store is found the way `src/prudence/paths.py` finds it and no other way. There
+    // was a `PRUDENCE_DB` override here in the spike; it is gone, because the engine does
+    // not honour that name and a guessed variable of exactly that shape is how an agent
+    // once wrote to the founder's real store.
+    let database = store::database_file();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
-        .manage(Shell {
-            database,
-            started,
-            material: Mutex::new(platform::MaterialReport::none("not applied yet")),
-            tray_highlight_works: Mutex::new(false),
-        })
         .invoke_handler(tauri::generate_handler![
-            store_read, shell_info, page_log, panel_fit, panel_hide, app_quit
+            store_read,
+            shell_info,
+            page_log,
+            panel_fit,
+            panel_hide,
+            window_open,
+            window_close,
+            section_set,
+            app_quit
         ])
-        .setup(|app| {
-            // No Dock icon and no app switcher entry: this is a menu-bar app, and the
-            // policy is set before the first window is shown so nothing flashes.
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        .setup(move |app| {
+            app.manage(Shell {
+                database,
+                started,
+                material: Mutex::new(platform::MaterialReport::none("not applied yet")),
+                tray_highlight_works: Mutex::new(false),
+                memory: Memory::load(app.handle()),
+            });
 
-            let window = app
+            // No Dock icon and no app switcher entry until a window is open. Set before
+            // the first window is shown so nothing flashes.
+            platform::set_dock_visible(app.handle(), false);
+
+            let panel_window = app
                 .get_webview_window(PANEL)
                 .expect("the panel window is declared in tauri.conf.json");
+            let main_window = app
+                .get_webview_window(MAIN)
+                .expect("the main window is declared in tauri.conf.json");
 
-            screenshot_hooks(&window);
+            screenshot_hooks(&panel_window);
+            screenshot_hooks(&main_window);
 
-            let report = platform::apply_material(&window);
-            eprintln!("[prudence] material: {}", report.kind);
+            let report = platform::apply_material(&panel_window, platform::Surface::Panel);
+            eprintln!("[prudence] panel material: {}", report.kind);
             for attempt in &report.attempts {
                 eprintln!(
                     "[prudence]   {} -> {} ({})",
@@ -175,6 +204,11 @@ pub fn run() {
                 );
             }
             *app.state::<Shell>().material.lock().unwrap() = report;
+
+            // The window carries the same material: the sidebar and the toolbar are the
+            // navigation layer, and the screens inside them are opaque in CSS.
+            let window_report = platform::apply_material(&main_window, platform::Surface::Window);
+            eprintln!("[prudence] window material: {}", window_report.kind);
 
             let quit = MenuItem::with_id(app, "quit", "Quit Prudence", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Open Panel", true, None::<&str>)?;
@@ -192,7 +226,10 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        app.state::<Shell>().memory.save();
+                        app.exit(0)
+                    }
                     "show" => panel::show(app),
                     _ => {}
                 })
@@ -217,44 +254,66 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            if panel_stays_open() {
-                // The status item is not laid out for a moment after launch, and a panel
-                // shown before that cannot be anchored under it. A user's first click is
-                // always later than this; the screenshot hook has to wait on purpose.
+            // The status item is not laid out for a moment after launch, and a panel shown
+            // before that cannot be anchored under it. A user's first click is always later
+            // than this; the screenshot hooks have to wait on purpose.
+            if panel_stays_open()
+                || window_opens_at_launch()
+                || stress::plan().is_some()
+                || backdrop_wanted()
+            {
                 let handle = app.handle().clone();
-                let rounds = stress_rounds();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(1200));
-                    for round in 0..rounds {
-                        for open in [true, false] {
-                            let handle = handle.clone();
-                            let _ = handle.clone().run_on_main_thread(move || {
-                                if open {
-                                    panel::show(&handle)
-                                } else {
-                                    panel::hide(&handle)
-                                }
-                            });
-                            std::thread::sleep(std::time::Duration::from_millis(220));
-                        }
-                        eprintln!("[stress] round {} of {rounds}", round + 1);
+                    if backdrop_wanted() {
+                        let backdrop = handle.clone();
+                        let _ = handle
+                            .clone()
+                            .run_on_main_thread(move || window::open_backdrop(&backdrop));
                     }
-                    let _ = handle
-                        .clone()
-                        .run_on_main_thread(move || panel::show(&handle));
+                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                    if window_opens_at_launch() {
+                        let open = handle.clone();
+                        let _ = handle
+                            .clone()
+                            .run_on_main_thread(move || window::open(&open));
+                    }
+                    if panel_stays_open() {
+                        let open = handle.clone();
+                        let _ = handle
+                            .clone()
+                            .run_on_main_thread(move || panel::show(&open));
+                    }
+                    if let Some(plan) = stress::plan() {
+                        stress::run(&handle, plan);
+                    }
                 });
             }
 
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() != PANEL {
-                return;
-            }
-            if let tauri::WindowEvent::Focused(false) = event {
-                if !panel_stays_open() {
-                    panel::hide(window.app_handle());
+            let app = window.app_handle();
+            match (window.label(), event) {
+                // Not `Focused(false)` alone: the screenshot hooks and the stress run
+                // both need a panel that stays put while something else has the focus.
+                (PANEL, tauri::WindowEvent::Focused(false))
+                    if !panel_stays_open() && stress::plan().is_none() =>
+                {
+                    panel::hide(app);
                 }
+                (MAIN, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) => {
+                    if let Some(main) = app.get_webview_window(MAIN) {
+                        if main.is_visible().unwrap_or(false) {
+                            crate::window::remember_frame(&main, app);
+                        }
+                    }
+                }
+                (MAIN, tauri::WindowEvent::CloseRequested { api, .. }) => {
+                    // A menu bar app does not quit when its window closes.
+                    api.prevent_close();
+                    crate::window::close(app);
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

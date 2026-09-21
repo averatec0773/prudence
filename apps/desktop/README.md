@@ -2,11 +2,11 @@
 
 One codebase for macOS and Windows: a Rust shell around the design system's own HTML.
 
-**This is the spike, not the product.** It puts an icon in the menu bar, drops the
-approved dropdown under it with real frost, and fills every number from a store it opens
-read-only. Nothing else: no charts, no CLI call, no main window, no updater, no signing,
-no language setting. What was proved and what was not is in
-`docs/reports/desktop/00-spike.md` (a local file, not in git).
+**Phase 1, batch 1 of the plan in `docs/plans/2026-09-21-desktop-phase-1-plan.md`.** The
+menu bar panel is at spike quality and the window is a shell: a sidebar, four screens of
+placeholder content, and the material. No charts, no CLI, no i18n, no updater, no
+signing. What each batch proved and what it did not is in `docs/reports/desktop/`
+(local files, not in git).
 
 The Swift app in `apps/mac/` is frozen at `v0.4.0` as the comparison and the way back.
 Do not change it.
@@ -14,16 +14,17 @@ Do not change it.
 ## Build and run
 
 ```sh
+# rustup is installed through Homebrew on the founder's machine and its shims are not on
+# the default PATH. Nothing below works without this line.
+export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+
 cd apps/desktop
 pnpm install                       # the Tauri CLI, nothing else
-pnpm tauri dev                     # the panel in a window, for working on the page
+pnpm tauri dev                     # the app, for working on the page
 pnpm tauri build --bundles app,dmg # Prudence.app and an unsigned DMG
 pnpm test                          # the token table, in node
-cd src-tauri && cargo test         # the store layer and the panel's placement
+cd src-tauri && cargo test         # the store layer, the panel's placement, the memory
 ```
-
-`cargo` lives at `/opt/homebrew/opt/rustup/bin` on the founder's machine and is not on the
-default `PATH`; `export PATH="/opt/homebrew/opt/rustup/bin:$PATH"` before any of the above.
 
 Run it against a **copy** of the store, never the real one. The shell honours the same
 variables `src/prudence/paths.py` honours, so `prudence status` tells you where it will
@@ -46,27 +47,60 @@ here. None of them is reachable by anything a user does.
 | Variable | Does |
 | --- | --- |
 | `PRUDENCE_PANEL_OPEN=1` | opens the panel 1.2 s after launch and leaves it open. The delay is not politeness: AppKit has not laid the status item out before then, and a panel shown earlier cannot be anchored under it |
-| `PRUDENCE_PANEL_STRESS=n` | opens and closes the panel n times first, for wry issue 1848 |
-| `PRUDENCE_FORCE_APPEARANCE=dark` | pins the window to dark (or `light`) |
-| `PRUDENCE_FORCE_LANGUAGE=zh-Hans` | draws the page in Chinese (or `en`) |
-| `PRUDENCE_GLASS_OPAQUE=0` | glass with nothing behind it, which takes the tone of whatever is on the screen. Default is on: a filled backing, which is how an `NSPopover` reads |
-| `PRUDENCE_DB` | one database file, ahead of `PRUDENCE_DATA_DIR` |
+| `PRUDENCE_WINDOW_OPEN=1` | opens the main window at launch |
+| `PRUDENCE_STRESS=screens:400` | switches screens, scrolls and toggles the panel 400 times, then runs a paint probe. `panel:30` does the panel alone |
+| `PRUDENCE_STRESS_IDLE=600` | after the stress run, do nothing for 600 s and probe again |
+| `PRUDENCE_BACKDROP=1` | a plain full-screen window of the app's own, behind everything, so a frosted surface is photographed over something reproducible |
+| `PRUDENCE_UI_MEMORY=off` | start with nothing remembered and write nothing, so a shot is of the state the caller asked for |
+| `PRUDENCE_FORCE_APPEARANCE=dark` | pins the windows to dark (or `light`) |
+| `PRUDENCE_FORCE_LANGUAGE=zh-Hans` | draws the pages in Chinese (or `en`) |
+| `PRUDENCE_GLASS_OPAQUE=0` | glass with nothing behind it. The panel defaults to a filled backing and the window to clear; this overrides both |
 
-The shell writes what it did on standard error: which material it got, where the panel
-landed, how long the page took, and every tray event it received.
+There is no store override beyond `PRUDENCE_DATA_DIR` and `PRUDENCE_CONFIG_DIR`. The spike
+had a `PRUDENCE_DB`; it is gone, because the engine does not honour that name and a guessed
+variable of exactly that shape is how an agent once wrote to the founder's real store.
+
+The shell writes what it did on standard error: which material each surface got, where the
+panel landed, how long the page took, and every tray event it received.
+
+### Pictures
+
+```sh
+python3 Scripts/shot.py --name window-light --window main --appearance light \
+    --store /tmp/prudence-copy --out shots
+python3 Scripts/stress.py --rounds 400 --store /tmp/prudence-copy --out shots
+```
+
+Both scripts **keep the PID they launched and kill that PID**, and both **refuse to
+capture unless the app's own window is the frontmost thing over that rectangle**. Neither
+rule is caution for its own sake: on 2026-09-21 a `pkill` by path quit the founder's own
+Prudence, and the first run of `shot.py` photographed their browser.
+
+`stress.py` ends by reading a colour out of a screenshot rather than asking the page how
+it is, because wry issue 1848's failure mode is a page that is fine and a screen that is
+stale. It converts the capture through its embedded display profile first: `screencapture`
+writes the display's own colour space, so on a P3 display a CSS `rgb(214,45,130)` lands in
+the file as `(197,62,128)`, and comparing the raw numbers reports a healthy compositor as
+broken.
 
 ## Layout
 
 ```
 apps/desktop/
   src/                 the frontend. No build step: the browser loads these files as they are
-    index.html
+    index.html         the panel
+    window.html        the main window
+    backdrop.html      a plain full-screen window, for screenshots only
     bridge.js          THE ONLY FILE THAT KNOWS ABOUT TAURI
-    boot.js            ask the shell for the store, then draw
+    boot.js            the panel's start-up: ask the shell for the store, then draw
+    boot-window.js     the window's, in the same order and for the same reason
     panel.js           the dropdown, variant C with a caption on every block
+    window.js          the sidebar, the toolbar, one screen at a time
     app.css            what differs between a mockup of the popover and the popover
-    design/            copied unchanged from docs/design/mockups/:
-                       tokens.css, i18n.js, brand.js, derive.js, charts.js
+    window.css         what differs between a mockup of the window and the window
+    design/            the design system: tokens.css, i18n.js, brand.js, derive.js,
+                       charts.js. Copied from docs/design/mockups/ and now the source of
+                       truth; the mockups are a frozen record
   src-tauri/
     tauri.conf.json    one window, transparent, frameless, hidden from the Dock
     capabilities/      what the page is allowed to ask the shell for
@@ -74,9 +108,14 @@ apps/desktop/
     src/
       lib.rs           the shell: state, commands, the tray, the screenshot hooks
       panel.rs         show, hide, and where the panel goes
+      window.rs        the main window, and the screenshot backdrop
       store.rs         read-only SQLite over the app_* views, and the contract check
+      ui_state.rs      what the window remembers between launches
+      stress.rs        the compositor question, and the paint probe
       platform/        everything true of one operating system and not the other
+  Scripts/             shot.py, stress.py
   test/                the token table, asserted against DESIGN.md
+  DESIGN.md            the design system: rules, material, bridge, components
 ```
 
 ## Three rules this app is built on
@@ -98,12 +137,8 @@ end up in the page, which is what closes the door on Windows.
 
 ## Where the design lives
 
-`src/design/tokens.css` is the design system, copied from `docs/design/mockups/` byte for
-byte, and `apps/mac/DESIGN.md` still describes it. `src/app.css` says where things go and
-never declares a token; `test/tokens.test.mjs` asserts both, and asserts the palette
-against the table `DESIGN.md` prints.
-
-Two places where the mockups are a round behind the shipping app, and this app follows the
-app: the popover's blocks carry their caption **above** them rather than in a left column
-(the founder's batch 3 change), and the plain button is quiet ink with the accent only
-under the pointer. Both are commented where they are done.
+[DESIGN.md](DESIGN.md), written along the way rather than at the end. It carries the four
+rules, the material decision per surface, the bridge rule, the no-build-step reason, the
+component list and the two process rules for working on the founder's machine.
+`apps/mac/DESIGN.md` remains the fuller description of the tokens and the seven chart
+shapes until the batches that bring their code move them across.

@@ -2,9 +2,9 @@
 
 use tauri::{AppHandle, WebviewWindow};
 
-use super::{MaterialReport, TrayAnchor};
+use super::{MaterialReport, Surface, TrayAnchor};
 
-pub fn apply_material(_window: &WebviewWindow) -> MaterialReport {
+pub fn apply_material(_window: &WebviewWindow, _surface: Surface) -> MaterialReport {
     MaterialReport::none("materials are a macOS and Windows feature")
 }
 
@@ -17,6 +17,10 @@ pub fn tray_anchor() -> Option<TrayAnchor> {
 pub fn set_tray_highlight(_app: &AppHandle, _on: bool) -> bool {
     false
 }
+
+/// Windows has no equivalent of the accessory policy; the taskbar button is controlled by
+/// the window's own `skipTaskbar`, which the panel sets and the main window does not.
+pub fn set_dock_visible(_app: &AppHandle, _visible: bool) {}
 
 pub fn hide_app(_app: &AppHandle) {}
 

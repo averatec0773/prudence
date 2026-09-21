@@ -5,8 +5,9 @@
    webview under this frontend has to change, the shell is rewritten and this file is
    rewritten with it, and the rest of the frontend moves unchanged.
 
-   The surface is four verbs: read the store, ask the shell about itself, resize the
-   panel to its content, and close or quit. */
+   The surface is small on purpose: read the store, ask the shell about itself, report how
+   tall the panel's content is, open and close the window, remember which section the
+   window is on, say something on the shell's standard error, and quit. */
 
 (function (global) {
   "use strict";
@@ -48,6 +49,22 @@
 
     hidePanel: function () {
       return core().invoke("panel_hide");
+    },
+
+    /* The window. The page never names it; the shell owns both windows and decides what
+       opening one means (here: restore its frame, and put the Dock icon back). */
+    openWindow: function () {
+      return core().invoke("window_open");
+    },
+
+    closeWindow: function () {
+      return core().invoke("window_close");
+    },
+
+    /* Which section the window is on, so the next launch opens on it. The shell drops a
+       value this build no longer has rather than forcing it. */
+    setSection: function (section) {
+      return core().invoke("section_set", { section: String(section) });
     },
 
     quit: function () {

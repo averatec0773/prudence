@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Prudence",
+  "mainBinaryName": "Prudence",
   "version": "0.0.1",
   "identifier": "dev.prudence.desktop.spike",
   "build": {
@@ -19,12 +20,27 @@
         "resizable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": false,
+        "shadow": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false,
         "focus": false,
         "acceptFirstMouse": true
+      },
+      {
+        "label": "main",
+        "url": "window.html",
+        "title": "Prudence",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {
@@ -36,7 +52,7 @@
     "targets": ["dmg", "app"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.icns", "icons/icon.ico"],
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "14.0"
     }
   }
 }

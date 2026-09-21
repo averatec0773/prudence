@@ -7,7 +7,7 @@
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_positioner::{Position, WindowExt};
 
-use crate::{platform, Shell, PANEL};
+use crate::{platform, Shell, MAIN, PANEL};
 
 /// The gap between the menu bar and the top of the panel, as the mockups draw it.
 const TRAY_GAP: f64 = 6.0;
@@ -106,9 +106,20 @@ pub fn hide(app: &AppHandle) {
     };
     let _ = window.hide();
     platform::set_tray_highlight(app, false);
+
     // Hiding the window is not enough on macOS: an app that stays active keeps the
     // previous application from coming forward and leaves a ghost in Mission Control.
-    platform::hide_app(app);
+    //
+    // But `hide` hides the *application*, which means every window it owns. While the
+    // main window is open that is plainly wrong: dismissing the dropdown would take the
+    // window with it. The Swift app has the same split and hides only the popover.
+    let window_is_open = app
+        .get_webview_window(MAIN)
+        .and_then(|main| main.is_visible().ok())
+        .unwrap_or(false);
+    if !window_is_open {
+        platform::hide_app(app);
+    }
 }
 
 #[cfg(test)]

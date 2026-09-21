@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Prudence backdrop</title>
+    <link rel="stylesheet" href="design/tokens.css" />
+    <style>
+      /* A backdrop for screenshots, and nothing else.
+
+         Every picture in a report is taken over this, so that a frosted surface has
+         something reproducible to be frosted about and no shot carries what happened to
+         be on the founder's screen. It is the mockups' own wallpaper: three soft radial
+         gradients, no image files. */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        background-color: var(--canvas);
+        background-image: var(--wallpaper);
+        background-repeat: no-repeat;
+      }
+    </style>
+  </head>
+  <body></body>
+  <script>
+    var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    document.documentElement.setAttribute("data-material", "glass");
+  </script>
+</html>

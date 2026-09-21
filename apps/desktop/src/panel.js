@@ -201,6 +201,15 @@
     });
   }
 
+  /* Batch 7 replaces this with the engine's own answer. Until then the panel says which
+     batch, rather than swallowing the press. */
+  function notYet(what) {
+    var line = document.getElementById("pop-note");
+    if (!line) return;
+    line.textContent = what + ": arrives with the engine wiring, in batch 7.";
+    line.hidden = false;
+  }
+
   /* The button grid of DESIGN.md: the primary full width, two equal cells under it, and
      one baseline carrying the two quiet actions out to both outer edges. */
   function footer() {
@@ -210,11 +219,21 @@
     var settings = el("button", { class: "btn plain", type: "button", text: T("settingsEllipsis") });
     var quit = el("button", { class: "btn plain", type: "button", text: T("quit") });
 
-    /* The spike runs no commands: the four that would are inert and say so on hover, and
-       only Quit is wired, because a panel you cannot leave is not a panel. */
-    [open, review, ingest, settings].forEach(function (button) {
-      button.disabled = true;
-      button.title = "Not in the spike";
+    /* Open Prudence and Settings go to the window, which exists from batch 1. Review now
+       and Ingest now need the engine, which is batch 7; they answer with a line rather
+       than doing nothing silently, and they are **not** disabled, because a control that
+       is greyed out says "not for you" when the truth is "not yet". */
+    open.addEventListener("click", function () {
+      global.Bridge.openWindow();
+    });
+    settings.addEventListener("click", function () {
+      global.Bridge.openWindow();
+    });
+    review.addEventListener("click", function () {
+      notYet(T("reviewNow"));
+    });
+    ingest.addEventListener("click", function () {
+      notYet(T("ingestNow"));
     });
     quit.addEventListener("click", function () {
       global.Bridge.quit();
@@ -283,6 +302,10 @@
     pop.appendChild(body);
 
     var foot = el("div", { class: "pop-foot" });
+    var note = el("div", { class: "coverage-chip", text: "" });
+    note.id = "pop-note";
+    note.hidden = true;
+    foot.appendChild(note);
     footer().forEach(function (node) {
       foot.appendChild(node);
     });

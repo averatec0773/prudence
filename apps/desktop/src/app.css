@@ -132,10 +132,6 @@ body {
   letter-spacing: -0.02em;
 }
 
-.btn[disabled] {
-  opacity: 0.55;
-}
-
 .startup-error {
   display: flex;
   flex-direction: column;
