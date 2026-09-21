@@ -190,7 +190,7 @@ test("the heat strip has seven rows, Monday first, and contiguous weeks", () => 
   for (let i = 1; i < strip.weeks.length; i += 1) {
     const before = new Date(strip.weeks[i - 1].week);
     const after = new Date(strip.weeks[i].week);
-    assert.equal((after - before) / 86400000, 7, "the columns are consecutive weeks");
+    assert.equal((after.getTime() - before.getTime()) / 86400000, 7, "the columns are consecutive weeks");
   }
 });
 
