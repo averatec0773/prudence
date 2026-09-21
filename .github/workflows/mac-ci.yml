@@ -39,6 +39,19 @@ jobs:
       - name: Generate the project
         run: xcodegen generate
 
+      - name: Compile the String Catalog for SwiftPM
+        # Xcode 26's `swift build` copies a `.xcstrings` file into the resource bundle
+        # as-is instead of compiling it (the log says "Copying Localizable.xcstrings"),
+        # so every lookup returns its key. Xcode 27 compiles it. Until the runner image
+        # carries Xcode 27, compile the catalog here into `.lproj` folders, which every
+        # SwiftPM understands, and take the catalog out of the way for this build only.
+        # The catalog stays the single source in the repository.
+        run: |
+          dir=PrudenceKit/Sources/PrudenceUI/Resources
+          xcrun xcstringstool compile "$dir/Localizable.xcstrings" --output-directory "$dir"
+          rm "$dir/Localizable.xcstrings"
+          ls "$dir"
+
       - name: Test PrudenceKit
         run: swift test --package-path PrudenceKit
 
