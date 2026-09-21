@@ -62,8 +62,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build
 
       - name: Check the icon set against assets/brand
-        # `assets/` is not tracked, so on a clean checkout there is nothing to check
-        # against and the step passes by saying so rather than failing.
+        # `assets/brand/` is tracked, so this runs on every checkout; the guard stays for a
+        # sparse or partial checkout, where the step says so rather than failing.
         run: |
           if [ -d ../../assets/brand ]; then
             swift Scripts/make_icons.swift --check

@@ -386,9 +386,9 @@ in `#111111` at 62 % of the canvas width, measured across the mark's own visible
 rendered ones, for a CI job that wants to know whether the set is stale. PNG bytes are not
 compared: a re-encode on a different macOS build differs in bytes without differing in pixels.
 
-**`assets/` is untracked in git.** `BrandMark` therefore loads the package's own copies rather
-than the originals, which is what lets the app build from a clean checkout; the script refreshes
-those copies.
+**`assets/brand/` is tracked, but outside the Swift package.** `BrandMark` loads the package's
+own copies rather than the originals, because a package resource has to live inside the package;
+the script refreshes those copies and CI checks them against the originals.
 
 The product is named in exactly two places: `CFBundleDisplayName` in `App/Info.plist` and
 `Product.name` in `PrudenceUI`. The name research is still open (M4 plan), so renaming is two
