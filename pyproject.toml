@@ -1,7 +1,7 @@
 [project]
 name = "prudence-dev"
 version = "0.3.0"
-description = "A local-first growth coach for developers who build with AI coding agents"
+description = "A growth coach for developers who build with AI coding agents: links agent sessions to what became of the code in git"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

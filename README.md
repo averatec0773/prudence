@@ -1,136 +1,121 @@
-# Prudence
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-white.svg">
+    <img src="assets/brand/logo.svg" alt="Prudence" width="120">
+  </picture>
+</p>
 
-Prudence is a local-first, open-source growth coach for developers who build with AI coding agents. It records how you actually worked with your agent and links that record to what became of the code in git, so you get the feedback a colleague or a code review would normally give you.
+<h1 align="center">Prudence</h1>
 
-## Status
+<p align="center">
+  A growth coach for developers who build with AI coding agents.<br>
+  It links how you worked with your agent to what became of the code in git.
+</p>
 
-0.3.0: it captures your sessions, links them to your commits, follows what became of
-the code and where the tokens went, and writes a review of it: every number computed
-from your own record, with an optional model-written paragraph on top that may only
-quote those numbers. A native macOS menu-bar app (`apps/mac`) shows the same record
-with charts. `prudence ask` answers a question from the record.
+<p align="center">
+  <a href="https://pypi.org/project/prudence-dev/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-dev?label=prudence-dev"></a>
+  <a href="https://github.com/averatec0773/prudence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/averatec0773/prudence/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml"><img alt="Mac app" src="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB">
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000">
+</p>
 
-## Principles we build on
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-- The record is yours and stays on your machine.
-- Capture is opt-in per repository, with a metadata-only mode.
-- Secrets never leave the store.
-- Findings, not scores.
-- Sources on everything.
+---
 
-## Platforms
+## Why
 
-macOS and Linux. Windows is untested.
+Developers who build with AI agents ship faster than ever, and many of them cannot tell whether they are getting better. The code works, but nobody says which working habits lead to code that survives and which lead to rework. Solo builders have no colleague, no reviewer, and often no users, so reality's feedback never reaches them.
+
+Prudence is that feedback. It reads the sessions your coding agent already keeps on disk (Claude Code today; other agents are designed for and planned), follows every line those sessions produced through git, and reports what happened: what survived, what was rewritten, where the tokens and hours went, and which of your own habits went with which outcomes. The record is yours and stays on your machine.
+
+## What you get
+
+- **A record you own.** Every session archived locally, byte for byte, with `show`, `forget` and `export` for all of it.
+- **Outcomes, not impressions.** For each session: lines still alive at 7, 30 and 90 days, lines reworked by your own later commits, with the coverage and the attribution method behind every number.
+- **Usage by purpose.** Tokens and active hours per session, classified into development, research, debugging, conversation, so a session that produced no code stops looking like a gap.
+- **Observations.** Your sessions with a behaviour against your sessions without it, inside one project: "your 16 sessions that compacted their context reworked 28% of their lines; the 33 that did not, 6%." Reported only when your own data clears a sample floor and a gap floor.
+- **Reviews.** `prudence review` turns a period into a stored review whose every figure is computed; an optional model-written paragraph on top may only quote those figures and is refused if it invents one or grades you.
+- **Ask.** `prudence ask "why do my refactors on this project keep getting reverted"` answers from retrieved evidence and cites session ids.
+- **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a native macOS menu-bar app with charts.
+
+## Principles
+
+1. **The record is yours.** Local, visible, exportable, dependent on no AI vendor.
+2. **Your own results are the evidence.** Claims about you come from your own sessions and commits, in the project they came from; a model's impression is not evidence.
+3. **Facts with their confidence, never scores.** Counts you can check, each with its coverage and method; no grades, streaks, badges or leaderboards.
+4. **Suggestions, never orders.** Prudence never forces a mode, a workflow or a curriculum.
 
 ## Install
 
 Prudence needs Python 3.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-If you don't have Python yet, uv can install it for you.
-
-```
-uv tool install --python 3.12 prudence-dev
-```
-
-Optional extras:
-
-- `prudence-dev[mcp]` adds the `prudence mcp` server used by the Claude Code plugin.
-- `prudence-dev[model]` adds the Anthropic SDK, for `prudence review --explain` and the
-  prose half of `prudence ask`.
 
 ```
 uv tool install --python 3.12 "prudence-dev[mcp,model]"
 ```
 
-The menu bar is a native macOS app now rather than a Python extra; see
-[apps/mac/README.md](apps/mac/README.md).
+Extras: `mcp` adds the MCP server the Claude Code plugin uses; `model` adds the Anthropic SDK for `review --explain` and the prose half of `ask`. Without `model`, everything else works and no model is ever called.
+
+The macOS menu-bar app is a separate download: the DMG on the [latest release](https://github.com/averatec0773/prudence/releases) (unsigned until the Developer ID certificate exists; right-click, Open, on first launch). Build it yourself from [apps/mac](apps/mac/README.md).
 
 ## Quick start
 
 ```
-prudence init --scan
+prudence init --scan                      # list the repositories in your agent history
 prudence init --enable <repo> --level full
-prudence ingest
+prudence ingest                           # read what the agent recorded; first run prints a "first look"
 prudence sessions --last 30d
-prudence outcomes --project <repo>
-prudence usage --last 30d
-prudence observations --project <repo>
-prudence show --session <id>
-prudence facts --last 30d
-prudence review --project <repo>
-prudence review --explain
+prudence outcomes --project <repo>        # what became of each session's lines
+prudence usage --last 30d                 # tokens and hours by purpose
+prudence observations --project <repo>   # your behaviours against your own outcomes
+prudence review --project <repo>          # a stored review of the period since the last one
+prudence review --explain                 # plus a model-written paragraph, checked against the numbers
 prudence ask "what did I spend tokens on last week"
-prudence hooks install
+prudence hooks install                    # optional: turn-level git state through Claude Code hooks
 prudence export
 ```
 
-`init --scan` lists the repositories found in your agent history without changing
-anything. `init --enable` turns recording on for one repository at a time, at
-`full` capture or `metadata-only` (use `--level metadata-only` for a repository whose
-content you would rather not store). `ingest` reads what the agent recorded since the
-last run. `sessions` lists what happened; `outcomes` follows the commits each session
-produced forward, to what survived; `usage` follows the tokens and active time back, to
-what they were for; `observations` joins the two, inside one project, when your own
-data supports it. `show` prints one session's full record; `facts` prints the behaviour
-counts every session was scored on. `hooks install` adds the git-state hooks Prudence
-uses to catch what happens around each turn; it edits Claude Code's settings file, shows
-the diff first, and `prudence hooks uninstall` reverses it. `review` stores a review of
-the period since the last one (or `--last 14d`, `--month 2026-09`) and prints it; it
-refuses to write an empty one until enough new sessions and matured commits exist
-(`--force` overrides). `--explain` adds a model-written paragraph, only when a model is
-configured (`prudence config model`); the paragraph is checked against the review's own
-numbers and refused if it invents one or grades you. `ask` retrieves the sessions the
-question is about and, unless you pass `--no-model`, asks the model to answer from that
-evidence alone. Before every model call Prudence prints what it is about to send.
-
-The first completed `ingest` ends with a "first look": three to five facts about the
-history it just read, each with the command that shows more.
-
-## What it can tell you today
-
-- `prudence outcomes --project <repo>`: "62% of the lines from your last 90 days are
-  still in the tree at head, with 78% coverage (41 fact-attributed commits, 12
-  inferred)."
-- `prudence usage --last 30d`: "development 55%, research 25%, conversation 15%,
-  debugging 5% of this week's tokens."
-- An observation at the end of `outcomes`: "In one project, your sessions that ran a
-  formatter still had more lines at head than the ones that did not (88% vs 74%, 14
-  sessions each side)."
+`init --enable` turns recording on for one repository at a time, at `full` capture or `metadata-only` (shape without content, for a repository whose code you would rather not store). `hooks install` edits Claude Code's settings file, shows the diff first, and `prudence hooks uninstall` reverses it byte for byte. Before every model call Prudence prints what it is about to send: sections, number of figures, no transcript content, size, and the estimated cost.
 
 ## Claude Code plugin
-
-Prudence also ships a Claude Code plugin that brings your recorded history into a
-session: `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage`,
-`/prudence:recall`, `/prudence:review` and `/prudence:ask` skills, and an MCP server an
-agent can query directly (`ask` there returns the evidence only, because the agent
-calling it is already a model). See
-[plugin/README.md](plugin/README.md). To try it from this repository without
-installing it:
 
 ```
 claude --plugin-dir ./plugin
 ```
 
+Skills `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage`, `/prudence:recall`, `/prudence:review`, `/prudence:ask`, and an MCP server an agent can query directly (there, `ask` returns the evidence only, because the agent calling it is already a model). See [plugin/README.md](plugin/README.md).
+
+## The macOS app
+
+A menu-bar icon whose dropdown shows today, this week's tokens by purpose, the latest observation and the last review; a window with Overview (tokens by purpose per week, survival and rework per project with coverage, where the hours went), Review (the stored review as cards and charts), Observations and Settings. Swift and Swift Charts, reading the same SQLite store through a versioned set of `app_*` views; the app never computes a number of its own. English and Simplified Chinese. See [apps/mac/README.md](apps/mac/README.md).
+
 ## What it records and what it never records
 
-Raw session data (transcripts, tool results, file-history snapshots) is archived
-unmodified, byte for byte, in a local store with owner-only file permissions
-(mode 0600). Derived tables built from that archive hold counts, classes, and keyed
-line hashes, never message text: no prompt or response text is written to any derived
-table, at any capture level.
+Raw session data is archived unmodified in a local store with owner-only permissions. Derived tables hold counts, classes and keyed line hashes, never message text, at any capture level. `metadata-only` withholds file paths and line hashes as well. Nothing is uploaded anywhere; observations compare you only with yourself. If you plan to enable Prudence on a work repository, check your employer's policy first.
 
-`metadata-only` withholds more: file paths and line hashes are not stored, so that
-level records shape (how much changed, when, in which class of command) without a
-fingerprint of the content itself.
+## How it works
 
-Nothing Prudence records is uploaded anywhere. If you plan to enable it on a work
-repository, check your employer's policy first. Observations, the correlations between
-your own behaviour and your own outcomes, are computed the same way: they never leave
-this machine, and they never compare you with anyone else, only with yourself.
+```
+Claude Code transcripts and hooks ──► one local SQLite store (raw archive + derived tables)
+        ──► attribution (which session made which commit, with confidence)
+        ──► outcomes (survival, rework), facts, observations, reviews
+        ──► CLI · Claude Code plugin and MCP · macOS app (app_* views)
+```
+
+[ARCHITECTURE.md](ARCHITECTURE.md) has the layout and the rules that keep it easy to change.
+
+## Status
+
+0.3.0. Claude Code is the agent read today; the source layer is one module per agent and a Codex adapter is next. Windows is untested. See [RELEASES.md](RELEASES.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) (DCO sign-off, Conventional Commits, English only, AI-assisted contributions disclosed).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). The Prudence name and mark are not covered by the code licence; see [assets/brand/README.md](assets/brand/README.md).

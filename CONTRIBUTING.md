@@ -34,7 +34,7 @@ Contributions written with AI assistance are welcome. Disclose it in the pull re
 
 ## Language
 
-The repository is English only: code, comments, commit messages, issues, and pull requests.
+The repository is English only: code, comments, commit messages, issues, and pull requests. The one exception is `README.zh-CN.md`, a Simplified Chinese translation of the README kept in step with it; when you change `README.md`, change the translation too or say in the pull request that it needs updating.
 
 ## Style
 

@@ -33,7 +33,7 @@ from prudence.cli.usage import usage
 @click.group()
 @click.version_option(__version__, prog_name="prudence")
 def main() -> None:
-    """Prudence: a local-first growth coach for developers who build with AI agents."""
+    """Prudence: a growth coach for developers who build with AI coding agents."""
 
 
 main.add_command(init)
