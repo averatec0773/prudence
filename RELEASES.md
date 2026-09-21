@@ -25,6 +25,72 @@ Before the first tag can publish, the project owner does this once, on pypi.org:
 
 Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
 
+## 0.3.0 - 2026-09-21
+
+M3: the app and the review. Two products now ship from this repository: the Python
+engine and CLI (`prudence-dev`), and a native macOS menu-bar app (`apps/mac`, Swift,
+built from the terminal, published as a DMG with each release) that reads the same
+database through a versioned set of `app_*` SQL views and never computes a number of
+its own. Underneath, `prudence review` turns the record into a stored review whose every
+figure is computed, and `prudence ask` answers a question from retrieved evidence.
+
+What's included:
+
+- `prudence review [--last 14d | --since | --until | --month YYYY-MM] [--project]`:
+  what you did (sessions, tokens and hours by purpose, commits, coverage), what became
+  of earlier work (the commits whose 7-day mark fell inside the range), the observations
+  that clear the floors, a comparison with the previous period of the same length, and
+  the follow-up of last time's suggestions. Stored as a row (`review`, `suggestion`
+  tables, never rebuilt, carried by export and import) and printed as Markdown into
+  `reports/`. The default range is "since the last review"; a readiness rule refuses an
+  empty review until at least five new sessions and one matured commit exist
+  (`--force` overrides). Ranges follow your local calendar.
+- `prudence review --explain` and `prudence explain <id>`: a model-written paragraph
+  under "What this means", added only when a model is configured. The model receives
+  the computed sections and a list of every number in them, and its text is refused
+  if it uses a number not on that list or grades the work (a short list of praise and
+  blame words is data, versioned); a refused draft is never printed or stored. Before
+  the call Prudence prints what it sends: the sections, the number count, no transcript
+  content, the size, the cap on the reply, whether the system prompt is cached, and the
+  estimated cost.
+- `prudence ask "<question>" [--project] [--no-model] [--with-content]`: rules read a
+  range, a project, a file or an error from the question; the sessions in range (all of
+  them unless a file or quoted text narrows) with their facts, outcomes and usage are
+  the evidence, every number rounded as the terminal prints it; one model call answers
+  from that evidence and cites session ids, under the same guards. `--no-model` prints
+  the evidence alone; `--with-content` adds short archive excerpts for a `full` project
+  and says so. Questions are stored (`question` table; `prudence show --question <id>`).
+- `prudence config model`: backend (`anthropic` or `none`), model id (default
+  `claude-sonnet-5`), key from `ANTHROPIC_API_KEY`; the SDK is the optional
+  `prudence-dev[model]` extra. A recorded backend replays fixtures for tests.
+- First look: the first completed `ingest` ends with three to five ranked facts about
+  the history just read, each with the command that shows more; later ingests print at
+  most two lines of new observations and a hint when a review is ready.
+- The app contract: `store/app_views.py` creates `app_status`, `app_usage_by_purpose_day`,
+  `app_outcomes_by_week`, `app_observation` (with the CLI's sentence), `app_session_list`,
+  `app_commits_by_day` and `app_review` after every ingest and rebuild, all under 25 ms
+  on a 740 MB store; `meta.app_contract_version` is `2`, and an app that does not know
+  a version refuses to render. `--json` on `status`, `usage`, `outcomes`,
+  `observations`, `sessions`, `ingest`, `review` and `ask`.
+- The macOS app (`apps/mac`, version 0.1.0): a menu-bar icon whose dropdown shows
+  today, this week's tokens by purpose, the latest observation, the last ingest and the
+  last review's headline, with Open Prudence, Review now, Ingest now and Quit; a window
+  with Overview (tokens by purpose per week as stacked bars, alive-at-30-days and rework
+  shares per project as lines with their coverage, summary cards; project and range
+  pickers), Review (the newest stored review rendered section by section, the model
+  segment as a card, earlier reviews, Review now), Observations and Settings (engine
+  path, database path, timed ingest every 30 minutes, open at login). XcodeGen project,
+  a local Swift package with 76 tests, Swift Charts only, GRDB read-only, no sandbox;
+  CI on `macos-26` builds unsigned and renders every screen to PNG in light and dark.
+- The Claude Code plugin gains `/prudence:review` and `/prudence:ask`; the MCP server
+  gains `latest_review` and `ask` (evidence only).
+- The Python menu-bar prototype and the `menubar` extra are gone; `prudence menubar`
+  says where the menu bar went.
+
+Known limits: the app is published unsigned until the Developer ID certificate exists
+(right-click, Open, on first launch); Sparkle updates and the Homebrew tap come with the
+next app release; the suggestions follow-up has no screen yet (`prudence suggestions`).
+
 ## 0.2.0 - 2026-09-20
 
 M2: what became of the code, and where the tokens went. On top of 0.1.0's recorder,

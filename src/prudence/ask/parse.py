@@ -157,19 +157,36 @@ class Question:
     quoted: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
     matched: list[str] = field(default_factory=list)
+    sort: str | None = None
+    sort_label: str | None = None
+
+    @property
+    def narrows(self) -> bool:
+        """Whether the question names something to search for, rather than only a period.
+
+        Three things narrow: a file path, a file extension, and quoted text (which is
+        how a person writes an error message). Everything else the question is made of
+        is prose. Prose used to narrow too, through `terms[0]`, and that was the bug:
+        "which of my sessions in the last two weeks reworked the most lines" left
+        `lines` as its longest word, `lines` matched `store/lines.py` in one session,
+        and a question about a fortnight was answered from a single session. A word the
+        person did not mean as a filename is not a filter.
+        """
+        return bool(self.path or self.extension or self.quoted)
 
     @property
     def search(self) -> str:
-        """The single term `views.search_sessions` is given: a path, else the best word.
+        """The single term `views.search_sessions` is given, or nothing at all.
 
-        The search matches file paths and command classes, not prose, so handing it a
-        sentence returns nothing. One term, chosen by the rules, is honest about that.
+        The search matches file paths and command classes, not prose, so a question
+        that names no file and quotes no error gets no term and is answered from its
+        range and its project.
         """
         if self.path:
             return self.path
         if self.extension:
             return self.extension
-        return self.terms[0] if self.terms else ""
+        return self.quoted[0] if self.quoted else ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -182,6 +199,7 @@ class Question:
             "extension": self.extension,
             "quoted": self.quoted,
             "terms": self.terms,
+            "sort": self.sort_label,
             "rules": self.matched,
         }
 
@@ -274,6 +292,24 @@ def _quoted(question: Question, match: re.Match[str], now: datetime) -> None:
     question.quoted.append(match.group("quoted"))
 
 
+# A superlative is the one piece of prose worth reading, because it says which end of the
+# evidence the question is about. The field named here is a column the retrieval already
+# has; nothing new is computed for a sort.
+SORT_LABELS = {
+    "reworked": "reworked lines, most first",
+    "tokens": "tokens, most first",
+    "commits": "commits, most first",
+}
+
+
+def _sorted_by(field_name: str) -> Callable[[Question, re.Match[str], datetime], None]:
+    def apply(question: Question, match: re.Match[str], now: datetime) -> None:
+        question.sort = field_name
+        question.sort_label = SORT_LABELS[field_name]
+
+    return apply
+
+
 # Order matters: the first rule to match a span takes it, and a later rule never sees
 # what an earlier one consumed. Time before paths, because "last 30 days" holds a number
 # that a path rule would otherwise be tempted by.
@@ -303,6 +339,24 @@ RULES: tuple[Rule, ...] = (
         _since_weekday,
     ),
     Rule("in month", re.compile(rf"\bin\s+(?P<month>{'|'.join(MONTHS)})\b", re.I), _in_month),
+    Rule(
+        "most reworked",
+        re.compile(r"\b(?:rework(?:ed|s)?\s+(?:the\s+)?most|most\s+rework(?:ed|s)?)\b", re.I),
+        _sorted_by("reworked"),
+    ),
+    Rule(
+        "most tokens",
+        re.compile(
+            r"\b(?:most\s+tokens?|tokens?\s+(?:the\s+)?most|cost\s+(?:me\s+)?(?:the\s+)?most)\b",
+            re.I,
+        ),
+        _sorted_by("tokens"),
+    ),
+    Rule(
+        "most commits",
+        re.compile(r"\b(?:most\s+commits?|commit(?:ted|s)?\s+(?:the\s+)?most)\b", re.I),
+        _sorted_by("commits"),
+    ),
     Rule("path", re.compile(r"\b[\w.-]+/[\w./-]+\.\w{1,6}\b"), _path),
     Rule(
         "extension",

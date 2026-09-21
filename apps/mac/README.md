@@ -3,6 +3,9 @@
 The native macOS menu bar app. It reads the same database `prudence` writes, shows the week at
 a glance, and asks the CLI to do anything that changes the record.
 
+A dropdown for today's numbers, and a window for the rest: charts of where the tokens went and
+what became of the work, the latest written review, and the observations behind both.
+
 ## Build, run, test, render
 
 ```sh
@@ -13,7 +16,7 @@ swift test --package-path PrudenceKit  # the fast loop: seconds, no Xcode projec
 xcodebuild -project Prudence.xcodeproj -scheme Prudence \
   -configuration Debug -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
 
-./Scripts/shots.sh                     # shots/{menu,window,settings}-{light,dark}.png
+./Scripts/shots.sh                     # the twelve PNGs listed under "Screenshots" below
 ```
 
 `-derivedDataPath build/dd` keeps the output inside `apps/mac/` instead of Xcode's shared
@@ -37,19 +40,60 @@ PRUDENCE_DATA_DIR=/tmp/prudence-copy PRUDENCE_CONFIG_DIR=/tmp/prudence-copy \
 
 The app honours the same environment variables `src/prudence/paths.py` honours, and passes them
 through to every CLI subprocess it starts, so an app pointed at a copy can never ingest into
-the real store. Quit it from the dropdown, or `pkill -f Prudence.app/Contents/MacOS`.
+the real store. `PRUDENCE_OPEN_WINDOW=1` opens the main window at launch, which is how an agent
+with no way to click a menu bar item gets to see one. Quit from the dropdown, or kill the one
+process you started; never `pkill -f Prudence.app`, which would also take down a build somebody
+else is running.
 
 `Prudence.xcodeproj`, `build/`, `DerivedData/` and `shots/` are generated and gitignored. Never
 open Xcode's UI to add a file: add it to `App/` or `PrudenceKit/Sources/`, then run
-`./Scripts/bootstrap.sh` again.
+`./Scripts/bootstrap.sh` again. A new file under `App/` that a screen renders also goes in the
+`VIEWS` list in `Scripts/shots.sh`, or it is built but never photographed.
 
-The Swift tests read `PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db`, a real store the
-engine itself wrote. Regenerate it from the repository root when the contract changes:
+## The fixture
+
+The Swift tests and the render harness read
+`PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db`, a store the engine itself wrote and
+nothing else: `tests/conftest.py`'s synthetic machine, ingested, given the few rows that small
+a scenario cannot produce on its own, and `VACUUM INTO`'d into the test bundle. Regenerate it
+from the repository root whenever `store/app_views.APP_VIEWS` or `meta.APP_CONTRACT_VERSION`
+changes, and commit the `.db` with the Swift change that reads the new columns:
 
 ```sh
 MAC_FIXTURE_TARGET=apps/mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db \
-  uv run pytest tests/mac_fixture.py -q
+    uv run pytest tests/mac_fixture.py -q
 ```
+
+What is in it is `tests/mac_fixture.py`'s business, not this app's. **No Swift test hard-codes
+a number out of it**: each one computes what it expects with a plain SQL query over the same
+file (`Fixture.count` and friends in `Tests/PrudenceKitTests/StoreTests.swift`) and compares
+that with what the code under test answered, so a regenerated store moves the tests with it
+instead of breaking them. A test the fixture is too thin to mean anything for is gated with
+`.enabled(if:)` and skips with a sentence naming what `mac_fixture.py` would have to record.
+
+`Fixtures/review-sections.json` is one real `review.sections` payload, copied off the founder's
+own store, which the decoding tests read. It holds numbers, labels and the notes that explain
+them, and no message text of any kind. It is the whole payload, the way the `review` table
+stores it; `app_review.sections` is `json_extract(..., '$.sections')` out of the same thing, so
+`ReviewPayload.decode` takes either shape.
+
+## Screenshots
+
+`./Scripts/shots.sh` writes twelve PNGs, each in light and dark:
+
+| shot | size | what it is |
+| --- | --- | --- |
+| `menu` | fitted | the dropdown |
+| `window` | 900x600 | the whole window at the floor `MainWindowController` sets |
+| `overview` | 1200x800 | the Overview screen |
+| `review` | 1200x800 | the Review screen |
+| `observations` | 1200x800 | the Observations screen |
+| `settings` | 520x420 | the Settings screen |
+
+The three screen shots are of scrolling views, so a long review runs past the bottom of its
+PNG; that is the screen, not the shot. `PRUDENCE_SHOTS_DUMP=1` also prints the Overview's three
+cards and every week's token totals on standard output, for holding beside
+`prudence usage --last 60d` over the same store.
 
 ## Layout
 
@@ -57,13 +101,59 @@ MAC_FIXTURE_TARGET=apps/mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db
 apps/mac/
   project.yml          XcodeGen manifest; the only build settings file an agent edits
   App/                 SwiftUI views and AppKit glue. No decision logic.
+    StatusItem, MenuContentView          the menu bar item and its dropdown
+    MainWindow                           the window, its sidebar and the chrome every screen shares
+    OverviewView, ReviewView,
+    ObservationsView, SettingsView       one file per screen
   PrudenceKit/         the local Swift package: everything the app thinks with
     Sources/PrudenceStore/    GRDB, read-only, over the app_* views, with the contract check
     Sources/PrudenceEngine/   finds and runs the prudence CLI
     Sources/PrudenceModels/   view models and formatting
+      Overview.swift               weekly buckets, outcome series, the three cards
+      ReviewPayload.swift          the sections JSON as typed Swift
+      WindowModel.swift            what the window read, and the one thing it can do
   Render/              off-screen PNG harness; compiles the app's own view files
   Scripts/             bootstrap.sh, shots.sh
 ```
+
+## The window
+
+A `NavigationSplitView` with four entries, and one screen at a time. The window remembers its
+size (`setFrameAutosaveName`) and will not go below 900x600. The Dock icon appears while it is
+open and goes away when it closes (M3 plan, open question 1).
+
+**Overview.** Three cards, then two charts, for the chosen project and range (8 weeks by
+default, or 90 days, or all). The cards are sessions in range from `app_session_list`, active
+hours from `app_usage_by_purpose_day`, and commits in range from `app_commits_by_day` with its
+fact and inferred split, which is the view that counts a commit once. The first chart is
+stacked bars, one per ISO week, of tokens by purpose, with a colour per purpose fixed in a
+table so two screenshots a week apart are comparable; hovering a bar gives that week's totals.
+The second is, per project, the share still alive at 30 days and the share reworked later, with
+that week's mean coverage as a pale wide line behind them. **A week whose 30-day mark has not
+arrived is a gap, never a zero**: each project's line is cut into runs of measured weeks so
+Swift Charts cannot join across the hole. Every share on hover carries the number it is over.
+
+**Review.** The newest stored review from `app_review`, or any earlier one from the picker.
+The header, then each section drawn from the sections JSON: the purpose table with the
+whole-range figures as cards, the outcome figures as cards each carrying its coverage, the
+observations as sentence-plus-caveat rows, the comparison as a table with its change column,
+the suggestions as rows, and the model segment last under "What this means" with the model that
+wrote it named beneath. Five section kinds are laid out by hand and **anything else is drawn as
+the table it brought with it**, so a section the engine grows later appears here rather than
+crashing the screen or being silently dropped. "Review now" runs `prudence review --json`; a
+not-ready answer shows the engine's own reason with a "Write anyway" button that adds
+`--force`.
+
+**Observations.** The `app_observation` rows for the chosen scope, biggest gap between the two
+medians first, each with its sentence and the coverage and method line under it. Under "All
+projects" only the pooled rows appear, labelled as such: a row about one project under a
+heading that says every project would read as a statement about all of them.
+
+**Settings.** The same screen the menu bar opens, hosted in the sidebar.
+
+Every screen has an empty state that says what it looked at, and every screen behind a store
+that will not open shows one contract-mismatch page instead, carrying the sentence
+`StoreError` writes, which already names both versions and says which side to update.
 
 ## Three conventions
 
@@ -76,42 +166,46 @@ The reasoning is written out at the top of `App/StatusItem.swift`; read it befor
 the shorter API. The same goes for the windows: they are hand-built `NSWindow` plus
 `NSHostingController`, not SwiftUI `Window` or `Settings` scenes.
 
-**2. The app owns no numbers.** Every figure on a screen comes from an `app_*` view or a stored
-row (M3 rule 8, ARCHITECTURE rule 14). Swift never joins base tables and never computes an
-outcome, a share of survival or a token total. A screen that needs a number the engine does not
-compute gets a new view in `src/prudence/store/app_views.py`; the list of numbers this batch
-wanted and could not have is below.
+**2. The app owns no numbers.** Every figure on a screen comes from an `app_*` view (M3 rule 8,
+ARCHITECTURE rule 14). Swift never joins base tables and never computes an outcome, a share of
+survival or a token total. The line is narrow and deliberate: a screen may **sum** view columns
+into a bucket and take the **ratio of two columns of the same row**, and nothing else. So the
+weekly bars are sums of `total_tokens`, the survival line is `alive_30d / measured_30d` and the
+rework line is `reworked / lines`; a median, a threshold or an attribution would be a new view
+in `src/prudence/store/app_views.py`, never a function in Swift.
 
 **3. The contract is checked before anything is rendered.** `Store.init` reads
-`meta.app_contract_version` and refuses anything but `1`, with an error carrying both versions
+`meta.app_contract_version` and refuses anything but `2`, with an error carrying both versions
 and a sentence saying which side to update. No screen ever renders half a schema it does not
 understand.
 
-## Contract requests
+## The contract, and what moved to 2
 
-Three things this batch wanted from `app_*` and did not find. None is worked around with a join
-in Swift; each shows a placeholder or is simply absent, and each is a small addition to
-`store/app_views.py` when the engine side next moves.
+Contract 2 answers all three requests contract 1 left open, and adds the one the review screen
+needed:
 
-1. **Edits per local day.** The dropdown's "today" line is `N sessions, N commits`. The rumps
-   prototype also said `N edits`, counted straight off the `edit` table, which the app may not
-   do. Either a column on `app_session_list` (`edits`) or a small `app_edits_by_day` view would
-   restore the line. `TodayModel.edits` is already optional and joins the line the day it
-   exists.
-2. **Commits per day, counted once.** `app_session_list` gives commits per session, so summing
-   it over a day double counts a commit credited to two sessions; `views.credited_by_commit`
-   does not. The number the dropdown shows is therefore an upper bound on a day where two
-   sessions share a commit. A day-grained view, or a `distinct` count per day, would fix it.
-3. **The observation's own sentence.** `app_observation` carries the numbers but not the prose,
-   so `PrudenceModels/ObservationSentence.swift` restates the phrase table from
-   `store/observations.SPLITS`. That is the one piece of Python this app repeats. A `sentence`
-   column on `app_observation` would delete that file. Until then a test pins every sentence
-   against what the CLI printed for the same fixture rows.
+1. **`app_session_list.edits`.** The dropdown's "today" line can say edits again without the
+   app counting the `edit` table itself, which is exactly what it may not do.
+2. **`app_commits_by_day`.** A commit counted once per local day, at its best confidence.
+   Summing `app_session_list` over a day double counts a commit credited to two sessions, so
+   the dropdown's old figure was an upper bound; this view is the real one, and both the
+   dropdown and the Overview card read it.
+3. **`app_observation.sentence`** (and `observation_id`). The prose the CLI prints, stored.
+   `PrudenceModels/ObservationSentence.swift` used to restate the phrase table from
+   `store/observations.SPLITS` — the one piece of Python this app repeated — and is deleted.
+4. **`app_review`.** The stored reviews as a view: the ranges, the scope, the headline, the
+   coverage, the model segment, and `sections` and `numbers` as the JSON `reviews/build.py`
+   wrote. The app used to read the raw `review` table for a headline and nothing else; it now
+   reads this and nothing else.
 
-One read is not an `app_*` view at all: the newest `review` row, read for its headline (id,
-range, project, first section title). Contract 1 has no `app_review` view, and the review screen
-of M3 task 8 needs one; the read is kept to a headline and marked in
-`PrudenceStore/Rows.swift` until it exists.
+`PrudenceStore/Contract.swift` is the compiled form of that list, and a test asserts every
+view still answers with exactly those columns in that order, so a Python change that forgets to
+bump the version fails in `swift test` rather than in front of the user.
+
+**Open against contract 2:** the Overview has no figure it wanted and could not have. The one
+thing the app still assembles itself is an observation's caveat line, `(coverage: 90%, method:
+4 fact, 3 inferred)`, which is three columns of the same row in a fixed shape rather than a
+restated rule; a `caveat` column beside `sentence` would remove even that.
 
 ## Bundle identifier
 

@@ -110,6 +110,7 @@ public struct AppOutcomesByWeekRow: Codable, FetchableRecord, Equatable, Sendabl
 }
 
 public struct AppObservationRow: Codable, FetchableRecord, Equatable, Sendable {
+    public let observationId: Int
     public let repoKey: String
     public let project: String?
     public let pooled: Int
@@ -125,8 +126,13 @@ public struct AppObservationRow: Codable, FetchableRecord, Equatable, Sendable {
     public let factCommits: Int
     public let inferredCommits: Int
     public let factVersion: Int
+    /// The sentence the CLI prints for this row, stored rather than restated in Swift.
+    /// Contract 1 had no such column and the app kept a copy of `store/observations.SPLITS`;
+    /// contract 2 carries it, and that copy is gone.
+    public let sentence: String?
 
     enum CodingKeys: String, CodingKey {
+        case observationId = "observation_id"
         case repoKey = "repo_key"
         case project
         case pooled
@@ -142,9 +148,38 @@ public struct AppObservationRow: Codable, FetchableRecord, Equatable, Sendable {
         case factCommits = "fact_commits"
         case inferredCommits = "inferred_commits"
         case factVersion = "fact_version"
+        case sentence
     }
 
     public var isPooled: Bool { pooled != 0 }
+
+    /// How far apart the two sides are. The screens sort on it, because a bigger gap is what
+    /// makes an observation worth reading first; it is a difference of two view columns and
+    /// nothing else.
+    public var gap: Double { abs(withValue - withoutValue) }
+}
+
+/// Commits on one local day, counted once at their best confidence label.
+///
+/// This is the view that exists because summing `app_session_list` over a day counts a commit
+/// twice when two sessions are both credited with it. `commits` is the count, and
+/// `commits_fact` plus `commits_inferred` is the same count split by how it was established.
+public struct AppCommitsByDayRow: Codable, FetchableRecord, Equatable, Sendable {
+    public let day: String
+    public let repoKey: String?
+    public let project: String
+    public let commits: Int
+    public let commitsFact: Int
+    public let commitsInferred: Int
+
+    enum CodingKeys: String, CodingKey {
+        case day
+        case repoKey = "repo_key"
+        case project
+        case commits
+        case commitsFact = "commits_fact"
+        case commitsInferred = "commits_inferred"
+    }
 }
 
 public struct AppSessionListRow: Codable, FetchableRecord, Equatable, Sendable {
@@ -162,6 +197,9 @@ public struct AppSessionListRow: Codable, FetchableRecord, Equatable, Sendable {
     public let sittings: Int
     public let captureLevel: String?
     public let contentArchived: Int
+    /// Edits this session made. Optional because a session the hooks did not see has none,
+    /// and a missing count is not a zero (ARCHITECTURE rule 10).
+    public let edits: Int?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -178,6 +216,7 @@ public struct AppSessionListRow: Codable, FetchableRecord, Equatable, Sendable {
         case sittings
         case captureLevel = "capture_level"
         case contentArchived = "content_archived"
+        case edits
     }
 
     /// Commits this session is credited with at a confidence the CLI counts.
@@ -185,26 +224,48 @@ public struct AppSessionListRow: Codable, FetchableRecord, Equatable, Sendable {
     public var countedCommits: Int { commitsFact + commitsInferred }
 }
 
-/// The newest `review` row, read for its headline alone.
+/// One stored review, through `app_review`.
 ///
-/// This is the one read that is not an `app_*` view, because there is no `app_review` view in
-/// contract 1 (see the contract requests in `apps/mac/README.md`). It stays a headline: the id,
-/// the range, the scope and the title of the first section, never the sections themselves. The
-/// review screen in M3 task 8 needs the whole row and should get a view first.
-public struct ReviewHeadlineRow: Codable, FetchableRecord, Equatable, Sendable {
+/// At contract 1 the app read the raw `review` table for a headline and nothing else, because
+/// there was no view; contract 2 has one, and the review screen reads the whole row from it.
+/// `sections` and `numbers` are the JSON `reviews/build.py` stored, decoded by
+/// `PrudenceModels/ReviewPayload.swift` rather than here: a row is a row, and what is inside a
+/// text column is the model layer's problem.
+///
+/// `repoKey` is the hash the row was scoped by; `project` is the name a person uses for it.
+/// Both are nil for a review of every project.
+public struct AppReviewRow: Codable, FetchableRecord, Equatable, Sendable {
     public let id: Int
     public let createdAt: String
     public let rangeStart: String
     public let rangeEnd: String
+    public let outcomeRangeStart: String?
+    public let outcomeRangeEnd: String?
+    public let repoKey: String?
     public let project: String?
+    public let headline: String?
     public let sections: String
+    public let numbers: String?
+    public let coverage: Double?
+    public let segmentText: String?
+    public let segmentModel: String?
+    public let segmentCreatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case createdAt = "created_at"
         case rangeStart = "range_start"
         case rangeEnd = "range_end"
+        case outcomeRangeStart = "outcome_range_start"
+        case outcomeRangeEnd = "outcome_range_end"
+        case repoKey = "repo_key"
         case project
+        case headline
         case sections
+        case numbers
+        case coverage
+        case segmentText = "segment_text"
+        case segmentModel = "segment_model"
+        case segmentCreatedAt = "segment_created_at"
     }
 }

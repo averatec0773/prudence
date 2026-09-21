@@ -63,7 +63,7 @@ def test_the_two_hook_scripts_are_byte_identical() -> None:
 
 
 def test_skills_have_frontmatter_with_a_description() -> None:
-    for name in ("sessions", "recall", "outcomes", "usage"):
+    for name in ("sessions", "recall", "outcomes", "usage", "review", "ask"):
         text = (PLUGIN / "skills" / name / "SKILL.md").read_text()
         match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
         assert match, f"{name}/SKILL.md has no --- frontmatter block"
@@ -74,8 +74,23 @@ def test_skills_have_frontmatter_with_a_description() -> None:
         assert re.search(rf"^name:\s*{name}\s*$", frontmatter, re.MULTILINE)
 
 
+def test_the_two_new_skills_say_what_they_will_not_do() -> None:
+    """Every skill carries the rules the engine enforces; a skill that drops them lies."""
+    review = (PLUGIN / "skills" / "review" / "SKILL.md").read_text()
+    assert "latest_review" in review, "the read path goes through the MCP tool"
+    assert "--force" in review, "the readiness rule is relayed, never bypassed"
+    assert "--explain" in review, "the model segment is opt-in, because it is billed"
+
+    ask = (PLUGIN / "skills" / "ask" / "SKILL.md").read_text()
+    assert "Do no arithmetic" in ask, "principle 2: the engine computes, the model quotes"
+    assert "grade" in ask, "principle 3: describe, never judge"
+    assert "prudence show --session" in ask, "every claim is checkable by the reader"
+
+
 def test_plugin_readme_names_the_local_install_command_and_the_privacy_statement() -> None:
     text = (PLUGIN / "README.md").read_text()
     assert "claude --plugin-dir ./plugin" in text
     assert "No message text" in text
     assert "prudence-dev" in text, "the CLI install instruction"
+    for tool in ("latest_review", "ask"):
+        assert tool in text, f"the README does not name the {tool} tool"

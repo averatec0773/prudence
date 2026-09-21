@@ -65,54 +65,100 @@ struct WeekUsageTests {
 @Suite("The dropdown's other lines")
 struct DropdownModelTests {
 
-    @Test("Today counts the sessions it was given and the commits credited to them")
+    @Test("Today counts sessions from one view, commits from another and edits from a third")
     func today() throws {
-        let rows = try Fixture.store().sessions(
-            startedBetween: "2026-09-01T00:00:00", and: "2026-10-01T00:00:00")
-        let model = TodayModel(rows: rows)
-        #expect(model.sessions == 4)
-        #expect(model.commits >= 1)
-        #expect(model.edits == nil, "no app_* view carries edits per day at contract 1")
-        #expect(model.line == "4 sessions, \(model.commits) commits")
+        let store = try Fixture.store()
+        // "Today" is whichever day the fixture last committed on; which day that is belongs to
+        // the fixture, not to this test.
+        let day = try #require(try Fixture.text("SELECT MAX(day) FROM app_commits_by_day"))
+        let start = "\(day)T00:00:00"
+        let end = "\(day)T23:59:59"
+        let sessions = try store.sessions(startedBetween: start, and: end)
+        // `app_commits_by_day` counts a commit once. Summing `app_session_list` over the same
+        // day would count a commit credited to two sessions twice, which is what contract 1
+        // forced the dropdown to do.
+        let commits = try store.commitsByDay(since: day).filter { $0.day == day }
+        let model = TodayModel(sessions: sessions, commits: commits)
+
+        let expectedSessions = try Fixture.count(
+            "SELECT COUNT(*) FROM app_session_list WHERE started_at >= ? AND started_at < ?",
+            [start, end])
+        let expectedCommits = try Fixture.count(
+            "SELECT SUM(commits) FROM app_commits_by_day WHERE day = ?", [day])
+        let expectedEdits = try Fixture.count(
+            "SELECT SUM(edits) FROM app_session_list WHERE started_at >= ? AND started_at < ?",
+            [start, end])
+
+        #expect(model.sessions == expectedSessions)
+        #expect(model.commits == expectedCommits)
+        #expect(
+            model.commits <= sessions.reduce(0) { $0 + $1.countedCommits },
+            "the session list is the upper bound this view exists to undercut")
+        #expect(model.edits == expectedEdits, "contract 2 carries edits per session")
+        #expect(
+            model.line
+                == "\(expectedSessions) sessions, \(expectedEdits) edits, \(expectedCommits) commits"
+        )
     }
 
-    /// Word for word what `store/observations.sentence` printed for these same three rows,
-    /// captured by running the Python side over this fixture. The wording is restated in
-    /// Swift only because contract 1 has no `sentence` column; this test is what keeps the
-    /// two from drifting apart in silence.
-    static let pythonSentences = [
-        "In alpha, your 6 sessions that ran over three or more sittings still have 71% of their lines at head (median); the 11 that did not, 54%.",
-        "In alpha, your 7 sessions that ran tests reworked 12% of their lines (median); the 9 that did not, 31%.",
-        "Across your projects, your 8 sessions that dispatched a subagent reworked 22% of their lines (median); the 14 that did not, 40%.",
-    ]
-    static let pythonCaveats = [
-        "(coverage: 90%, method: 4 fact, 3 inferred)",
-        "(coverage: 86%, method: 5 fact, 2 inferred)",
-        "(coverage: 77%, method: 6 fact, 5 inferred)",
-    ]
+    @Test("A day where nothing measured any edit leaves edits out of the line, not at zero")
+    func editsMissing() {
+        let model = TodayModel(sessions: 2, commits: 1, edits: nil)
+        #expect(model.line == "2 sessions, 1 commits")
+    }
 
-    @Test("Every sentence is the one the CLI prints, word for word")
-    func sentencesMatchThePythonSide() throws {
+    @Test("The sentence is read from the view, never built in Swift")
+    func sentenceComesFromTheView() throws {
         let rows = try Fixture.store().observations()
-        #expect(rows.map(ObservationSentence.sentence(for:)) == Self.pythonSentences)
-        #expect(rows.map(ObservationSentence.caveat(for:)) == Self.pythonCaveats)
+        let first = try #require(rows.first)
+        let model = ObservationModel(row: first)
+        #expect(model.sentence == first.sentence)
+        // The prose is a row of `app_observation_text` and nothing else: not a phrase table
+        // restated in Swift, and not the sentence of the row next to it.
+        #expect(
+            model.sentence
+                == (try Fixture.text(
+                    "SELECT sentence FROM app_observation_text WHERE observation_id = ?",
+                    [String(first.observationId)])))
+        // The caveat is the only text this app assembles, out of three columns of that same
+        // row, so it is checked against those three read off the `observation` table.
+        let coverage = try #require(
+            try Fixture.number(
+                "SELECT coverage FROM observation WHERE fact = ? AND outcome = ?",
+                [first.fact, first.outcome]))
+        let method = try #require(
+            try Fixture.text(
+                """
+                SELECT fact_commits || ' fact, ' || inferred_commits || ' inferred'
+                  FROM observation WHERE fact = ? AND outcome = ?
+                """, [first.fact, first.outcome]))
+        #expect(model.caveat == "(coverage: \(Formatting.percent(coverage)), method: \(method))")
     }
 
     @Test("The latest observation is the first row of the view, cut for the dropdown")
     func observation() throws {
         let rows = try Fixture.store().observations()
         let model = try #require(LatestObservationModel(rows: rows))
-        #expect(model.sentence == Self.pythonSentences[0])
-        #expect(model.caveat == Self.pythonCaveats[0])
-        #expect(model.short.count == 80)
-        #expect(model.short.hasSuffix("..."))
+        let sentence = try #require(rows.first?.sentence)
+        #expect(model.sentence == sentence)
+        if sentence.count > 80 {
+            #expect(model.short.count == 80)
+            #expect(model.short.hasSuffix("..."))
+        } else {
+            #expect(model.short == sentence, "nothing to cut")
+        }
     }
 
     @Test("A pooled observation says 'across your projects' and never names a project")
     func pooledObservation() throws {
         let pooled = try #require(try Fixture.store().observations().first { $0.isPooled })
-        #expect(ObservationSentence.sentence(for: pooled).hasPrefix("Across your projects,"))
-        #expect(ObservationSentence.sentence(for: pooled).contains("alpha") == false)
+        let model = ObservationModel(row: pooled)
+        #expect(model.sentence.hasPrefix("Across your projects,"))
+        // Not one of the project names this store knows, whatever they happen to be called.
+        for name in try Fixture.texts("SELECT name FROM repository WHERE name IS NOT NULL") {
+            #expect(model.sentence.contains(name) == false, "\(name)")
+        }
+        #expect(model.isPooled)
     }
 
     @Test("The dropdown line is cut at 80 characters, the full text stays for the tooltip")
@@ -128,7 +174,20 @@ struct DropdownModelTests {
     func reviewHeadline() throws {
         let row = try #require(try Fixture.store().latestReview())
         let model = LatestReviewModel(row: row)
-        #expect(model.headline == "Review 1, 2026-09-08 to 2026-09-15: What you did")
+        // The same four parts, spelled out in SQL: the id, the two range days cut to ten
+        // characters, the project name the view resolved, and the title of the first section
+        // inside the stored JSON.
+        let expected = try #require(
+            try Fixture.text(
+                """
+                SELECT 'Review ' || id
+                       || ', ' || substr(range_start, 1, 10)
+                       || ' to ' || substr(range_end, 1, 10)
+                       || ', ' || project
+                       || ': ' || json_extract(sections, '$[0].title')
+                  FROM app_review ORDER BY id DESC LIMIT 1
+                """))
+        #expect(model.headline == expected)
     }
 
     @Test("Sections that cannot be read leave the headline without a title, not without a row")
@@ -139,14 +198,31 @@ struct DropdownModelTests {
 
     @Test("A whole snapshot reads from the fixture in one pass")
     func snapshot() throws {
-        let noon = Formatting.timestamp("2026-09-15T12:00:00")!
+        // Noon on the fixture's own last day of usage, so "today" and "this week" have
+        // something in them whenever the store is regenerated.
+        let day = try #require(try Fixture.text("SELECT MAX(day) FROM app_usage_by_purpose_day"))
+        let noon = try #require(Formatting.timestamp("\(day)T12:00:00"))
         let snapshot = try Snapshot.read(from: Fixture.store(), now: noon)
         #expect(snapshot.storeError == nil)
-        #expect(snapshot.status?.sessions == 4)
-        #expect(snapshot.today.sessions >= 1)
-        #expect(snapshot.week.total > 0)
+        #expect(snapshot.status?.sessions == (try Fixture.count("SELECT COUNT(*) FROM session")))
+        // The reader's own midnight, which is what the dropdown means by "today" and the only
+        // part of this the test takes from the code rather than from the store.
+        let bounds = Formatting.localDayBoundsUTC(noon)
+        #expect(
+            snapshot.today.sessions
+                == (try Fixture.count(
+                    "SELECT COUNT(*) FROM app_session_list WHERE started_at >= ? AND started_at < ?",
+                    [bounds.start, bounds.end])))
+        // `Snapshot.read` asks for the last seven local days, today included.
+        #expect(
+            snapshot.week.total
+                == (try Fixture.count(
+                    """
+                    SELECT SUM(total_tokens) FROM app_usage_by_purpose_day
+                     WHERE day >= date(?, '-6 days')
+                    """, [day])))
         #expect(snapshot.observation != nil)
-        #expect(snapshot.review?.id == 1)
+        #expect(snapshot.review?.id == (try Fixture.count("SELECT MAX(id) FROM review")))
     }
 }
 

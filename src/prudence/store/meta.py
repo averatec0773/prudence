@@ -23,7 +23,12 @@ CREATE TABLE IF NOT EXISTS meta(
 """
 
 APP_CONTRACT_VERSION_KEY = "app_contract_version"
-APP_CONTRACT_VERSION = "1"
+
+# 2 (M3 batch 3): `app_session_list.edits`, `app_observation.observation_id` and
+# `.sentence`, and the two new views `app_commits_by_day` and `app_review`. Nothing was
+# removed or renamed, so the bump is what tells an older app that there is more to read,
+# not that what it already reads has moved.
+APP_CONTRACT_VERSION = "2"
 
 
 def ensure_meta(connection: sqlite3.Connection) -> None:

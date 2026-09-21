@@ -37,9 +37,11 @@ func renderEverything() {
     }
 
     let snapshot: Snapshot
+    let data: WindowData
     do {
         let store = try Store(url: URL(fileURLWithPath: fixture))
         snapshot = try Snapshot.read(from: store, now: renderedAt)
+        data = try WindowData.read(from: store, now: renderedAt)
     } catch {
         FileHandle.standardError.write(Data("could not read \(fixture): \(error)\n".utf8))
         exit(1)
@@ -58,9 +60,34 @@ func renderEverything() {
     settings.timedIngestEnabled = true
     let launchAtLogin = FakeLaunchAtLogin(state: .requiresApproval)
 
+    // `PRUDENCE_SHOTS_DUMP=1` prints the three Overview cards for the default scope, so the
+    // numbers on the screenshot can be put beside `prudence usage` for the same range without
+    // anybody having to read them off a PNG.
+    if environment["PRUDENCE_SHOTS_DUMP"] != nil {
+        dumpCards(data: data, now: renderedAt)
+    }
+
+    /// One `WindowModel` per screen, because the section is a property of the model and the
+    /// shots are taken in one pass. All three read the same rows.
+    func window(_ section: MainSection) -> AnyView {
+        AnyView(
+            MainWindowContentView(
+                model: WindowModel.preview(data: data, section: section, settings: settings),
+                settings: settings,
+                launchAtLogin: launchAtLogin
+            )
+        )
+    }
+
+    let big = CGSize(width: 1200, height: 800)
     let shots: [(name: String, size: CGSize?, view: AnyView)] = [
         ("menu", nil, AnyView(MenuContentView(model: model, actions: MenuActions()))),
-        ("window", CGSize(width: 900, height: 600), AnyView(MainWindowContentView(model: model))),
+        // The window at the floor `MainWindowController` sets, which is where the layout is
+        // under the most pressure.
+        ("window", CGSize(width: 900, height: 600), window(.overview)),
+        ("overview", big, window(.overview)),
+        ("review", big, window(.review)),
+        ("observations", big, window(.observations)),
         (
             "settings", CGSize(width: 520, height: 420),
             AnyView(SettingsView(settings: settings, launchAtLogin: launchAtLogin))
@@ -78,6 +105,34 @@ func renderEverything() {
             let url = directory.appendingPathComponent("\(shot.name)-\(suffix).png")
             render(shot.view, size: shot.size, appearance: appearance, to: url)
             print("wrote \(url.path)")
+        }
+    }
+}
+
+/// The three Overview cards, in the default scope, on standard output.
+///
+/// Not a test and not part of a shot: a line an agent or the founder can hold beside
+/// `prudence usage --last 60d` for the same store, so the window's arithmetic is checked
+/// against the CLI's rather than against a screenshot of itself.
+@MainActor
+func dumpCards(data: WindowData, now: Date) {
+    for range in ChartRange.allCases {
+        let filtered = WindowFilter(project: nil, range: range, now: now).apply(to: data)
+        let cards = SummaryCards(
+            sessions: filtered.sessions, usage: filtered.usage, commits: filtered.commits)
+        let weeks = WeeklyUsageModel(rows: filtered.usage)
+        print(
+            "cards[\(range.label), All projects, \(range.describe(now: now))]: "
+                + "sessions=\(cards.sessions) "
+                + "active_hours=\(cards.activeHoursText) "
+                + "commits=\(cards.commits) (\(cards.methodText)) "
+                + "edits=\(cards.edits.map(String.init) ?? "-") "
+                + "tokens=\(weeks.weeks.reduce(0) { $0 + $1.total }) "
+                + "weeks=\(weeks.weeks.count)"
+        )
+        for week in weeks.weeks {
+            let slices = week.slices.map { "\($0.purpose)=\($0.tokens)" }.joined(separator: " ")
+            print("  week \(week.weekStart): total=\(week.total) \(slices)")
         }
     }
 }

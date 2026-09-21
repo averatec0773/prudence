@@ -102,7 +102,7 @@ public final class Store: @unchecked Sendable {
         }
     }
 
-    // MARK: - the five views
+    // MARK: - the seven views
 
     public func status() throws -> AppStatusRow? {
         try fetchOne(.status, sql: "SELECT * FROM app_status")
@@ -129,6 +129,13 @@ public final class Store: @unchecked Sendable {
         )
     }
 
+    /// Every session, newest first. The window reads the lot once and filters in memory: the
+    /// view is one row per session (148 of them on the founder's store), so a range picker
+    /// that re-queried would cost more than it saved.
+    public func sessions() throws -> [AppSessionListRow] {
+        try fetchAll(.sessionList, sql: "SELECT * FROM app_session_list ORDER BY started_at DESC")
+    }
+
     public func observations() throws -> [AppObservationRow] {
         try fetchAll(.observation, sql: "SELECT * FROM app_observation")
     }
@@ -137,20 +144,39 @@ public final class Store: @unchecked Sendable {
         try fetchAll(.outcomesByWeek, sql: "SELECT * FROM app_outcomes_by_week")
     }
 
-    // MARK: - the one stored row
+    /// Every day's commits, counted once. `day` is a local calendar day, `yyyy-MM-dd`.
+    public func commitsByDay() throws -> [AppCommitsByDayRow] {
+        try fetchAll(.commitsByDay, sql: "SELECT * FROM app_commits_by_day ORDER BY day")
+    }
 
-    /// The newest review, or nil when none has been written (or the table does not exist yet).
-    public func latestReview() throws -> ReviewHeadlineRow? {
+    /// Commits from `day` onwards, for a range the window already decided.
+    public func commitsByDay(since day: String) throws -> [AppCommitsByDayRow] {
+        try fetchAll(
+            .commitsByDay,
+            sql: "SELECT * FROM app_commits_by_day WHERE day >= ? ORDER BY day",
+            arguments: [day]
+        )
+    }
+
+    // MARK: - the stored reviews
+
+    /// Every review, newest first. The review screen shows the first and lists the rest.
+    public func reviews() throws -> [AppReviewRow] {
+        try fetchAll(.review, sql: "SELECT * FROM app_review ORDER BY id DESC")
+    }
+
+    /// The newest review, or nil when none has been written (or the view is not there yet).
+    ///
+    /// A missing `app_review` is a state, not a failure: a store where `prudence review` has
+    /// never run is perfectly healthy and the screens say "no review yet" (rule 3).
+    public func latestReview() throws -> AppReviewRow? {
         do {
             return try read { database in
-                try ReviewHeadlineRow.fetchOne(
-                    database,
-                    sql:
-                        "SELECT id, created_at, range_start, range_end, project, sections FROM review ORDER BY id DESC LIMIT 1"
-                )
+                try AppReviewRow.fetchOne(
+                    database, sql: "SELECT * FROM app_review ORDER BY id DESC LIMIT 1")
             }
         } catch let error as DatabaseError where error.resultCode == .SQLITE_ERROR {
-            return nil  // `prudence review` has never run here
+            return nil
         }
     }
 

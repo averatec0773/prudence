@@ -34,6 +34,11 @@ def _at(days_ago: float) -> str:
     return (NOW - timedelta(days=days_ago)).strftime(STAMP)
 
 
+def _local(day: str) -> str:
+    """The UTC stamp of local midnight on `day`, which is what a written date now means."""
+    return ranges.local_midnight(datetime.fromisoformat(f"{day}T00:00:00")).strftime(STAMP)
+
+
 def _store() -> sqlite3.Connection:
     connection = db.connect()
     transfer.ensure_tables(connection)
@@ -155,16 +160,32 @@ def test_last_window_and_its_outcome_range() -> None:
 
 
 def test_month_window_covers_the_whole_month() -> None:
+    """A month is the user's own July, stored as the UTC stamps of its two local edges."""
     window = ranges.resolve(None, month="2026-07", now=NOW)
-    assert window.start == "2026-07-01T00:00:00"
-    assert window.end == "2026-08-01T00:00:00"
+    assert window.start == _local("2026-07-01")
+    assert window.end == _local("2026-08-01")
+
+
+def test_a_written_date_is_local_midnight_and_the_stamp_is_utc() -> None:
+    """The one date convention: `--since` is the user's calendar, the row keeps UTC."""
+    window = ranges.resolve(None, since="2026-09-08", until="2026-09-15", now=NOW)
+    assert window.start == _local("2026-09-08")
+    assert ranges.parse(window.start).tzinfo == UTC
+    # The same instant `app_usage_by_purpose_day` calls the start of that local day.
+    assert (
+        datetime.fromisoformat(window.start)
+        .replace(tzinfo=UTC)
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+        == "2026-09-08 00:00"
+    )
 
 
 def test_since_until_and_the_previous_period() -> None:
     window = ranges.resolve(None, since="2026-09-08", until="2026-09-15", now=NOW)
     previous = window.previous()
-    assert previous.start == "2026-09-01T00:00:00"
-    assert previous.end == "2026-09-08T00:00:00"
+    assert previous.start == _local("2026-09-01")
+    assert previous.end == _local("2026-09-08")
 
 
 def test_default_range_starts_at_the_last_review_of_the_same_scope() -> None:
@@ -172,7 +193,7 @@ def test_default_range_starts_at_the_last_review_of_the_same_scope() -> None:
     first = ranges.resolve(connection, since="2026-09-01", until="2026-09-10", project=ALPHA)
     _store_review(connection, first)
     again = ranges.resolve(connection, project=ALPHA, now=NOW)
-    assert again.start == first.end == "2026-09-10T00:00:00"
+    assert again.start == first.end == _local("2026-09-10")
     assert "since review" in again.source
     # Another project's scope has no review of its own, so it falls back to seven days.
     other = ranges.resolve(connection, project="repo-beta", now=NOW)

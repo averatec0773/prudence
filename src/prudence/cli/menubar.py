@@ -1,28 +1,23 @@
-"""`prudence menubar`: the macOS menu-bar prototype.
+"""`prudence menubar`: a signpost to the native app that replaced it.
 
-The rest of Prudence never imports `rumps`, so this command is the one place that
-checks it is even available before reaching for it.
+The `rumps` prototype is gone (M3 task 7). The command is not, because someone has it in
+their shell history and a command that vanishes is a worse answer than a command that
+says where the thing went. It prints one line and exits 0: nothing failed, the menu bar
+simply lives somewhere else now.
 """
 
 from __future__ import annotations
 
-import sys
-
 import click
+
+REPLACED = (
+    "The Python menu-bar prototype was replaced by the native Prudence app "
+    "(apps/mac in the repository; a signed build is published with each release). "
+    "See apps/mac/README.md."
+)
 
 
 @click.command()
 def menubar() -> None:
-    """Run the menu-bar prototype (macOS only, needs the `menubar` extra)."""
-    if sys.platform != "darwin":
-        click.echo("The menu bar is macOS only.")
-        return
-    try:
-        import rumps  # noqa: F401
-    except ImportError:
-        click.echo("rumps is not installed. Install with: uv tool install 'prudence-dev[menubar]'")
-        return
-
-    from prudence.menubar.app import run
-
-    run()
+    """Say where the menu bar went: the native app in apps/mac."""
+    click.echo(REPLACED)

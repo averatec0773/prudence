@@ -4,9 +4,11 @@ Prudence is a local-first, open-source growth coach for developers who build wit
 
 ## Status
 
-0.2.0: it captures your sessions, links them to your commits, and follows what became
-of the code and where the tokens went. Outcomes and usage by purpose; reviews come
-next.
+0.3.0: it captures your sessions, links them to your commits, follows what became of
+the code and where the tokens went, and writes a review of it: every number computed
+from your own record, with an optional model-written paragraph on top that may only
+quote those numbers. A native macOS menu-bar app (`apps/mac`) shows the same record
+with charts. `prudence ask` answers a question from the record.
 
 ## Principles we build on
 
@@ -32,11 +34,15 @@ uv tool install --python 3.12 prudence-dev
 Optional extras:
 
 - `prudence-dev[mcp]` adds the `prudence mcp` server used by the Claude Code plugin.
-- `prudence-dev[menubar]` adds the macOS menu-bar prototype (`prudence menubar`).
+- `prudence-dev[model]` adds the Anthropic SDK, for `prudence review --explain` and the
+  prose half of `prudence ask`.
 
 ```
-uv tool install --python 3.12 "prudence-dev[mcp,menubar]"
+uv tool install --python 3.12 "prudence-dev[mcp,model]"
 ```
+
+The menu bar is a native macOS app now rather than a Python extra; see
+[apps/mac/README.md](apps/mac/README.md).
 
 ## Quick start
 
@@ -50,6 +56,9 @@ prudence usage --last 30d
 prudence observations --project <repo>
 prudence show --session <id>
 prudence facts --last 30d
+prudence review --project <repo>
+prudence review --explain
+prudence ask "what did I spend tokens on last week"
 prudence hooks install
 prudence export
 ```
@@ -64,7 +73,17 @@ what they were for; `observations` joins the two, inside one project, when your 
 data supports it. `show` prints one session's full record; `facts` prints the behaviour
 counts every session was scored on. `hooks install` adds the git-state hooks Prudence
 uses to catch what happens around each turn; it edits Claude Code's settings file, shows
-the diff first, and `prudence hooks uninstall` reverses it.
+the diff first, and `prudence hooks uninstall` reverses it. `review` stores a review of
+the period since the last one (or `--last 14d`, `--month 2026-09`) and prints it; it
+refuses to write an empty one until enough new sessions and matured commits exist
+(`--force` overrides). `--explain` adds a model-written paragraph, only when a model is
+configured (`prudence config model`); the paragraph is checked against the review's own
+numbers and refused if it invents one or grades you. `ask` retrieves the sessions the
+question is about and, unless you pass `--no-model`, asks the model to answer from that
+evidence alone. Before every model call Prudence prints what it is about to send.
+
+The first completed `ingest` ends with a "first look": three to five facts about the
+history it just read, each with the command that shows more.
 
 ## What it can tell you today
 
@@ -80,8 +99,10 @@ the diff first, and `prudence hooks uninstall` reverses it.
 ## Claude Code plugin
 
 Prudence also ships a Claude Code plugin that brings your recorded history into a
-session: `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage` and
-`/prudence:recall` skills, and an MCP server an agent can query directly. See
+session: `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage`,
+`/prudence:recall`, `/prudence:review` and `/prudence:ask` skills, and an MCP server an
+agent can query directly (`ask` there returns the evidence only, because the agent
+calling it is already a model). See
 [plugin/README.md](plugin/README.md). To try it from this repository without
 installing it:
 

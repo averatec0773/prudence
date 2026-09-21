@@ -19,3 +19,23 @@ def test_ingest_refuses_while_nothing_is_enabled() -> None:
     result = CliRunner().invoke(main, ["ingest"])
     assert result.exit_code != 0
     assert "No repository is enabled" in result.output
+
+
+def test_menubar_says_where_the_menu_bar_went_and_succeeds() -> None:
+    """The rumps prototype is gone; the command that ran it is a signpost, not an error."""
+    result = CliRunner().invoke(main, ["menubar"])
+    assert result.exit_code == 0, result.output
+    assert "replaced by the native Prudence app" in result.output
+    assert "apps/mac/README.md" in result.output
+
+
+def test_nothing_in_the_package_imports_rumps() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "src" / "prudence"
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if "import rumps" in path.read_text()
+    ]
+    assert offenders == [], offenders

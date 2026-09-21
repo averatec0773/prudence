@@ -5,6 +5,22 @@ command the user can run themselves, which is what makes an answer checkable: th
 is handed the same rows `prudence sessions`, `prudence usage` and `prudence observations`
 print, and the user can re-derive any figure in the answer from one of those commands.
 
+**Breadth before narrowing.** A question is answered from its range and its project
+unless it names something to search for: a file path, an extension, or quoted text. The
+first live run showed why. "which of my sessions in the last two weeks reworked the most
+lines" left `lines` as its longest word, `lines` matched `store/lines.py` in one session,
+and a question about a fortnight came back answered from one session out of four.
+`Question.narrows` is that rule in one place; when it is false, every session in the
+range is evidence, up to `MAX_SESSIONS`.
+
+**Every number is already rounded the way the CLI prints it.** A share is a whole
+percent, a token count carries its `k` form beside the exact integer, hours have one
+decimal, and coverage is a whole percent. This is not cosmetic: the evidence is the
+allowed list the number guard checks an answer against, so a raw
+`0.0829558998808105` in it is a figure the model may quote at any precision it likes,
+and none of those precisions is one the user can re-derive from a command. `display`
+does the rounding once, on the way out, and `tables` prints what it produced.
+
 Three limits, all constants rather than judgements made at the call site:
 
 - `MAX_SESSIONS` caps how many sessions are evidence, because a question over a year
@@ -30,11 +46,19 @@ from typing import Any
 from prudence.ask.parse import Question
 from prudence.store import views
 
-MAX_SESSIONS = 12
+MAX_SESSIONS = 25
 MAX_OBSERVATIONS = 8
 MAX_BYTES = 24 * 1024
 MAX_EXCERPTS = 6
 EXCERPT_CHARS = 200
+
+# What a superlative in the question sorts on, as a key into a retrieved session row.
+# `parse.SORT_LABELS` names the same three; nothing here computes a new figure.
+SORT_KEYS: dict[str, tuple[str, str | None]] = {
+    "reworked": ("outcomes", "reworked"),
+    "tokens": ("tokens", None),
+    "commits": ("commits_attributed", None),
+}
 
 
 @dataclass
@@ -84,13 +108,17 @@ def retrieve(
 ) -> Evidence:
     """The rows this question is answered from. Reads only; computes nothing."""
     evidence = Evidence(question=question)
+    # A sort has to see the whole range before it can take the top of it, so the page
+    # asked for is the widest the search will give and the trim to `MAX_SESSIONS` comes
+    # after the ordering.
+    page = views.MAX_LIMIT if question.sort else MAX_SESSIONS
     found = views.search_sessions(
         connection,
         query=question.search,
         repo_key=question.project,
         since=question.since,
         until=question.until,
-        limit=MAX_SESSIONS,
+        limit=page,
     )
     results = list(found.get("results", []))
     evidence.total_found = int(found.get("total", len(results)))
@@ -104,7 +132,7 @@ def retrieve(
             repo_key=question.project,
             since=question.since,
             until=question.until,
-            limit=MAX_SESSIONS,
+            limit=page,
         )
         results = list(wider.get("results", []))
         evidence.total_found = int(wider.get("total", len(results)))
@@ -114,7 +142,7 @@ def retrieve(
                 "so this is every session in the range instead."
             )
 
-    evidence.sessions = results
+    evidence.sessions = _ordered(results, question.sort)[:MAX_SESSIONS]
     evidence.usage = views.usage_summary(
         connection,
         since=question.since,
@@ -130,10 +158,18 @@ def retrieve(
             f"{(question.until or 'now')[:10]}"
             + (f" ({question.range_label})." if question.range_label else ".")
         )
-    if evidence.total_found > len(evidence.sessions):
+    if not question.narrows:
         evidence.notes.append(
-            f"{evidence.total_found} sessions matched; the {len(evidence.sessions)} most "
-            "recent are the evidence."
+            "The question names no file and quotes no error, so the evidence is every "
+            "session in the range rather than a search."
+        )
+    if question.sort_label:
+        evidence.notes.append(f"Sessions are ordered by {question.sort_label}.")
+    if evidence.total_found > len(evidence.sessions):
+        ordering = question.sort_label or "most recent first"
+        evidence.notes.append(
+            f"{evidence.total_found} sessions matched; the {len(evidence.sessions)} kept "
+            f"are the ones {ordering}."
         )
 
     if with_content:
@@ -141,8 +177,67 @@ def retrieve(
         if note:
             evidence.notes.append(note)
 
+    display(evidence, views.repository_names(connection))
     _trim(evidence)
     return evidence
+
+
+def _ordered(results: list[dict[str, Any]], sort: str | None) -> list[dict[str, Any]]:
+    """The sessions in the order the question implied, or as they came (newest first)."""
+    if sort is None or sort not in SORT_KEYS:
+        return results
+    key, inner = SORT_KEYS[sort]
+
+    def value(row: dict[str, Any]) -> tuple[int, float]:
+        held = row.get(key)
+        if inner is not None:
+            held = (held or {}).get(inner)
+        # A session with nothing measured sorts last rather than as a zero (rule 10).
+        return (0, -float(held)) if isinstance(held, int | float) else (1, 0.0)
+
+    return sorted(results, key=value)
+
+
+# --- what the model is allowed to read: the CLI's own rounding ----------------------------
+
+
+def display(evidence: Evidence, names: dict[str, str] | None = None) -> None:
+    """Round every figure in the evidence to the precision the CLI prints it at.
+
+    In place, once, after retrieval and before the payload is measured or hashed, so
+    that the allowed-number list the guard builds is exactly the set of figures a reader
+    can re-derive. Tokens keep both forms because the CLI shows both; a share, a
+    coverage and an hour count have one form each and it is the rounded one.
+    """
+    from prudence.store import observations as observations_module
+
+    for row in evidence.sessions:
+        row["tokens_thousands"] = _thousands(row.get("tokens"))
+        row["coverage"] = _percent(row.get("coverage"))
+        outcomes = row.get("outcomes")
+        if outcomes:
+            # Counts are integers and stay exact; every share `views.outcome_shares`
+            # computes is a float, and a float is a percentage to the reader.
+            row["outcomes"] = {
+                key: _percent(value) if isinstance(value, float) else value
+                for key, value in outcomes.items()
+            }
+
+    for row in evidence.observations:
+        # The sentence and the caveat are built from the raw shares, and then the shares
+        # themselves become what they already read as in the sentence: whole percents.
+        row["project"] = (names or {}).get(row["repo_key"], row["repo_key"])
+        row["sentence"] = observations_module.sentence(row, (names or {}).get(row["repo_key"]))
+        row["caveat"] = observations_module.caveat(row)
+        for key in ("with_value", "without_value", "coverage"):
+            row[key] = _percent(row.get(key))
+
+    usage = evidence.usage or {}
+    for cell in usage.get("by_purpose", {}).values():
+        cell["hours"] = round(cell["hours"], 1)
+    for project in usage.get("by_project", {}).values():
+        for cell in project.values():
+            cell["hours"] = round(cell["hours"], 1)
 
 
 def totals_of(usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -268,12 +363,14 @@ def tables(evidence: Evidence, names: dict[str, str] | None = None) -> str:
         )
         for row in evidence.sessions:
             outcomes = row.get("outcomes") or {}
-            rework = outcomes.get("reworked_share")
+            # Already whole percents and `k` counts: `display` rounded them, so the page
+            # and the payload the model reads carry the same digits.
+            rework = outcomes.get("reworked_share") or "-"
             lines.append(
                 f"{row['session_id'][:8]:<10} {str(row['repository'])[:16]:<16} "
                 f"{str(row['started_at'])[:17]:<17} {str(row.get('purpose') or '-')[:12]:<12} "
-                f"{_thousands(row.get('tokens')):>8} {row.get('commits_attributed', 0):>8} "
-                f"{_percent(rework):>8}"
+                f"{row.get('tokens_thousands', '-'):>8} {row.get('commits_attributed', 0):>8} "
+                f"{rework:>8}"
             )
     else:
         lines.append("No session matched this question.")
@@ -296,12 +393,9 @@ def tables(evidence: Evidence, names: dict[str, str] | None = None) -> str:
     if evidence.observations:
         lines.append("")
         lines.append("observations that apply")
-        from prudence.store import observations as observations_module
-
         for row in evidence.observations:
-            name = (names or {}).get(row["repo_key"])
-            lines.append(f"  {observations_module.sentence(row, name)}")
-            lines.append(f"    {observations_module.caveat(row)}")
+            lines.append(f"  {row['sentence']}")
+            lines.append(f"    {row['caveat']}")
 
     if evidence.excerpts:
         lines.append("")

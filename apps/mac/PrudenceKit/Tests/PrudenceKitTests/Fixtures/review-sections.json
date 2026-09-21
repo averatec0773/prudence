@@ -1,0 +1,502 @@
+{
+    "review_version": 1,
+    "window": {
+        "start": "2026-09-07T00:01:34",
+        "end": "2026-09-21T00:01:34",
+        "project": "root:df801c8e718e9791fda6705d0e70a9a02fe4d789",
+        "outcome_start": "2026-08-31T00:01:34",
+        "outcome_end": "2026-09-14T00:01:34",
+        "source": "the last 14d"
+    },
+    "project_name": "prudence",
+    "sections": [
+        {
+            "key": "did",
+            "title": "What you did",
+            "headers": [
+                "purpose",
+                "sessions",
+                "tokens",
+                "active h"
+            ],
+            "rows": [
+                [
+                    "development",
+                    "2",
+                    "713938k",
+                    "25.9"
+                ],
+                [
+                    "conversation",
+                    "2",
+                    "-",
+                    "0.0"
+                ],
+                [
+                    "all purposes",
+                    "4",
+                    "713938k",
+                    "26.0"
+                ]
+            ],
+            "notes": [
+                "4 sessions, 18 commits credited to them at fact or inferred confidence, mean coverage 92%.",
+                "Token counts are in thousands and active hours are the sum of each session's sittings, the same way `prudence usage` counts them; a dash means that Claude Code version wrote no usage fields, which is not zero tokens.",
+                "The purpose label comes from rules over the tool mix (purpose rule version 1); no message text is read to produce it."
+            ],
+            "numbers": [
+                {
+                    "key": "did.sessions.development",
+                    "label": "sessions labelled development",
+                    "text": "2",
+                    "value": 2.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.tokens.development",
+                    "label": "tokens in development sessions",
+                    "text": "713938k",
+                    "value": 713938139.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.hours.development",
+                    "label": "active hours in development sessions",
+                    "text": "25.9",
+                    "value": 25.942166944444438,
+                    "coverage": null
+                },
+                {
+                    "key": "did.sessions.conversation",
+                    "label": "sessions labelled conversation",
+                    "text": "2",
+                    "value": 2.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.tokens.conversation",
+                    "label": "tokens in conversation sessions",
+                    "text": "-",
+                    "value": 0.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.hours.conversation",
+                    "label": "active hours in conversation sessions",
+                    "text": "0.0",
+                    "value": 0.02288388888888889,
+                    "coverage": null
+                },
+                {
+                    "key": "did.sessions",
+                    "label": "sessions in the range",
+                    "text": "4",
+                    "value": 4.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.tokens",
+                    "label": "tokens in the range",
+                    "text": "713938k",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "did.hours",
+                    "label": "active hours in the range",
+                    "text": "26.0",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "did.commits",
+                    "label": "commits credited to those sessions",
+                    "text": "18",
+                    "value": 18.0,
+                    "coverage": null
+                },
+                {
+                    "key": "did.coverage",
+                    "label": "mean coverage of those commits",
+                    "text": "92%",
+                    "value": 0.9229064428921794,
+                    "coverage": 0.9229064428921794
+                }
+            ],
+            "empty": null
+        },
+        {
+            "key": "became",
+            "title": "What became of earlier work",
+            "headers": [],
+            "rows": [],
+            "notes": [
+                "Commits made between 2026-08-31 and 2026-09-14, which is every commit whose 7-day mark fell inside this review's range."
+            ],
+            "numbers": [],
+            "empty": "No commit in that span is credited with a line that could be followed, so there is no outcome to report."
+        },
+        {
+            "key": "observations",
+            "title": "Observations",
+            "headers": [],
+            "rows": [],
+            "notes": [],
+            "numbers": [],
+            "empty": "No observation clears the sample floor (5 sessions each side) and the gap floor (10 points) yet."
+        },
+        {
+            "key": "compared",
+            "title": "Compared with the previous period",
+            "headers": [
+                "figure",
+                "this period",
+                "previous period",
+                "change"
+            ],
+            "rows": [
+                [
+                    "sessions",
+                    "4",
+                    "0",
+                    "+4"
+                ],
+                [
+                    "active hours",
+                    "26.0",
+                    "0.0",
+                    "+26.0"
+                ],
+                [
+                    "tokens",
+                    "713938k",
+                    "-",
+                    "-"
+                ],
+                [
+                    "rework share",
+                    "-",
+                    "-",
+                    "-"
+                ],
+                [
+                    "alive at 7 days",
+                    "-",
+                    "-",
+                    "-"
+                ]
+            ],
+            "notes": [
+                "The previous period of the same length: 2026-08-24 to 2026-09-07 (14 days).",
+                "The outcome rows compare the two periods' own outcome windows, each seven days behind its activity window, so both sides are commits that had reached the same age.",
+                "One of the two periods has no commit with followed lines, so its outcome cells are dashes rather than zeroes."
+            ],
+            "numbers": [
+                {
+                    "key": "compared.sessions.now",
+                    "label": "sessions, this period",
+                    "text": "4",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.sessions.previous",
+                    "label": "sessions, previous period",
+                    "text": "0",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.sessions.change",
+                    "label": "sessions, change",
+                    "text": "+4",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.active_hours.now",
+                    "label": "active hours, this period",
+                    "text": "26.0",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.active_hours.previous",
+                    "label": "active hours, previous period",
+                    "text": "0.0",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.active_hours.change",
+                    "label": "active hours, change",
+                    "text": "+26.0",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.tokens.now",
+                    "label": "tokens, this period",
+                    "text": "713938k",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.tokens.previous",
+                    "label": "tokens, previous period",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.tokens.change",
+                    "label": "tokens, change",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.rework_share.now",
+                    "label": "rework share, this period",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.rework_share.previous",
+                    "label": "rework share, previous period",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.rework_share.change",
+                    "label": "rework share, change",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.alive_at_7_days.now",
+                    "label": "alive at 7 days, this period",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.alive_at_7_days.previous",
+                    "label": "alive at 7 days, previous period",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                },
+                {
+                    "key": "compared.alive_at_7_days.change",
+                    "label": "alive at 7 days, change",
+                    "text": "-",
+                    "value": null,
+                    "coverage": null
+                }
+            ],
+            "empty": null
+        },
+        {
+            "key": "suggestions",
+            "title": "Last time's suggestions",
+            "headers": [],
+            "rows": [],
+            "notes": [],
+            "numbers": [],
+            "empty": "No suggestion is open from an earlier review."
+        }
+    ],
+    "numbers": [
+        {
+            "key": "did.sessions.development",
+            "label": "sessions labelled development",
+            "text": "2",
+            "value": 2.0,
+            "coverage": null
+        },
+        {
+            "key": "did.tokens.development",
+            "label": "tokens in development sessions",
+            "text": "713938k",
+            "value": 713938139.0,
+            "coverage": null
+        },
+        {
+            "key": "did.hours.development",
+            "label": "active hours in development sessions",
+            "text": "25.9",
+            "value": 25.942166944444438,
+            "coverage": null
+        },
+        {
+            "key": "did.sessions.conversation",
+            "label": "sessions labelled conversation",
+            "text": "2",
+            "value": 2.0,
+            "coverage": null
+        },
+        {
+            "key": "did.tokens.conversation",
+            "label": "tokens in conversation sessions",
+            "text": "-",
+            "value": 0.0,
+            "coverage": null
+        },
+        {
+            "key": "did.hours.conversation",
+            "label": "active hours in conversation sessions",
+            "text": "0.0",
+            "value": 0.02288388888888889,
+            "coverage": null
+        },
+        {
+            "key": "did.sessions",
+            "label": "sessions in the range",
+            "text": "4",
+            "value": 4.0,
+            "coverage": null
+        },
+        {
+            "key": "did.tokens",
+            "label": "tokens in the range",
+            "text": "713938k",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "did.hours",
+            "label": "active hours in the range",
+            "text": "26.0",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "did.commits",
+            "label": "commits credited to those sessions",
+            "text": "18",
+            "value": 18.0,
+            "coverage": null
+        },
+        {
+            "key": "did.coverage",
+            "label": "mean coverage of those commits",
+            "text": "92%",
+            "value": 0.9229064428921794,
+            "coverage": 0.9229064428921794
+        },
+        {
+            "key": "compared.sessions.now",
+            "label": "sessions, this period",
+            "text": "4",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.sessions.previous",
+            "label": "sessions, previous period",
+            "text": "0",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.sessions.change",
+            "label": "sessions, change",
+            "text": "+4",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.active_hours.now",
+            "label": "active hours, this period",
+            "text": "26.0",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.active_hours.previous",
+            "label": "active hours, previous period",
+            "text": "0.0",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.active_hours.change",
+            "label": "active hours, change",
+            "text": "+26.0",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.tokens.now",
+            "label": "tokens, this period",
+            "text": "713938k",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.tokens.previous",
+            "label": "tokens, previous period",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.tokens.change",
+            "label": "tokens, change",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.rework_share.now",
+            "label": "rework share, this period",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.rework_share.previous",
+            "label": "rework share, previous period",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.rework_share.change",
+            "label": "rework share, change",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.alive_at_7_days.now",
+            "label": "alive at 7 days, this period",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.alive_at_7_days.previous",
+            "label": "alive at 7 days, previous period",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        },
+        {
+            "key": "compared.alive_at_7_days.change",
+            "label": "alive at 7 days, change",
+            "text": "-",
+            "value": null,
+            "coverage": null
+        }
+    ],
+    "versions": {
+        "parser": 4,
+        "line_fate_fact": 2,
+        "observation_fact": 1
+    }
+}

@@ -66,13 +66,17 @@ src/prudence/
                   tables and carrying its own `CASES`; purpose.py is the one label,
                   a word per session from its tool mix, never a number
   cli/            one file per command; thin, calls the engine
-  menubar/        the macOS menu-bar prototype: summary.py (pure, no rumps) and
-                   app.py (the rumps shell, imported only from cli/menubar.py)
   mcp/            the MCP server: server.py (FastMCP, stdio), the only place `mcp` is
                    imported; started by `cli/mcp.py`
+apps/mac/         the native macOS app (Swift): the menu-bar dropdown and the window,
+                  reading the `app_*` views and owning no numbers (apps/mac/README.md).
+                  It replaced the Python `rumps` prototype in M3; `prudence menubar`
+                  now prints one line saying where the menu bar went.
 plugin/           the Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`
                   wiring the `prudence mcp` command, `hooks/` (a copy of the hook set,
-                  see plugin/README.md), `skills/sessions`, `skills/recall`
+                  see plugin/README.md), and six skills: `skills/sessions`,
+                  `skills/recall`, `skills/outcomes`, `skills/usage`, `skills/review`,
+                  `skills/ask`
 tests/            pytest; fixtures are synthetic, one file per observed format version
 docs/reference/store-schema.md   every table and column, with its trust level
 ```
@@ -205,8 +209,8 @@ docs/reference/store-schema.md   every table and column, with its trust level
 - A new setting the user chooses: `config.py`, and show it in `prudence status`.
 - A new command: one file in `cli/`, registered in `cli/__init__.py`.
 - A new surface: reads the store; puts nothing in `src/prudence/` except a thin adapter.
-  `menubar/summary.py` is the pattern: one pure function per number shown, so a surface's
-  own numbers are tested without its GUI toolkit.
+  `store/app_views.py` is the pattern: one view per screen, so a surface's own numbers
+  are tested against the CLI's without its GUI toolkit anywhere near the test.
 - A user-authored table (typed by a person, not derived from anything Prudence read):
   its own module beside the derived ones, e.g. `store/labels.py`. It lives next to the
   derived tables but is never rebuilt: `derived.build`'s table swap and any table a

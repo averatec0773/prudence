@@ -8,6 +8,7 @@ apart. Every model call is a replay; the fixture is keyed by the real request.
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -92,6 +93,27 @@ def test_a_question_with_nothing_in_it_parses_to_nothing() -> None:
     assert question.search == ""
 
 
+def test_prose_is_not_a_search_term_but_a_file_or_a_quote_is() -> None:
+    """The bug that made a fortnight's question an answer about one session."""
+    prose = parse("which of my sessions last week reworked the most lines", now=NOW)
+    assert prose.terms, "the words are still read"
+    assert not prose.narrows, "but none of them is a filename the person typed"
+    assert prose.search == ""
+    for narrowing in (
+        "what happened in src/store/lines.py",
+        "which sessions touched .swift files",
+        'where did I hit "no such table"',
+    ):
+        assert parse(narrowing, now=NOW).narrows, narrowing
+
+
+def test_a_superlative_becomes_the_order_of_the_evidence() -> None:
+    assert parse("which sessions reworked the most lines", now=NOW).sort == "reworked"
+    assert parse("what cost me the most last week", now=NOW).sort == "tokens"
+    assert parse("which sessions committed the most", now=NOW).sort == "commits"
+    assert parse("what did I do last week", now=NOW).sort is None
+
+
 # --- the evidence -----------------------------------------------------------------------
 
 
@@ -117,11 +139,57 @@ def test_retrieval_finds_the_sessions_and_their_computed_rows(lab) -> None:
 def test_a_term_that_matches_nothing_falls_back_to_the_range_and_says_so(lab) -> None:
     record_one_session(lab)
     connection = db.connect()
-    question = parse("what happened with zzzznotathing", now=None, projects={})
+    question = parse("what happened in src/zzzz/notathing.py", now=None, projects={})
+    assert question.narrows
     evidence = retrieve(connection, question)
     assert evidence.sessions, "a question should not silently answer nothing"
     assert any("Nothing matched" in note for note in evidence.notes)
     connection.close()
+
+
+def test_a_question_that_narrows_nothing_gets_every_session_in_the_range(lab) -> None:
+    """Four sessions in a fortnight, four sessions in the evidence (M3 batch 3, B1)."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        repo_key = lab.repo_key()
+        for index, day in enumerate(("2026-09-08", "2026-09-10", "2026-09-12")):
+            _plain_session(connection, f"broad-{index}", repo_key, f"{day}T09:00:00")
+        question = parse(
+            "which of my sessions in the last two weeks reworked the most lines",
+            now=NOW,
+            projects={},
+        )
+        evidence = retrieve(connection, question)
+        ids = set(evidence.session_ids)
+    finally:
+        connection.close()
+
+    assert len(ids) == 4, f"the whole range, not a word match: {ids}"
+    assert {"broad-0", "broad-1", "broad-2"} <= ids
+    assert SAMPLE_SESSION in ids
+    assert any("every session in the range" in note for note in evidence.notes)
+    assert any("reworked lines, most first" in note for note in evidence.notes)
+
+
+def test_no_raw_float_reaches_the_model(lab) -> None:
+    """Every figure in the payload is the one the CLI prints (M3 batch 3, B2)."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        evidence = retrieve(connection, parse("what did I do lately", projects={}))
+        payload = evidence.as_dict()
+        row = evidence.sessions[0]
+    finally:
+        connection.close()
+
+    for path, value in _floats_in(payload):
+        assert round(value, 1) == value, f"{path} is a raw float: {value!r}"
+    assert row["coverage"] == "-" or row["coverage"].endswith("%")
+    assert row["tokens_thousands"] == "-" or isinstance(row["tokens"], int)
+    outcomes = row.get("outcomes") or {}
+    for key, value in outcomes.items():
+        assert not isinstance(value, float), key
 
 
 # --- the command ------------------------------------------------------------------------
@@ -292,6 +360,32 @@ def test_questions_survive_rebuild_and_travel_in_an_export(lab, tmp_path, monkey
     assert back is not None
     assert back["question"] == "what did I do lately"
     restored.close()
+
+
+def _floats_in(node, path: str = "") -> list[tuple[str, float]]:
+    """Every float anywhere in the payload, with the path that reaches it."""
+    if isinstance(node, dict):
+        return [item for key, value in node.items() for item in _floats_in(value, f"{path}.{key}")]
+    if isinstance(node, list):
+        return [
+            item
+            for index, value in enumerate(node)
+            for item in _floats_in(value, f"{path}[{index}]")
+        ]
+    return [(path, node)] if isinstance(node, float) else []
+
+
+def _plain_session(
+    connection: sqlite3.Connection, session_id: str, repo_key: str, first_at: str
+) -> None:
+    """A session with nothing but a start, which is all the breadth rule needs."""
+    connection.execute(
+        "INSERT INTO session (session_id, repo_key, source, entrypoint, cwd, first_at,"
+        " last_at, record_count, capture_level, parser_version, notes)"
+        " VALUES (?, ?, 'claude_code', 'cli', NULL, ?, ?, 1, 'full', 2, NULL)",
+        (session_id, repo_key, first_at, first_at),
+    )
+    connection.commit()
 
 
 def test_the_ask_engine_imports_without_the_command_line() -> None:

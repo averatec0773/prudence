@@ -1,6 +1,6 @@
 [project]
 name = "prudence-dev"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local-first growth coach for developers who build with AI coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,7 +13,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-menubar = ["rumps>=0.4"]
 mcp = ["mcp>=1.2,<2"]
 model = ["anthropic>=0.40"]
 
@@ -30,6 +29,7 @@ packages = ["src/prudence"]
 [dependency-groups]
 dev = [
     "anthropic>=0.40",
+    "mcp>=1.2,<2",
     "pytest",
     "ruff",
 ]

@@ -48,6 +48,42 @@ public enum Formatting {
         return formatter.string(from: date)
     }
 
+    /// The Monday of the ISO week a `yyyy-MM-dd` day falls in, as another `yyyy-MM-dd`.
+    ///
+    /// Monday, because `app_outcomes_by_week.week_start` is already a Monday (the view does
+    /// `strftime('%w', ...) + 6) % 7` days back), and the bar chart has to line up with it.
+    /// The calendar is built rather than taken from the locale: `Calendar.current.firstWeekday`
+    /// is Sunday in the United States, and a founder in one time zone comparing a chart with
+    /// `prudence usage` in another must not get two different weeks.
+    public static func isoWeekStart(of day: String, calendar: Calendar = .current) -> String? {
+        guard let date = self.date(day, calendar: calendar) else { return nil }
+        var iso = Calendar(identifier: .iso8601)
+        iso.timeZone = calendar.timeZone
+        let weekday = iso.component(.weekday, from: date)  // 1 = Sunday
+        let back = (weekday + 5) % 7  // Monday -> 0, Sunday -> 6
+        guard let monday = iso.date(byAdding: .day, value: -back, to: date) else { return nil }
+        return self.day(monday, calendar: calendar)
+    }
+
+    /// A `yyyy-MM-dd` string back into a date at local midnight.
+    public static func date(_ day: String, calendar: Calendar = .current) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: String(day.prefix(10)))
+    }
+
+    /// `8 Sep`, an axis label. The year is left off because every axis here spans weeks.
+    public static func shortDay(_ day: String, calendar: Calendar = .current) -> String {
+        guard let date = self.date(day, calendar: calendar) else { return day }
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "d MMM"
+        return formatter.string(from: date)
+    }
+
     /// The reader's local midnight and the next one, as the UTC strings the store sorts by.
     /// The same conversion `menubar/summary.py` does, so the two surfaces agree on "today".
     public static func localDayBoundsUTC(_ date: Date, calendar: Calendar = .current) -> (

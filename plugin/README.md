@@ -4,10 +4,16 @@ Brings your own Prudence-recorded session history into a Claude Code session: a
 `/prudence:sessions` skill that shows this week's sessions without leaving the
 terminal, a `/prudence:outcomes` skill for what became of the code, a `/prudence:usage`
 skill for where the tokens and time went, a `/prudence:recall` skill that asks the
-agent to search your history for prior work, and the `prudence` MCP server
-(`search_sessions`, `show_session`, `session_outcomes`, `usage_summary`,
-`observations`, `status`) that any of the skills, or any other prompt, can call
-directly.
+agent to search your history for prior work, a `/prudence:review` skill that reads your
+latest stored review, a `/prudence:ask` skill that answers a question about your own
+work from the computed evidence, and the `prudence` MCP server (`search_sessions`,
+`show_session`, `session_outcomes`, `usage_summary`, `observations`, `status`,
+`latest_review`, `ask`) that any of the skills, or any other prompt, can call directly.
+
+`ask` returns the evidence and stops there: the caller is already a model, so the tool
+does not make a second model call, and it writes nothing to the store. Run
+`prudence ask "<question>"` in a terminal for a written answer over the same rows, with
+the engine's number and tone guards applied to it.
 
 ## Requirements
 
@@ -44,6 +50,8 @@ real.
 - `skills/outcomes/SKILL.md`: `/prudence:outcomes`.
 - `skills/usage/SKILL.md`: `/prudence:usage`.
 - `skills/recall/SKILL.md`: `/prudence:recall`.
+- `skills/review/SKILL.md`: `/prudence:review`.
+- `skills/ask/SKILL.md`: `/prudence:ask`.
 
 ## Privacy
 

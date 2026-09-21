@@ -35,9 +35,24 @@ in `store/views/`, so the app and the CLI cannot disagree:
   commit once, at its best label, `uncertain` reported and never folded into the other
   two. A session whose records carried no usage fields has `total_tokens` NULL, not 0
   (architecture rule 10).
-- `app_observation` is the `observation` table with its project name and a `pooled` flag,
-  in the order `views.observations` returns it. The sentence a surface prints is prose
-  built by `store/observations.sentence`, so it is not here; the numbers behind it are.
+- `app_commits_by_day` counts a commit once, on the local day it was committed, at its
+  best confidence label, over exactly the commits `views.credited_by_commit` returns
+  (`fact` and `inferred`; a commit whose only attribution is `uncertain` is not counted
+  at all). Merges are excluded, because a merge adds no lines of its own and would
+  double a day's count. A test asserts a day's totals against `credited_by_commit`.
+- `app_observation` is the `observation` table with its project name, a `pooled` flag and
+  the very sentence `prudence observations` prints. The sentence is prose built by
+  `store/observations.sentence`, which is Python, so it cannot be a SQL expression: it is
+  materialised into `app_observation_text` by `install_app_views` and joined here. The
+  `observation` table is `WITHOUT ROWID` and has no row id of its own, so
+  `observation_id` is the row's position in `views.observations`'s own fixed order, given
+  once by `ROW_NUMBER()` in the view and by `enumerate` in the fill, over the same
+  ORDER BY. A test checks every row's sentence against the CLI's.
+- `app_review` is one row per stored review, newest first, with the headline a dropdown
+  shows and the two JSON blocks (`sections` and `numbers`) a review screen renders. The
+  review tables are not derived from the archive and a store may not have them yet, so
+  `install_app_views` calls `reviews.schema.ensure` before defining the view; that is the
+  simpler of the two options in the task and it also brings the segment columns along.
 
 Nothing here returns message text, because none is stored.
 
@@ -51,6 +66,15 @@ sessions, 227,399 records, 2,054 attributions, 82,680 line fates), best of three
     app_observation               0 ms /  0 ms
     app_session_list             12 ms / 13 ms
 
+and, at contract 2 on the same store after another day's work (720 MB, 148 sessions,
+229,325 records, 90,785 followed lines), measured through the `sqlite3` binary so each
+figure carries about 5 ms of process start with it:
+
+    app_commits_by_day           10 ms / 11 ms
+    app_observation                    /  7 ms
+    app_review                         /  7 ms
+    app_session_list                   / 23 ms   (12 ms at contract 1, plus `edits`)
+
 `install_app_views` itself takes about 290 ms on that store, almost all of it the one
 pass over `record` that fills `app_session_time`. Written as plain views, the two that
 need the sitting rule cost 230 ms each per query instead, which is why that one
@@ -60,6 +84,7 @@ aggregate is materialised and the index below exists.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 from prudence import __version__
 from prudence.facts import purpose as purpose_module
@@ -124,6 +149,14 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "reworked",
         "coverage",
     ),
+    "app_commits_by_day": (
+        "day",
+        "repo_key",
+        "project",
+        "commits",
+        "commits_fact",
+        "commits_inferred",
+    ),
     "app_observation": (
         "repo_key",
         "project",
@@ -140,6 +173,10 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "fact_commits",
         "inferred_commits",
         "fact_version",
+        # Contract 2. Appended rather than inserted, so that a surface reading the
+        # earlier columns by position is not moved out from under by the bump.
+        "observation_id",
+        "sentence",
     ),
     "app_session_list": (
         "session_id",
@@ -156,6 +193,25 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "sittings",
         "capture_level",
         "content_archived",
+        # Contract 2, appended for the same reason.
+        "edits",
+    ),
+    "app_review": (
+        "id",
+        "created_at",
+        "range_start",
+        "range_end",
+        "outcome_range_start",
+        "outcome_range_end",
+        "repo_key",
+        "project",
+        "headline",
+        "sections",
+        "numbers",
+        "coverage",
+        "segment_text",
+        "segment_model",
+        "segment_created_at",
     ),
 }
 
@@ -197,6 +253,28 @@ _GAPS = """
         FROM record
         WHERE timestamp IS NOT NULL
 """
+
+# The second materialised table, and for the opposite reason: not because the SQL is slow
+# but because there is no SQL. An observation's sentence is built by
+# `store/observations.sentence`, in Python, from the same row the view already carries;
+# retyping it as a string expression would be a second implementation of one sentence and
+# two chances to word it differently. It is refilled with the views, from at most a few
+# hundred rows, and costs about a millisecond. Not part of the contract; `APP_VIEWS` is.
+OBSERVATION_TEXT_TABLE = "app_observation_text"
+
+_OBSERVATION_TEXT_SCHEMA = f"""
+    CREATE TABLE {OBSERVATION_TEXT_TABLE}(
+        observation_id INTEGER PRIMARY KEY,
+        sentence TEXT NOT NULL
+    )
+"""
+
+# The order `views.observations` returns its rows in, written once and used twice: by the
+# fill, which numbers the rows, and by the view, whose ROW_NUMBER() has to agree with it.
+_OBSERVATION_ORDER = (
+    f"CASE WHEN o.repo_key = '{observations_module.POOLED}' THEN 1 ELSE 0 END,"
+    " o.repo_key, o.fact, o.outcome"
+)
 
 _SESSION_TIME_FILL = f"""
     INSERT INTO {SESSION_TIME_TABLE}(session_id, active_seconds, sittings)
@@ -281,14 +359,44 @@ def install_app_views(connection: sqlite3.Connection) -> None:
     meta_module.set_meta(
         connection, meta_module.APP_CONTRACT_VERSION_KEY, meta_module.APP_CONTRACT_VERSION
     )
+    # `app_review` names the `review` table, and a store that has never had a review
+    # written has no such table. Creating it here rather than leaving the view broken is
+    # the simpler of the two options: `ensure` is idempotent, it also adds the segment
+    # columns an older store is missing, and it is the same call `prudence review` makes.
+    from prudence.reviews import schema as review_schema
+
+    _quietly_call(lambda: review_schema.ensure(connection))
     for statement in INDEXES:
         _quietly(connection, statement)
     _quietly(connection, f"DROP TABLE IF EXISTS {SESSION_TIME_TABLE}")
     _quietly(connection, _SESSION_TIME_SCHEMA)
     _quietly(connection, _SESSION_TIME_FILL)
+    _quietly(connection, f"DROP TABLE IF EXISTS {OBSERVATION_TEXT_TABLE}")
+    _quietly(connection, _OBSERVATION_TEXT_SCHEMA)
+    _quietly_call(lambda: fill_observation_text(connection))
     for name, select in definitions().items():
         _quietly(connection, f"DROP VIEW IF EXISTS {name}")
         _quietly(connection, f"CREATE VIEW IF NOT EXISTS {name} AS{select}")
+
+
+def fill_observation_text(connection: sqlite3.Connection) -> int:
+    """One sentence per observation row, numbered as the view numbers them.
+
+    `views.observations` and the view's `ROW_NUMBER()` sort by the same expression, so
+    the nth row here is the nth row there. Returns how many sentences were written.
+    """
+    from prudence.store import views
+
+    rows = views.observations(connection)
+    names = views.repository_names(connection)
+    connection.executemany(
+        f"INSERT INTO {OBSERVATION_TEXT_TABLE}(observation_id, sentence) VALUES (?, ?)",
+        [
+            (index, observations_module.sentence(row, names.get(row["repo_key"])))
+            for index, row in enumerate(rows, start=1)
+        ],
+    )
+    return len(rows)
 
 
 def definitions() -> dict[str, str]:
@@ -375,24 +483,77 @@ def definitions() -> dict[str, str]:
     GROUP BY c.repo_key, project, week_start
     ORDER BY week_start, project
 """,
+        "app_commits_by_day": f"""
+    WITH best AS ({_BEST_PER_COMMIT.strip()}
+    )
+    SELECT date(c.committer_at, 'localtime') AS day,
+           c.repo_key AS repo_key,
+           COALESCE(r.name, c.repo_key, 'unassigned') AS project,
+           COUNT(*) AS commits,
+           SUM(CASE WHEN b.confidence = '{attribution_module.FACT}' THEN 1 ELSE 0 END)
+               AS commits_fact,
+           SUM(CASE WHEN b.confidence = '{attribution_module.INFERRED}' THEN 1 ELSE 0 END)
+               AS commits_inferred
+    FROM best b
+    JOIN "commit" c ON c.commit_hash = b.commit_hash
+    LEFT JOIN repository r ON r.repo_key = c.repo_key
+    WHERE c.committer_at IS NOT NULL AND c.is_merge = 0
+    GROUP BY day, c.repo_key, project
+    ORDER BY day DESC, project
+""",
         "app_observation": f"""
-    SELECT o.repo_key AS repo_key,
-           COALESCE(r.name, o.repo_key) AS project,
-           CASE WHEN o.repo_key = '{observations_module.POOLED}' THEN 1 ELSE 0 END AS pooled,
-           o.fact AS fact, o.threshold_text AS threshold_text, o.outcome AS outcome,
-           o.direction AS direction,
-           o.with_n AS with_n, o.without_n AS without_n,
-           o.with_value AS with_value, o.without_value AS without_value,
-           o.coverage AS coverage,
-           o.fact_commits AS fact_commits, o.inferred_commits AS inferred_commits,
-           o.fact_version AS fact_version
-    FROM observation o
-    LEFT JOIN repository r ON r.repo_key = o.repo_key
-    ORDER BY pooled, o.repo_key, o.fact, o.outcome
+    WITH numbered AS (
+        SELECT o.*,
+               CASE WHEN o.repo_key = '{observations_module.POOLED}' THEN 1 ELSE 0 END AS pooled,
+               ROW_NUMBER() OVER (ORDER BY {_OBSERVATION_ORDER}) AS observation_id
+        FROM observation o
+    )
+    SELECT n.repo_key AS repo_key,
+           COALESCE(r.name, n.repo_key) AS project,
+           n.pooled AS pooled,
+           n.fact AS fact, n.threshold_text AS threshold_text, n.outcome AS outcome,
+           n.direction AS direction,
+           n.with_n AS with_n, n.without_n AS without_n,
+           n.with_value AS with_value, n.without_value AS without_value,
+           n.coverage AS coverage,
+           n.fact_commits AS fact_commits, n.inferred_commits AS inferred_commits,
+           n.fact_version AS fact_version,
+           n.observation_id AS observation_id,
+           t.sentence AS sentence
+    FROM numbered n
+    LEFT JOIN repository r ON r.repo_key = n.repo_key
+    LEFT JOIN {OBSERVATION_TEXT_TABLE} t ON t.observation_id = n.observation_id
+    ORDER BY n.pooled, n.repo_key, n.fact, n.outcome
+""",
+        "app_review": """
+    SELECT v.id AS id,
+           v.created_at AS created_at,
+           v.range_start AS range_start,
+           v.range_end AS range_end,
+           v.outcome_range_start AS outcome_range_start,
+           v.outcome_range_end AS outcome_range_end,
+           v.project AS repo_key,
+           COALESCE(r.name, v.project, 'all projects') AS project,
+           'Review ' || v.id || ': ' || COALESCE(r.name, v.project, 'all projects')
+               || ', ' || substr(v.range_start, 1, 10)
+               || ' to ' || substr(v.range_end, 1, 10) AS headline,
+           CASE WHEN json_valid(v.sections)
+                THEN json_extract(v.sections, '$.sections') END AS sections,
+           CASE WHEN json_valid(v.sections)
+                THEN json_extract(v.sections, '$.numbers') END AS numbers,
+           v.coverage AS coverage,
+           v.segment_text AS segment_text,
+           v.segment_model AS segment_model,
+           v.segment_created_at AS segment_created_at
+    FROM review v
+    LEFT JOIN repository r ON r.repo_key = v.project
+    ORDER BY v.id DESC
 """,
         "app_session_list": f"""
     WITH tokens AS (
         SELECT session_id, SUM({totals}) AS total_tokens FROM usage u GROUP BY session_id
+    ), edited AS (
+        SELECT session_id, COUNT(*) AS edits FROM edit GROUP BY session_id
     ), best AS ({_BEST_PER_SESSION.strip()}
     ), credited AS (
         SELECT session_id,
@@ -420,12 +581,14 @@ def definitions() -> dict[str, str]:
            c.coverage AS coverage,
            COALESCE(sat.sittings, 1) AS sittings,
            s.capture_level AS capture_level,
-           CASE WHEN s.capture_level = 'metadata-only' THEN 0 ELSE 1 END AS content_archived
+           CASE WHEN s.capture_level = 'metadata-only' THEN 0 ELSE 1 END AS content_archived,
+           COALESCE(e.edits, 0) AS edits
     FROM session s
     LEFT JOIN repository r ON r.repo_key = s.repo_key
     LEFT JOIN session_label l
            ON l.session_id = s.session_id AND l.name = '{purpose_module.LABEL.name}'
     LEFT JOIN tokens t ON t.session_id = s.session_id
+    LEFT JOIN edited e ON e.session_id = s.session_id
     LEFT JOIN credited c ON c.session_id = s.session_id
     LEFT JOIN {SESSION_TIME_TABLE} sat ON sat.session_id = s.session_id
     ORDER BY s.first_at DESC
@@ -442,5 +605,13 @@ def _quietly(connection: sqlite3.Connection, statement: str) -> None:
     """Run one statement; a store that cannot take it keeps the rest of the contract."""
     try:
         connection.execute(statement)
+    except sqlite3.OperationalError:
+        return
+
+
+def _quietly_call(step: Callable[[], object]) -> None:
+    """The same promise for a step that is Python rather than one statement."""
+    try:
+        step()
     except sqlite3.OperationalError:
         return

@@ -1,4 +1,4 @@
-"""The MCP server: six read-only tools over the store, for Claude Code and other agents.
+"""The MCP server: eight read-only tools over the store, for Claude Code and other agents.
 
 Same promise as every other surface, stated once here because an agent reading this
 code is exactly the audience: no message text ever leaves the store, at any capture
@@ -6,6 +6,13 @@ level. A tool returns ids, dates, counts, repository names, full file paths (nev
 `metadata-only`) and commit hashes, and nothing else. Rule 7 in ARCHITECTURE.md applies
 here as much as anywhere: a tool reports numbers already computed; it does not compute
 new ones and it never writes prose about them.
+
+That last rule decides one thing about `ask`. In a terminal, `prudence ask` retrieves the
+evidence and then makes one model call over it. Here the caller *is* a model, so the tool
+stops after the evidence, as `--no-model` does, and says so. Two models writing prose
+about one set of rows is a worse answer than one, and the second one would be the one
+without the guards. The tool also writes nothing: the CLI stores a `question` row, and a
+read-only surface leaves the store alone.
 
 The rest of Prudence never imports the `mcp` package. This module is the one place that
 does, and it fails at import time with an actionable message rather than a bare
@@ -240,6 +247,116 @@ def observations(repo: str | None = None) -> dict[str, Any]:
                 }
                 for row in rows
             ]
+        }
+    finally:
+        connection.close()
+
+
+@mcp.tool()
+def latest_review(project: str | None = None) -> dict[str, Any]:
+    """The most recent stored `prudence review`, as JSON and as its Markdown page.
+
+    `project` filters by repository name or key and returns the newest review written
+    for that project alone; left out, the newest review of any scope comes back, which
+    is the one `prudence review` last wrote. Returns `headline`, `project`, `repo_key`,
+    `range` and `outcome_range` (the commits whose seven-day mark fell inside the
+    range), `coverage`, `sections` (each with its title, headers, rows and notes),
+    `numbers` (the inventory of every figure the sections contain, each with its key,
+    text and coverage), `segment` (the optional model-written "what this means", with
+    the model id and the numbers it was allowed to use, or null), the fact and parser
+    versions the review was computed at, and `markdown`, the whole page exactly as the
+    command printed it.
+
+    Every figure here was computed by the engine before any model saw it: relay them,
+    do not recompute them, and do not add one of your own. Returns
+    `{"message": "..."}` when nothing has been ingested or no review has been written.
+    """
+    from prudence.reviews import render as render_module
+    from prudence.reviews import schema as review_schema
+
+    connection = _connect()
+    if connection is None:
+        return {"message": NOT_INGESTED}
+    try:
+        repo_key = None
+        if project:
+            repo_key = views.repo_key_for(connection, project)
+            if repo_key is None:
+                return {"message": f"No recorded repository is called {project!r}."}
+            row = review_schema.last_review(connection, repo_key)
+        else:
+            rows = review_schema.reviews(connection, limit=1)
+            row = rows[0] if rows else None
+        if row is None:
+            where = f" for {project}" if project else ""
+            return {"message": f"No review has been written{where} yet. Run `prudence review`."}
+
+        payload = review_schema.sections_of(row)
+        names = views.repository_names(connection)
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "headline": render_module.headline(row),
+            "repo_key": row["project"],
+            "project": names.get(row["project"], row["project"]) or "every project",
+            "range": {"start": row["range_start"], "end": row["range_end"]},
+            "outcome_range": {
+                "start": row["outcome_range_start"],
+                "end": row["outcome_range_end"],
+            },
+            "coverage": row["coverage"],
+            "sections": payload.get("sections", []),
+            "numbers": payload.get("numbers", []),
+            "segment": review_schema.segment_of(row),
+            "fact_version": row["fact_version"],
+            "parser_version": row["parser_version"],
+            "markdown": render_module.render(row),
+        }
+    finally:
+        connection.close()
+
+
+@mcp.tool()
+def ask(question: str, project: str | None = None) -> dict[str, Any]:
+    """The evidence one question about the user's own work is answered from. No model.
+
+    The same retrieval `prudence ask` runs: the question's time range, project, file
+    path and quoted text are read by rules, the sessions of that range are found, and
+    the computed rows behind them are the answer's evidence. `project` restricts it to
+    one repository by name or key, over and above any the question itself names.
+
+    Returns `question` (what the rules read out of it), `sessions` (each with its
+    purpose, tokens, commits by confidence, coverage and what became of its lines),
+    `usage` and `totals` (tokens and active hours by purpose, already summed),
+    `observations` (each with the sentence `prudence observations` prints), `notes`
+    (what was left out and why), and `text`, the whole thing rendered as the table
+    `prudence ask --no-model` prints.
+
+    This tool never calls a model, because the caller is one. Every number in it is
+    rounded exactly as the CLI prints it, so quote them as they stand: do no arithmetic
+    of your own, add no figure that is not here, cite the eight-character session ids so
+    the user can run `prudence show --session <id>`, and describe rather than grade. The
+    user can run `prudence ask "<question>"` themselves for a written answer over these
+    same rows, with the number and tone guards applied to it.
+    """
+    from prudence.ask import answer as answer_module
+
+    connection = _connect()
+    if connection is None:
+        return {"message": NOT_INGESTED}
+    try:
+        try:
+            result = answer_module.ask(connection, question, model=None, project=project)
+        except LookupError as error:
+            return {"message": str(error)}
+        return {
+            **result.evidence.as_dict(),
+            "text": answer_module.render(result, views.repository_names(connection)),
+            "model": None,
+            "note": (
+                "Evidence only: this tool calls no model. For a written answer over the "
+                'same rows, run `prudence ask "<question>"` in a terminal.'
+            ),
         }
     finally:
         connection.close()

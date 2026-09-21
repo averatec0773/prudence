@@ -16,6 +16,7 @@ from conftest import Workspace, record_one_session
 
 from prudence.cli import main
 from prudence.store import app_views, db, meta, views
+from prudence.store import observations as observations_module
 
 
 def test_every_view_answers_with_the_contract_columns(lab: Workspace) -> None:
@@ -114,6 +115,134 @@ def test_the_session_list_agrees_with_search_sessions(lab: Workspace) -> None:
         assert row["content_archived"] == (1 if result["capture_notes"] != "metadata-only" else 0)
 
 
+def test_the_session_list_counts_edits(lab: Workspace) -> None:
+    """Contract 2: the dropdown's "today" line reads `edits` off this view."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        listed = {
+            row["session_id"]: row["edits"]
+            for row in connection.execute("SELECT session_id, edits FROM app_session_list")
+        }
+        counted = {
+            row["session_id"]: row["n"]
+            for row in connection.execute(
+                "SELECT session_id, COUNT(*) AS n FROM edit GROUP BY session_id"
+            )
+        }
+    finally:
+        connection.close()
+
+    assert listed, "there is a session to count edits for"
+    for session_id, edits in listed.items():
+        assert edits == counted.get(session_id, 0), session_id
+    assert sum(listed.values()) > 0, "the sample session edits a file"
+
+
+def test_commits_by_day_agrees_with_credited_by_commit(lab: Workspace) -> None:
+    """Contract 2: one commit, one day, one label, and the same label the CLI gives it."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        rows = list(connection.execute("SELECT * FROM app_commits_by_day"))
+        hashes = [
+            row["commit_hash"]
+            for row in connection.execute(
+                'SELECT commit_hash FROM "commit" WHERE is_merge = 0 AND committer_at IS NOT NULL'
+            )
+        ]
+        best = views.credited_by_commit(connection, hashes)
+        days = {
+            row["commit_hash"]: row["day"]
+            for row in connection.execute(
+                "SELECT commit_hash, date(committer_at, 'localtime') AS day FROM \"commit\""
+            )
+        }
+    finally:
+        connection.close()
+
+    assert rows, "the sample session commits"
+    expected: dict[str, dict[str, int]] = {}
+    for commit_hash, (confidence, _coverage) in best.items():
+        cell = expected.setdefault(days[commit_hash], {"fact": 0, "inferred": 0})
+        cell[confidence] += 1
+
+    assert {row["day"] for row in rows} == set(expected)
+    for row in rows:
+        cell = expected[row["day"]]
+        assert row["commits"] == cell["fact"] + cell["inferred"], row["day"]
+        assert row["commits_fact"] == cell["fact"], row["day"]
+        assert row["commits_inferred"] == cell["inferred"], row["day"]
+    assert sum(row["commits"] for row in rows) == len(best), "each commit counted once"
+
+
+def test_every_observation_sentence_is_the_one_the_cli_prints(lab: Workspace) -> None:
+    """Contract 2: the app shows the sentence rather than rebuilding it in Swift."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        _observation(connection, lab.repo_key(), "test_runs", "rework")
+        _observation(connection, lab.repo_key(), "sittings", "alive_head")
+        _observation(connection, "*", "subagent_used", "rework")
+        app_views.install_app_views(connection)
+
+        rows = list(connection.execute("SELECT * FROM app_observation"))
+        expected = views.observations(connection)
+        names = views.repository_names(connection)
+    finally:
+        connection.close()
+
+    assert len(rows) == len(expected) == 3
+    for row, source in zip(rows, expected, strict=True):
+        assert row["fact"] == source["fact"], "the view's order is the CLI's order"
+        assert row["sentence"] == observations_module.sentence(
+            source, names.get(source["repo_key"])
+        )
+    assert [row["observation_id"] for row in rows] == [1, 2, 3]
+    assert rows[-1]["pooled"] == 1, "a pooled row is last and says so"
+
+
+def test_app_review_is_one_row_per_review_newest_first(lab: Workspace) -> None:
+    """Contract 2: the review screen reads the stored row, not a fresh computation."""
+    record_one_session(lab)
+    runner = CliRunner()
+    for _ in range(2):
+        assert runner.invoke(main, ["review", "--last", "3650d", "--force"]).exit_code == 0
+
+    connection = db.connect()
+    try:
+        rows = list(connection.execute("SELECT * FROM app_review"))
+        stored = {row["id"]: row for row in connection.execute("SELECT * FROM review")}
+    finally:
+        connection.close()
+
+    assert [row["id"] for row in rows] == [2, 1], "newest first"
+    for row in rows:
+        source = stored[row["id"]]
+        assert row["headline"] == (
+            f"Review {row['id']}: all projects, "
+            f"{source['range_start'][:10]} to {source['range_end'][:10]}"
+        )
+        assert row["repo_key"] is None
+        assert row["project"] == "all projects"
+        assert row["range_start"] == source["range_start"]
+        assert row["outcome_range_end"] == source["outcome_range_end"]
+        assert json.loads(row["sections"]) == json.loads(source["sections"])["sections"]
+        assert json.loads(row["numbers"]) == json.loads(source["sections"])["numbers"]
+        assert row["segment_text"] is None, "no model was called"
+
+
+def test_app_review_exists_before_any_review_has_been_written(lab: Workspace) -> None:
+    """A store that has never had a review still answers the contract, with no rows."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        assert app_views.columns(connection, "app_review") == app_views.APP_VIEWS["app_review"]
+        assert connection.execute("SELECT COUNT(*) FROM app_review").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
 def test_a_rebuild_leaves_the_views_in_place(lab: Workspace) -> None:
     """A rebuild swaps the tables under the views; the contract has to come back up."""
     record_one_session(lab)
@@ -179,6 +308,17 @@ def test_the_json_and_the_text_carry_the_same_totals(lab: Workspace) -> None:
     assert as_json["sessions"] == 2
     assert "all purposes" in text
     assert f"{as_json['sessions']} sessions in the last 3650d" in text
+
+
+def _observation(connection: sqlite3.Connection, repo_key: str, fact: str, outcome: str) -> None:
+    """One observation row with plausible numbers; the sentence is built from them."""
+    connection.execute(
+        "INSERT OR REPLACE INTO observation (repo_key, fact, threshold_text, outcome,"
+        " with_n, without_n, with_value, without_value, direction, coverage,"
+        " fact_commits, inferred_commits, fact_version)"
+        " VALUES (?, ?, 'more than 0', ?, 7, 9, 0.12, 0.31, 'lower', 0.86, 5, 2, 1)",
+        (repo_key, fact, outcome),
+    )
 
 
 def _usage_session(

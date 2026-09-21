@@ -46,11 +46,14 @@ public struct StatusModel: Equatable, Sendable {
 
 // MARK: - today
 
-/// Sessions and commits started today, local time.
+/// Sessions, edits and commits started today, local time.
 ///
-/// `edits` is deliberately optional and is nil against contract 1: no `app_*` view carries
-/// edits per day, so the app shows what it has rather than inventing a join (rule 8). The
-/// rumps prototype counted the `edit` table directly, which is exactly what the app may not do.
+/// The two numbers contract 1 could not give this line are here at contract 2, and both are
+/// read rather than derived. `commits` comes from `app_commits_by_day`, where a commit is
+/// counted once: summing `app_session_list` over a day counts a commit twice when two
+/// sessions share it, which is what the dropdown used to do and why it was an upper bound.
+/// `edits` is the sum of `app_session_list.edits`, and stays nil when no session today
+/// carries one, because a missing count is not a zero (rule 10).
 public struct TodayModel: Equatable, Sendable {
     public let sessions: Int
     public let commits: Int
@@ -62,15 +65,16 @@ public struct TodayModel: Equatable, Sendable {
         self.edits = edits
     }
 
-    public init(rows: [AppSessionListRow]) {
+    public init(sessions: [AppSessionListRow], commits: [AppCommitsByDayRow]) {
+        let counted = sessions.compactMap(\.edits)
         self.init(
-            sessions: rows.count,
-            commits: rows.reduce(0) { $0 + $1.countedCommits },
-            edits: nil
+            sessions: sessions.count,
+            commits: commits.reduce(0) { $0 + $1.commits },
+            edits: counted.isEmpty ? nil : counted.reduce(0, +)
         )
     }
 
-    /// `2 sessions, 3 commits`. Edits join the line the day a view carries them.
+    /// `2 sessions, 17 edits, 3 commits`. Edits are left out when nothing measured any.
     public var line: String {
         var parts = ["\(sessions) sessions"]
         if let edits { parts.append("\(edits) edits") }
@@ -141,6 +145,62 @@ public struct WeekUsageModel: Equatable, Sendable {
 
 // MARK: - the latest observation
 
+/// One observation ready to print: the engine's own sentence, and the caveat that travels
+/// with it.
+///
+/// The sentence is read from `app_observation.sentence`, never built here. At contract 1 the
+/// app carried a copy of the phrase table in `store/observations.py` and a test pinned it
+/// word for word; contract 2 stores the prose, so the copy is gone and there is nothing left
+/// to drift. The caveat is the only text assembled in Swift, and it is three numbers from the
+/// same row in a fixed shape, which principle 3 requires to sit beside the sentence.
+public struct ObservationModel: Equatable, Sendable, Identifiable {
+    public let id: Int
+    public let project: String?
+    public let isPooled: Bool
+    public let sentence: String
+    public let caveat: String
+    public let coverage: Double?
+    public let factCommits: Int
+    public let inferredCommits: Int
+    public let withN: Int
+    public let withoutN: Int
+    public let withValue: Double
+    public let withoutValue: Double
+    public let outcome: String
+
+    public init(row: AppObservationRow) {
+        id = row.observationId
+        project = row.project
+        isPooled = row.isPooled
+        sentence = row.sentence ?? Self.missingSentence(row)
+        caveat = Self.caveat(for: row)
+        coverage = row.coverage
+        factCommits = row.factCommits
+        inferredCommits = row.inferredCommits
+        withN = row.withN
+        withoutN = row.withoutN
+        withValue = row.withValue
+        withoutValue = row.withoutValue
+        outcome = row.outcome
+    }
+
+    /// How far apart the two sides are, which is what the screens sort on.
+    public var gap: Double { abs(withValue - withoutValue) }
+
+    /// `(coverage: 90%, method: 4 fact, 3 inferred)`, as the CLI prints it.
+    public static func caveat(for row: AppObservationRow) -> String {
+        let coverage = row.coverage.map { Formatting.percent($0) } ?? "-"
+        return
+            "(coverage: \(coverage), method: \(row.factCommits) fact, \(row.inferredCommits) inferred)"
+    }
+
+    /// A row whose `sentence` is NULL. Not a crash and not an invented sentence: the numbers
+    /// are there, the prose is not, and the screen says which row is missing it.
+    static func missingSentence(_ row: AppObservationRow) -> String {
+        "\(row.fact) against \(row.outcome): this store has the numbers but not the sentence."
+    }
+}
+
 public struct LatestObservationModel: Equatable, Sendable {
     public let sentence: String
     public let caveat: String
@@ -154,10 +214,8 @@ public struct LatestObservationModel: Equatable, Sendable {
     /// project's own rows before the pooled ones that speak for every project at once.
     public init?(rows: [AppObservationRow]) {
         guard let row = rows.first else { return nil }
-        self.init(
-            sentence: ObservationSentence.sentence(for: row),
-            caveat: ObservationSentence.caveat(for: row)
-        )
+        let model = ObservationModel(row: row)
+        self.init(sentence: model.sentence, caveat: model.caveat)
     }
 
     public var short: String { Formatting.truncate(sentence) }
@@ -182,16 +240,16 @@ public struct LatestReviewModel: Equatable, Sendable {
         self.firstSection = firstSection
     }
 
-    public init(row: ReviewHeadlineRow) {
-        let payload = Self.payload(of: row.sections)
+    public init(row: AppReviewRow) {
+        let payload = ReviewPayload.decode(row.sections)
         self.init(
             id: row.id,
             rangeStart: String(row.rangeStart.prefix(10)),
             rangeEnd: String(row.rangeEnd.prefix(10)),
-            // The row's `project` column is the repository key, which is a hash; the name the
-            // person uses is on the payload, exactly as `reviews/render._scope` reads it.
-            project: (payload?["project_name"] as? String) ?? row.project,
-            firstSection: Self.firstSectionTitle(in: payload)
+            // `project` on the view is the name a person uses; the payload carries the same
+            // name and is the fallback, exactly as `reviews/render._scope` reads it.
+            project: row.project ?? payload?.projectName,
+            firstSection: payload?.sections.first.map { $0.title ?? $0.key }
         )
     }
 
@@ -203,22 +261,11 @@ public struct LatestReviewModel: Equatable, Sendable {
         return text
     }
 
-    /// The stored JSON, or nil when it cannot be read. An unreadable payload is a missing
-    /// value, never a crash (ARCHITECTURE rule 3): the row still says which range it covered.
-    static func payload(of sections: String) -> [String: Any]? {
-        guard let data = sections.data(using: .utf8) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-    }
-
-    /// The title of the first section, which is the review's own opening line.
-    static func firstSectionTitle(in payload: [String: Any]?) -> String? {
-        guard let list = payload?["sections"] as? [[String: Any]], let first = list.first
-        else { return nil }
-        return (first["title"] as? String) ?? (first["key"] as? String)
-    }
-
+    /// The title of the first section of a stored payload, or nil when it cannot be read. An
+    /// unreadable payload is a missing value, never a crash (ARCHITECTURE rule 3).
     static func firstSectionTitle(of sections: String) -> String? {
-        firstSectionTitle(in: payload(of: sections))
+        guard let first = ReviewPayload.decode(sections)?.sections.first else { return nil }
+        return first.title ?? first.key
     }
 }
 
@@ -252,20 +299,23 @@ public struct Snapshot: Sendable {
         self.readAt = readAt
     }
 
-    /// One read of the store, for the whole dropdown. Five statements, all indexed, all well
+    /// One read of the store, for the whole dropdown. Six statements, all indexed, all well
     /// under a frame on the founder's 740 MB store.
     public static func read(from store: Store, now: Date = Date()) throws -> Snapshot {
         let bounds = Formatting.localDayBoundsUTC(now)
+        let today = Formatting.day(now)
         let weekStart =
             Calendar.current.date(byAdding: .day, value: -6, to: now) ?? now
         let statusRow = try store.status()
         let todayRows = try store.sessions(startedBetween: bounds.start, and: bounds.end)
+        // The local day, from the view that counts a commit once.
+        let todayCommits = try store.commitsByDay(since: today).filter { $0.day == today }
         let usageRows = try store.usageByPurposeDay(since: Formatting.day(weekStart))
         let observationRows = try store.observations()
         let reviewRow = try store.latestReview()
         return Snapshot(
             status: statusRow.map(StatusModel.init(row:)),
-            today: TodayModel(rows: todayRows),
+            today: TodayModel(sessions: todayRows, commits: todayCommits),
             week: WeekUsageModel(rows: usageRows),
             observation: LatestObservationModel(rows: observationRows),
             review: reviewRow.map(LatestReviewModel.init(row:)),

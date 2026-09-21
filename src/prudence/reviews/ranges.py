@@ -16,8 +16,18 @@ made 14 to 7 days before the end; for a 23-day window it is 30 to 7 days before 
 Nothing older is included, because a review is about the period it names and a commit
 whose mark passed two months ago was already answered by an earlier review.
 
-Everything here is a pure function of the arguments and the `review` table; no figure is
-computed and no session is read.
+**A day is the user's own calendar day, and a stored timestamp is UTC.** The two are not
+in conflict: a date the user writes or names (`--month 2026-09`, `--since 2026-09-08`) is
+read as local midnight and immediately converted to UTC, so the boundary lands where
+their own day begins and the stamp on the row is still the UTC string every other table
+sorts by. This is the one date convention in the codebase: `app_usage_by_purpose_day`
+buckets a session on `date(first_at, 'localtime')` for exactly the same reason, and a
+review of September now covers precisely the days that view calls September. Before M3's
+third batch this module read those dates as UTC, which put a review's edges up to a
+working day away from the chart's.
+
+Everything here is a pure function of the arguments, the `review` table and the machine's
+time zone; no figure is computed and no session is read.
 """
 
 from __future__ import annotations
@@ -96,13 +106,14 @@ def resolve(
         year, number = int(matched.group(1)), int(matched.group(2))
         if not 1 <= number <= 12:
             raise Unreadable(f"{month!r} is not a month; the month part is 1 to 12.")
-        start = datetime(year, number, 1, tzinfo=UTC)
-        end = start + timedelta(days=calendar.monthrange(year, number)[1])
+        first = datetime(year, number, 1)
+        start = local_midnight(first)
+        end = local_midnight(first + timedelta(days=calendar.monthrange(year, number)[1]))
         return _window(start, end, project, f"the month {month}")
 
     if since or until:
-        start = parse(_date(since)) if since else parse(_date("1970-01-01"))
-        end = parse(_date(until)) if until else moment
+        start = parse_local(_date(since)) if since else parse_local(_date("1970-01-01"))
+        end = parse_local(_date(until)) if until else moment
         if end <= start:
             raise Unreadable("--until is not after --since; nothing would be in the range.")
         return _window(start, end, project, "--since/--until")
@@ -148,12 +159,30 @@ def _date(value: str) -> str:
 
 
 def parse(value: str) -> datetime:
-    """One stored timestamp as an aware datetime. Naive stamps are read as UTC."""
+    """One stored timestamp as an aware datetime. Naive stamps are read as UTC.
+
+    For what is already in the store: every stamp Prudence writes is UTC, including the
+    two on a `review` row. A date a person typed goes through `parse_local` instead.
+    """
     try:
         moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise Unreadable(f"{value!r} is not a date; write it as YYYY-MM-DD.") from error
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def parse_local(value: str) -> datetime:
+    """One date the user wrote, read on their own calendar and returned as UTC."""
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise Unreadable(f"{value!r} is not a date; write it as YYYY-MM-DD.") from error
+    return moment.astimezone(UTC) if moment.tzinfo else local_midnight(moment)
+
+
+def local_midnight(naive: datetime) -> datetime:
+    """A wall-clock moment on this machine's calendar, as an aware UTC datetime."""
+    return naive.astimezone(UTC)
 
 
 def option_error(error: Unreadable) -> click.UsageError:

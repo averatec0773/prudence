@@ -7,10 +7,19 @@ produce on its own (observations need five sessions a side, a review needs a ran
 vacuums the result into the Swift test bundle at about 350 KB.
 
 The name has no `test_` prefix on purpose, so `pytest` does not collect it with the suite.
-Run it by naming it, which is how the fixture is regenerated when the contract changes:
+It is skipped unless `MAC_FIXTURE_TARGET` names where the store should land.
+
+**Regenerating the fixture.** Run this from the repository root whenever
+`store/app_views.APP_VIEWS` or `meta.APP_CONTRACT_VERSION` changes, and commit the `.db`
+it writes with the Swift change that reads the new columns:
 
     MAC_FIXTURE_TARGET=apps/mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db \\
         uv run pytest tests/mac_fixture.py -q
+
+It writes contract 2: three observations (two in a project and one pooled, each with the
+sentence the CLI prints), one review with a model segment on it, three sessions with
+token usage under three purposes, and the session `conftest` records, which commits and
+so gives `app_commits_by_day` a row. Nothing here is a real transcript.
 """
 
 from __future__ import annotations
@@ -25,7 +34,7 @@ from conftest import Workspace, record_one_session
 
 from prudence.paths import database_file
 from prudence.reviews import schema
-from prudence.store import app_views, db
+from prudence.store import app_views, db, meta
 
 TARGET = os.environ.get("MAC_FIXTURE_TARGET")
 
@@ -63,7 +72,7 @@ def test_make_fixture(lab: Workspace) -> None:
                 " fact_commits, inferred_commits, fact_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
                 row,
             )
-        schema.insert_review(
+        review_id = schema.insert_review(
             connection,
             created_at="2026-09-15T18:00:00",
             range_start="2026-09-08T00:00:00",
@@ -73,18 +82,62 @@ def test_make_fixture(lab: Workspace) -> None:
             outcome_range_end="2026-09-08T00:00:00",
             sections={
                 "review_version": 1,
+                "project_name": None,
                 "sections": [
-                    {"key": "did", "title": "What you did", "headers": [], "rows": []},
-                    {"key": "became", "title": "What became of earlier work"},
+                    {
+                        "key": "did",
+                        "title": "What you did",
+                        "headers": ["purpose", "sessions", "tokens", "active h"],
+                        "rows": [["development", "2", "5k", "1.4"]],
+                        "notes": [],
+                    },
+                    {
+                        "key": "became",
+                        "title": "What became of earlier work",
+                        "headers": [],
+                        "rows": [],
+                        "notes": [],
+                        "empty": "No commit in this range has reached its seven-day mark.",
+                    },
                 ],
-                "numbers": [],
+                "numbers": [
+                    {"key": "did.sessions.development", "text": "2", "coverage": None},
+                    {"key": "did.tokens.development", "text": "5k", "coverage": None},
+                ],
             },
             coverage=0.82,
             fact_version=1,
             parser_version=2,
         )
+        schema.store_segment(
+            connection,
+            review_id,
+            text=(
+                "Two development sessions in the range, and 5k tokens across them. "
+                "Nothing here has reached its seven-day mark yet, so what became of the "
+                "lines is not in the record."
+            ),
+            prompt_version=1,
+            model="recorded-haiku",
+            input_hash="0" * 16,
+            numbers=[{"key": "did.sessions.development", "text": "2"}],
+            created_at="2026-09-15T18:01:00",
+        )
         app_views.install_app_views(connection)
         connection.commit()
+
+        # The fixture is only worth having if it is what the app will read. Contract and
+        # column lists first, then one row out of each view that batch 3 added.
+        assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "2"
+        for name, columns in app_views.APP_VIEWS.items():
+            assert app_views.columns(connection, name) == columns, name
+        review = connection.execute("SELECT * FROM app_review").fetchone()
+        assert review["headline"].startswith("Review "), review["headline"]
+        assert review["segment_model"] == "recorded-haiku"
+        sentences = [row["sentence"] for row in connection.execute("SELECT * FROM app_observation")]
+        assert len(sentences) == 3 and all(sentences), sentences
+        assert connection.execute("SELECT COUNT(*) FROM app_commits_by_day").fetchone()[0] >= 1
+        assert connection.execute("SELECT SUM(edits) FROM app_session_list").fetchone()[0] >= 1
     finally:
         connection.close()
 

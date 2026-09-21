@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let settings = AppSettings()
     private lazy var model = MenuViewModel(settings: settings)
+    /// The window has its own model. It reads far more than the dropdown does and it reads it
+    /// only while it is open, so sharing one would make the dropdown pay for charts nobody
+    /// is looking at.
+    private lazy var windowModel = WindowModel(settings: settings)
     private lazy var launchAtLogin = SMAppServiceLaunchAtLogin()
     private var statusItem: StatusItemController?
     private var mainWindow: MainWindowController?
@@ -29,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         model.start()
+        // An agent verifying a build against a copy of the store cannot click a menu bar
+        // item, and there is no supported way to script one. `PRUDENCE_OPEN_WINDOW=1` asks
+        // for the window at launch instead. Nothing a user does sets it.
+        if ProcessInfo.processInfo.environment["PRUDENCE_OPEN_WINDOW"] != nil {
+            openMainWindow()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -45,7 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.closePopover()
         if mainWindow == nil {
             mainWindow = MainWindowController(
-                model: model,
+                model: windowModel,
+                settings: settings,
+                launchAtLogin: launchAtLogin,
+                onSettingsChange: { [weak self] in self?.model.startIngestTimer() },
                 onClose: { [weak self] in self?.windowClosed() }
             )
         }
