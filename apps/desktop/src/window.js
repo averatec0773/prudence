@@ -50,15 +50,6 @@
 
   function screenBody(section) {
     var wrap = document.createDocumentFragment();
-    var head = el("div", { class: "screen-head" });
-    head.appendChild(el("h1", { text: T(sectionLabel(section)) }));
-    head.appendChild(
-      el("div", {
-        class: "sub",
-        text: "Placeholder. The screens arrive in batches 5 to 8.",
-      })
-    );
-    wrap.appendChild(head);
     for (var i = 0; i < 40; i += 1) wrap.appendChild(placeholderRow(section, i));
     return wrap;
   }
@@ -79,6 +70,7 @@
       if (button.dataset.section === section) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     });
+    nodes.title.textContent = T(sectionLabel(section));
     nodes.screen.classList.remove("is-probe");
     nodes.screen.innerHTML = "";
     nodes.screen.appendChild(screenBody(section));
@@ -116,18 +108,30 @@
     return aside;
   }
 
-  /* Controls only. The screen under it carries the heading, which is where the mockups
-     put it and where the Swift window puts it. */
-  function toolbar() {
-    var bar = el("div", { class: "toolbar" });
-    bar.appendChild(el("span", { class: "spacer" }));
+  /* The heading and the screen's controls on one row, fixed above the scroll area, on
+     the material. That is `.content-head` in the mockups and the toolbar strip in the
+     Swift window; a separate strip with the heading scrolling under it is neither. */
+  function contentHead() {
+    var head = el("div", { class: "content-head" });
 
+    var titles = el("div", { class: "titles" });
+    nodes.title = el("h1", { text: "" });
+    nodes.sub = el("div", {
+      class: "sub",
+      text: "Placeholder. The screens arrive in batches 5 to 8.",
+    });
+    titles.appendChild(nodes.title);
+    titles.appendChild(nodes.sub);
+    head.appendChild(titles);
+
+    var bar = el("div", { class: "toolbar" });
     var review = el("button", { class: "btn", type: "button", text: T("reviewNow") });
     review.addEventListener("click", function () {
       notYet(T("reviewNow"));
     });
     bar.appendChild(review);
-    return bar;
+    head.appendChild(bar);
+    return head;
   }
 
   function titlebar() {
@@ -195,7 +199,7 @@
     split.appendChild(sidebar());
 
     var content = el("div", { class: "content" });
-    content.appendChild(toolbar());
+    content.appendChild(contentHead());
     nodes.screen = el("div", { class: "screen" });
     content.appendChild(nodes.screen);
     nodes.note = el("div", { class: "note", text: "" });

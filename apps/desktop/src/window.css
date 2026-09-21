@@ -66,31 +66,32 @@ body.is-window #root,
   overflow: hidden;
 }
 
-/* The toolbar strip: the control and navigation layer, so it stays on the material. */
-.toolbar {
-  /* `tokens.css` draws `.toolbar` as a right-aligned cluster inside a heading row. Here
-     it is the strip across the top of the content, which is the navigation layer. */
-  margin-left: 0;
-  width: 100%;
+/* The heading and the screen's controls on one row, fixed above the scroll area. It is
+   the control and navigation layer, so it stays on the material and the content below it
+   is opaque. `tokens.css` already draws `.content-head` and the right-aligned
+   `.toolbar` cluster inside it; what is added here is that this one does not scroll. */
+.content-head {
   flex: none;
-  padding: var(--s2) var(--s5);
+  align-items: center;
+  padding: var(--s3) var(--s5);
   border-bottom: 0.5px solid var(--glass-edge, var(--separator));
-  gap: var(--s3);
   -webkit-app-region: drag;
 }
 
-.toolbar > * {
+.content-head .titles {
+  min-width: 0;
+}
+
+.content-head button,
+.content-head .select,
+.content-head .segmented {
   -webkit-app-region: no-drag;
 }
 
-.toolbar .title {
-  font-size: var(--t-headline);
-  font-weight: 620;
-  letter-spacing: -0.01em;
-}
-
-.toolbar .spacer {
-  flex: 1;
+.content-head h1 {
+  font-size: var(--t-title2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
 }
 
 /* The content layer. Opaque, always: a figure read against a moving backdrop is a figure
@@ -104,18 +105,6 @@ body.is-window #root,
   display: flex;
   flex-direction: column;
   gap: var(--s4);
-}
-
-.screen-head h1 {
-  font-size: var(--t-title2);
-  font-weight: 680;
-  letter-spacing: -0.02em;
-}
-
-.screen-head .sub {
-  font-size: var(--t-footnote);
-  color: var(--text-2);
-  margin-top: 2px;
 }
 
 /* Batch 1 has no charts and no screen content. These placeholders are not decoration:

@@ -95,21 +95,23 @@ def overlaps(a: dict, b: dict) -> bool:
     )
 
 
-def is_on_top(pid: int, window: dict) -> tuple[bool, str]:
-    """Is our window the frontmost ordinary window over its own rectangle?
+def is_on_top(pids, window: dict) -> tuple[bool, str]:
+    """Is the window we mean the frontmost ordinary window over its own rectangle?
 
     Anything at a layer above zero is the menu bar, the Dock or a status window, and none
-    of those is in the region. Anything of ours is fine: the panel may legitimately sit in
-    front of the backdrop while the window is being photographed.
+    of those is in the region. Anything belonging to a process this script started is
+    fine: the panel may legitimately sit in front of the backdrop, and when the subject is
+    another application the backdrop is ours and it is behind.
     """
+    ours = {pids} if isinstance(pids, int) else set(pids)
     for other in on_screen():
         if other["id"] == window["id"]:
             return True, ""
-        if other["layer"] != 0 or other["pid"] == pid:
+        if other["layer"] != 0 or other["pid"] in ours:
             continue
         if overlaps(other, window):
             return False, f"{other['owner']!r} window {other['name']!r} is in front"
-    return False, "our window is not on screen"
+    return False, "the window we mean is not on screen"
 
 
 def activate(pid: int) -> None:
@@ -140,9 +142,21 @@ def main() -> int:
     parser.add_argument("--wait", type=float, default=7.0)
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")
+    parser.add_argument(
+        "--binary",
+        help="photograph another application instead, for a side-by-side with the frozen "
+        "Swift app. The backdrop is still ours, launched as a second process.",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra environment for --binary, repeatable",
+    )
     args = parser.parse_args()
 
-    binary = DEBUG_BINARY if args.debug_build else BINARY
+    binary = Path(args.binary) if args.binary else (DEBUG_BINARY if args.debug_build else BINARY)
     if not binary.exists():
         print(f"no bundle at {binary}; run `pnpm tauri build` first", file=sys.stderr)
         return 2
@@ -167,13 +181,36 @@ def main() -> int:
             "PRUDENCE_UI_MEMORY": "off",
         }
     )
-    env.update(TARGETS[args.window]["env"])
-    if not args.no_backdrop:
-        env["PRUDENCE_BACKDROP"] = "1"
+    if args.binary:
+        for pair in args.env:
+            key, _, value = pair.partition("=")
+            env[key] = value
+    else:
+        env.update(TARGETS[args.window]["env"])
 
     log = out / f"{args.name}.log"
+    started = []
+
+    # The backdrop is always ours, even when the subject is not: a foreign application
+    # photographed over the founder's screen is the same leak by another route.
+    if not args.no_backdrop:
+        if args.binary:
+            backdrop_env = dict(os.environ)
+            backdrop_env.update(
+                {"PRUDENCE_BACKDROP": "1", "PRUDENCE_UI_MEMORY": "off", "PRUDENCE_DATA_DIR": str(store), "PRUDENCE_CONFIG_DIR": str(store)}
+            )
+            with (out / f"{args.name}-backdrop.log").open("w") as handle:
+                started.append(
+                    subprocess.Popen([str(BINARY)], env=backdrop_env, stdout=handle, stderr=handle)
+                )
+            time.sleep(3.0)
+        else:
+            env["PRUDENCE_BACKDROP"] = "1"
+
     with log.open("w") as handle:
         process = subprocess.Popen([str(binary)], env=env, stdout=handle, stderr=handle)
+    started.append(process)
+    pids = [p.pid for p in started]
 
     try:
         time.sleep(args.wait)
@@ -190,7 +227,7 @@ def main() -> int:
             activate(process.pid)
             time.sleep(0.8)
             window = pick(windows_of(process.pid), args.window) or window
-            ok, reason = is_on_top(process.pid, window)
+            ok, reason = is_on_top(pids, window)
             if ok:
                 break
         else:
@@ -203,12 +240,14 @@ def main() -> int:
         print(f"{target}  window {window['id']}  {region}")
         return 0
     finally:
-        # The PID this script started, and no other.
-        process.send_signal(signal.SIGTERM)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        # The PIDs this script started, and no others.
+        for child in started:
+            child.send_signal(signal.SIGTERM)
+        for child in started:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
 
 
 if __name__ == "__main__":
