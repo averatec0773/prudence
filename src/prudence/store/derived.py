@@ -28,6 +28,13 @@ yet expose: `tool_call.error_hash`, a keyed digest of a failed tool result's con
 reading the text itself; and `session.replayed_records`, promoting a count `_flush_session`
 already computed out of the free-text `notes` column and into one `facts.context_resets`
 can query directly.
+
+Parser version 5 settled who owns a record. A file is not a session: an agent that can
+fork a session writes the parent's whole history into the new file before the new
+session's own records, so reading one file as one session gave a fork its parent's start
+time, counted the parent's turns again, and made the owner of a shared record depend on
+which file was read first. The rule is now `_read_file`'s, it is agent-agnostic, and it
+is the reason for the two new `session` columns, `forked_from` and `fork_point`.
 """
 
 from __future__ import annotations
@@ -48,7 +55,7 @@ from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
 
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 
 TABLES = (
     "session",
@@ -76,7 +83,9 @@ SCHEMA = {
             capture_level TEXT,
             parser_version INTEGER NOT NULL,
             notes TEXT,
-            replayed_records INTEGER NOT NULL DEFAULT 0
+            replayed_records INTEGER NOT NULL DEFAULT 0,
+            forked_from TEXT,
+            fork_point TEXT
         )""",
     "record": """
         CREATE TABLE {name}(
@@ -227,7 +236,7 @@ class _ToolCall:
 
 @dataclass
 class _Session:
-    """One session under construction, across its transcript and its subagent files."""
+    """One session under construction, from every file that carries a record of it."""
 
     session_id: str
     repo_key: str | None
@@ -240,6 +249,8 @@ class _Session:
     record_count: int = 0
     replayed: int = 0
     resumed: bool = False
+    forked_from: str | None = None
+    fork_point: str | None = None
     ordinal: int = 0
     records: list[tuple] = field(default_factory=list)
     turns: dict[str, list] = field(default_factory=dict)
@@ -262,28 +273,50 @@ def build(
     key = lines_module.load_key()
     seen_records: set[str] = set()
     unknown: dict[tuple[str, str | None], list] = {}
+    transcripts = _transcripts_in_order(connection, adapter)
+    own_files = {_session_id(row) for row, _ in transcripts}
+    # Sessions with no file of their own, known only from the copy a fork carries. They
+    # outlive the loop because two forks of one deleted parent each carry part of it.
+    orphans: dict[str, _Session] = {}
 
-    for row, head in _transcripts_in_order(connection, adapter):
+    for row, head in transcripts:
         match = resolver.resolve(head.cwd, head.git_branch)
         repo_key = match.repo_key or row["repo_key"]
         stats.mapping_methods[match.method] += 1
         if repo_key is None:
             stats.unassigned_sessions += 1
         session = _Session(
-            session_id=row["session_id"] or row["path"],
+            session_id=_session_id(row),
             repo_key=repo_key,
             capture_level=levels.get(repo_key, "full"),
             mapping_method=match.method,
         )
         for path, agent_id in _files_of(connection, row):
-            _read_file(connection, adapter, path, session, agent_id, seen_records, unknown, key)
+            _read_file(
+                connection,
+                adapter,
+                path,
+                session,
+                agent_id,
+                _Ownership(own_files, orphans),
+                seen_records,
+                unknown,
+                key,
+            )
         _flush_session(connection, session, stats, resolver, key, adapter.kind)
 
+    for session_id in sorted(orphans):
+        _flush_session(connection, orphans[session_id], stats, resolver, key, adapter.kind)
     _flush_unknown(connection, unknown, stats)
     _swap(connection)
     repos.save_discoveries(connection, resolver)
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+def _session_id(row: sqlite3.Row) -> str:
+    """A transcript's session, or its path when the file carries no session id at all."""
+    return row["session_id"] or row["path"]
 
 
 def _files_of(connection: sqlite3.Connection, row: sqlite3.Row) -> list[tuple[str, str | None]]:
@@ -324,17 +357,45 @@ def _transcripts_in_order(
     return sorted(rows, key=lambda item: (item[1].first_at or "", item[0]["path"]))
 
 
+@dataclass(frozen=True)
+class _Ownership:
+    """What the ownership rule needs to know beyond the file it is reading.
+
+    `own_files` is every session that has a transcript of its own in the archive;
+    `orphans` collects the sessions that do not, built from the copy a fork carries.
+    """
+
+    own_files: set[str]
+    orphans: dict[str, _Session]
+
+
 def _read_file(
     connection: sqlite3.Connection,
     adapter: base.Source,
     path: str,
     session: _Session,
     agent_id: str | None,
+    ownership: _Ownership,
     seen_records: set[str],
     unknown: dict[tuple[str, str | None], list],
     key: bytes,
 ) -> None:
-    """Fold one archived file's events into the session it belongs to."""
+    """Fold one archived file's events into the sessions those events declare.
+
+    A record belongs to the session it names, which is not always the session whose file
+    it was read from. An agent that can fork a session copies the parent's history into
+    the new file with the parent's own id still on every copied line, so a file whose own
+    session is F contributes to F only the records that declare F. Records that declare
+    another session P are history copied from P: they are read from P's own file instead
+    and skipped here, or, when P has no file left (the agent deletes transcripts after
+    `cleanupPeriodDays`), kept under P so that its history survives in the copy.
+
+    Some record types declare no session at all. The copy is a prefix, so such a record
+    belongs to whatever the last record that did name a session belonged to, which
+    `declared` carries forward. For an agent that never writes a foreign session id,
+    every record here is the file's own and none of this does anything.
+    """
+    declared = session.session_id
     lines = archive.iter_lines(connection, path)
     for event in adapter.events(lines, path, session.session_id, agent_id):
         if not event.known_type:
@@ -342,12 +403,34 @@ def _read_file(
             entry[0] += 1
             if entry[1] is None:
                 entry[1] = event.timestamp or datetime.now(UTC).isoformat()
+        if event.session_id is not None:
+            declared = event.session_id
+        owner = session
+        if declared != session.session_id:
+            session.forked_from = declared
+            if event.stable_id:
+                # A derived id names the same record differently in every file that
+                # copies it, so it could not be looked up in the parent's own records.
+                session.fork_point = event.record_id
+            if declared in ownership.own_files:
+                session.replayed += 1
+                session.resumed = True
+                continue
+            owner = ownership.orphans.setdefault(
+                declared,
+                _Session(
+                    session_id=declared,
+                    repo_key=session.repo_key,
+                    capture_level=session.capture_level,
+                    mapping_method=session.mapping_method,
+                ),
+            )
         if event.record_id in seen_records:
             session.replayed += 1
             session.resumed = True
             continue
         seen_records.add(event.record_id)
-        _fold_event(session, event, key)
+        _fold_event(owner, event, key)
 
 
 def _fold_event(session: _Session, event: base.Event, key: bytes) -> None:
@@ -547,7 +630,7 @@ def _flush_session(
     _flush_edits(connection, session, stats, resolver, key)
     _flush_commands(connection, session, stats)
     connection.execute(
-        "INSERT OR REPLACE INTO session__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO session__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session.session_id,
             session.repo_key,
@@ -561,6 +644,8 @@ def _flush_session(
             PARSER_VERSION,
             "; ".join(notes) or None,
             session.replayed,
+            session.forked_from,
+            session.fork_point,
         ),
     )
     stats.sessions += 1
