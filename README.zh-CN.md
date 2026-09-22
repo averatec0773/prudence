@@ -61,7 +61,7 @@
 - **结果，而不是印象。** 每个会话：7、30、90 天后仍存活的代码行，被你自己后来的提交返工的行，每个数字都带覆盖率和归因方法。
 - **按用途统计的用量。** 每个会话的 token 和活跃小时，分成开发、调研、调试、对话，产出零代码的会话不再看起来像一个空洞。
 - **观察。** 同一项目内，有某个行为的会话和没有的会话对比："你压缩过上下文的 16 个会话返工了 28% 的代码行，没压缩的 33 个是 6%。" 只在你自己的数据同时过样本下限和差距下限时才报告。
-- **三个入口。** 命令行；带技能和 MCP 服务的 Claude Code 插件；一套代码同时面向 macOS 和 Windows 的带图表的桌面菜单栏应用。
+- **三个入口。** 命令行；带技能和 MCP 服务的 Claude Code 插件；带图表的桌面菜单栏应用：一套代码，目前支持 macOS，Windows 随后。
 - **属于你的记录。** 每个会话逐字节归档在本地，`show`、`forget`、`export` 覆盖全部内容。
 
 ## 愿景
@@ -91,7 +91,7 @@ uv tool install --python 3.12 "prudence-core[mcp,model]"
 
 可选组件：`mcp` 提供 Claude Code 插件用的 MCP 服务；`model` 提供 Anthropic SDK，用于 `review --explain` 和 `ask` 的文字回答。不装 `model` 时其余功能照常工作，且永远不会调用模型。
 
-桌面应用单独下载：[最新 release](https://github.com/averatec0773/prudence/releases) 里的 DMG（Developer ID 证书就绪前为未签名版，首次启动请右键 → 打开）。也可以从 [apps/desktop](apps/desktop/README.md) 自行构建。
+桌面应用单独下载：DMG 随 0.1.0 一起发布（Developer ID 证书就绪前为未签名版，首次启动请右键 → 打开）。该版本发布之前，请从 [apps/desktop](apps/desktop/README.md) 自行构建。
 
 ## 快速开始
 

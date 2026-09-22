@@ -158,8 +158,8 @@ docs/reference/store-schema.md   every table and column, with its trust level
    inside a project's view. An observation states what the two sides did and stops there:
    no advice, no ranking, no score, and no adjective (principle 3). `direction` says
    which side is higher, not which is better.
-14. **The Mac app reads only `app_*` views.** A screen that needs a number the engine
-   does not compute gets a new view in `store/app_views.py`, never a join in Swift;
+14. **The app reads only `app_*` views.** A screen that needs a number the engine
+   does not compute gets a new view in `store/app_views.py`, never a join in the app;
    `meta.app_contract_version` changes only when a view's columns change.
 15. **A review is a row, and the page is a rendering of it.** `prudence review` stores
    the sections as JSON with an inventory of every figure that appears in them

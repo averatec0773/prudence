@@ -27,8 +27,9 @@ Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
 
 ## 0.1.0 - unreleased
 
-The first release as `prudence-core`, the engine and the desktop app under one version
-number (the engine's earlier releases are summarised at the end of this file). The desktop
+The first release as `prudence-core`, the engine, the desktop app and the Claude Code
+plugin under one version number (the engine's earlier releases are summarised at the end
+of this file). The desktop
 app is one codebase for two systems: the Swift macOS app of the earlier releases is
 replaced by `apps/desktop/`, a Rust shell around the design system's own HTML that
 builds for macOS today and is written so that Windows needs no second frontend. It reads

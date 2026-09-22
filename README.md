@@ -61,7 +61,7 @@ Every session with your agents feeds the next one.
 - **Outcomes, not impressions.** For each session: lines still alive at 7, 30 and 90 days, lines reworked by your own later commits, with the coverage and the attribution method behind every number.
 - **Usage by purpose.** Tokens and active hours per session, classified into development, research, debugging, conversation, so a session that produced no code stops looking like a gap.
 - **Observations.** Your sessions with a behaviour against your sessions without it, inside one project: "your 16 sessions that compacted their context reworked 28% of their lines; the 33 that did not, 6%." Reported only when your own data clears a sample floor and a gap floor.
-- **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a desktop menu-bar app with charts for macOS and Windows from one codebase.
+- **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a desktop menu-bar app with charts: one codebase, macOS today, Windows to follow.
 - **A record you own.** Every session archived locally, byte for byte, with `show`, `forget` and `export` for all of it.
 
 ## Where it is going
@@ -91,7 +91,7 @@ uv tool install --python 3.12 "prudence-core[mcp,model]"
 
 Extras: `mcp` adds the MCP server the Claude Code plugin uses; `model` adds the Anthropic SDK for `review --explain` and the prose half of `ask`. Without `model`, everything else works and no model is ever called.
 
-The desktop app is a separate download: the DMG on the [latest release](https://github.com/averatec0773/prudence/releases) (unsigned until the Developer ID certificate exists; right-click, Open, on first launch). Build it yourself from [apps/desktop](apps/desktop/README.md).
+The desktop app is a separate download. The DMG ships with 0.1.0 (unsigned until the Developer ID certificate exists; right-click, Open, on first launch); until that release is out, build it yourself from [apps/desktop](apps/desktop/README.md).
 
 ## Quick start
 
