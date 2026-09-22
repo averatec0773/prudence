@@ -1,0 +1,126 @@
+name: Desktop app
+
+# Builds and tests the cross-platform desktop app from a clean checkout.
+#
+# It exists because the spike committed its whole design system into a directory the
+# repository's own `.gitignore` excluded (`vendor/`), so the app would not have built from
+# a fresh clone and nothing said so. A local working tree cannot catch that; this can.
+#
+# It never signs, notarises, uploads or publishes, for the same reason `mac-ci.yml` does
+# not: a Developer ID certificate in GitHub secrets is real exposure for a solo founder,
+# so a tagged release is signed from the founder's own machine.
+#
+# The Python under `Scripts/` is not checked here: `ci.yml` already runs `ruff check .`
+# and `ruff format --check .` over the whole tree, which includes it. Adding a second
+# ruff job would be two places to keep in step.
+#
+# `macos-26` is pinned deliberately, as in `mac-ci.yml`: `macos-latest` moves under you.
+# The Windows job compiles `src-tauri/src/platform/windows.rs`, which no macOS build ever
+# touches; without it that file is dead code nobody has ever put through a compiler. It
+# does not build a bundle, because nobody has run this app on Windows yet and a green
+# installer build would imply otherwise.
+
+on:
+  push:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+      - "src/prudence/store/app_views.py"
+      - "src/prudence/store/meta.py"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-ci.yml"
+      - "src/prudence/store/app_views.py"
+      - "src/prudence/store/meta.py"
+
+jobs:
+  macos:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Cache the Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: desktop-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install the Tauri CLI
+        run: pnpm install --frozen-lockfile
+
+      - name: The frontend's tests
+        run: pnpm test
+
+      - name: Types
+        run: pnpm check
+
+      - name: The strings still match the String Catalog
+        run: python3 Scripts/strings.py --check
+
+      - name: Formatting
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: apps/desktop/src-tauri
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features harness -- -D warnings
+
+      - name: The shell's own tests
+        # They read `apps/mac/PrudenceKit/Tests/.../Fixtures/store.db`, the same store the
+        # Swift tests read, so both stacks are judged against one fixture.
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+
+      - name: Build the app and an unsigned DMG
+        run: pnpm tauri build --bundles app,dmg
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-dmg
+          path: apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  windows:
+    # Compiles the Windows platform module and runs the tests that do not need a screen.
+    # Nobody has run this app on Windows; see the phase-1 plan, "What is not in this plan".
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+          key: desktop-cargo-windows-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Test
+        run: cargo test

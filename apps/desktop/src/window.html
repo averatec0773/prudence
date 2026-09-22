@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prudence</title>
+    <link rel="stylesheet" href="design/tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="design/components.css" />
+    <link rel="stylesheet" href="window.css" />
+    <!-- One per screen, in the sidebar's order. A screen owns its own file and nothing
+         else writes in it, which is what lets several be built at the same time. -->
+    <link rel="stylesheet" href="ui/overview.css" />
+    <link rel="stylesheet" href="ui/review.css" />
+    <link rel="stylesheet" href="ui/observations.css" />
+    <link rel="stylesheet" href="ui/settings.css" />
+    <!-- The engine block and its activity strip. Its own file because the Settings
+         screen places the block and the CLI wiring fills it in, and neither edits the
+         other's stylesheet. -->
+    <link rel="stylesheet" href="ui/engine-section.css" />
+  </head>
+  <body class="is-window">
+    <div id="root"></div>
+    <script type="module">
+      import { boot } from "./boot.js";
+      import { page } from "./ui/window.js";
+      import { wireEngine } from "./ui/engine-section.js";
+      // The window is the only page with the engine's actions on it, so the wiring is
+      // here and not in `boot.js`, which both pages share. Before `boot`, so the first
+      // Settings draw already has it.
+      wireEngine();
+      boot(page);
+    </script>
+  </body>
+</html>

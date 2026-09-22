@@ -1,0 +1,186 @@
+/* The components every screen is built from.
+ *
+ * **This file is shared; a screen's own stylesheet is not.** Anything here is a piece
+ * more than one screen uses: the card, the stat, the chart furniture, the data table,
+ * the empty state, the method disclosure. A rule that only one screen needs belongs in
+ * that screen's file (`ui/<screen>.css`), so two screens can be built at the same time
+ * without touching the same lines.
+ *
+ * Like every stylesheet outside `design/tokens.css`, this one declares no design token of
+ * its own; a test asserts it. It spends them.
+ */
+
+
+.screen-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.scope {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.card-row {
+  display: grid;
+  /* The layout answers the window's width rather than assuming one: three across when
+     there is room, and fewer when there is not. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s3);
+}
+
+.card.stat .label {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.card.stat .value {
+  font-size: var(--t-title1);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.card.stat .foot {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+
+.panel-head h2 {
+  font-size: var(--t-headline);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.panel-note {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.card.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+}
+
+/* Both weekly charts draw into the same 760-unit box and scale to the card, so a week
+   sits at the same x in each and the two can be read against one another. The axis
+   labels are inside the SVG here rather than in HTML beside it: they belong to positions
+   in the plot, and only the drawing knows where those are. They are 10px in a box that
+   is usually scaled down slightly, which is legible and is what the prototype does. */
+.chart svg.bars,
+.chart svg.lines {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart svg.heat {
+  width: auto;
+  max-width: 100%;
+}
+
+.chart .hit {
+  cursor: pointer;
+}
+
+.chart .hit:hover {
+  fill: var(--control-quiet);
+}
+
+/* Selecting a week dims the rest rather than highlighting one, which keeps the colour
+   meaning identity and not importance. */
+.chart .col.is-selected .hit {
+  fill: var(--control-quiet-hover);
+}
+
+.chart svg.bars:has(.col.is-selected) .col:not(.is-selected) .bar {
+  opacity: 0.38;
+}
+
+/* A week the store has no row for. Not a zero-height bar, which would read as "nothing
+   was spent": a hairline on the baseline, which reads as "this slot is here and empty". */
+.chart .bar-empty {
+  fill: var(--grid);
+}
+
+/* The view and column names, folded away. Principle 3 wants the method stated; it does
+   not want the caption to open with a SQL expression. */
+/* A week nothing was recorded in. Quieter, because the row exists to show that the week
+   was looked at, not to be read. */
+.data tr.unmeasured td {
+  color: var(--text-3);
+}
+
+/* Which of the two pictures in this card you are looking at. */
+.chart-name {
+  font-size: var(--t-footnote);
+  font-weight: 590;
+  color: var(--text-2);
+}
+
+.method {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.method summary {
+  cursor: default;
+  color: var(--text-3);
+  width: fit-content;
+}
+
+.method summary::marker {
+  color: var(--text-3);
+}
+
+.method p {
+  padding: 6px 0 0 var(--s3);
+  line-height: 1.45;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s4);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+}
+
+.empty-title {
+  font-size: var(--t-body);
+  font-weight: 590;
+}
+
+.empty-detail {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* An observation's sentence. Both the Observations screen and the Review screen show
+   one, so the rule is here rather than in either screen's own sheet. */
+.obs-sentence {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+}

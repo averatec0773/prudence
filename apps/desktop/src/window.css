@@ -1,0 +1,233 @@
+/* The window, where a mockup of a window differs from one.
+
+   `design/tokens.css` draws `.window` as a 1120 px card with its own shadow, sitting on a
+   page. Here the window is the window: it fills the viewport, the operating system draws
+   its frame and shadow, and the material under the navigation layer is native. */
+
+body.is-window {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+body.is-window #root,
+.window {
+  height: 100%;
+}
+
+.window {
+  width: 100%;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* The titlebar is the real one. This row exists to reserve its height and to give the
+   window something to be dragged by; the traffic lights are the system's own and sit in
+   the left inset, which is why the row starts past them. */
+.titlebar {
+  height: 38px;
+  padding-left: 78px;
+  background: var(--canvas);
+  border-bottom: 0;
+  -webkit-app-region: drag;
+  flex: none;
+}
+
+.titlebar button,
+.titlebar .select {
+  -webkit-app-region: no-drag;
+}
+
+.split {
+  display: flex;
+  min-height: 0;
+  height: calc(100% - 38px);
+}
+
+/* The sidebar is a floating card, which is what macOS 26 does with one.
+ *
+ * The whole window is behind clear glass, so the effect is made by painting the opaque
+ * window background **everywhere except** the card: the card carries a spread shadow
+ * large enough to cover the column, the column clips it, and the only place the glass
+ * reaches the screen is the card's own rounded rectangle. A hole is not a thing CSS
+ * has, and this is the honest way to make one. */
+.sidebar {
+  width: 196px;
+  background: transparent;
+  border-right: 0;
+  padding: 0;
+  overflow: hidden;
+  display: block;
+  flex: none;
+}
+
+.sidebar-card {
+  margin: 0 var(--s2) var(--s2);
+  margin-top: var(--s1);
+  padding: var(--s2);
+  border-radius: var(--r-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: calc(100% - var(--s2) - var(--s1));
+  box-sizing: border-box;
+  box-shadow:
+    0 0 0 9999px var(--canvas),
+    inset 0 0 0 0.5px var(--hairline),
+    inset 0 1px 0 0 var(--glass-highlight, transparent);
+}
+
+.sidebar-card button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--t-footnote);
+  color: var(--text);
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 5px var(--s2);
+  border-radius: var(--r-control);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.sidebar-card button .icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.sidebar-card button:hover {
+  background: var(--control-quiet);
+}
+
+.sidebar-card button[aria-current="page"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 560;
+}
+
+.sidebar-card button[aria-current="page"] .icon {
+  color: var(--accent-text);
+}
+
+.sidebar .group {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  padding: var(--s2) var(--s3) 4px;
+}
+
+.content {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* The heading and the screen's controls on one row, fixed above the scroll area. It is
+   the control and navigation layer, so it stays on the material and the content below it
+   is opaque. `tokens.css` already draws `.content-head` and the right-aligned
+   `.toolbar` cluster inside it; what is added here is that this one does not scroll. */
+.content-head {
+  flex: none;
+  align-items: center;
+  padding: var(--s3) var(--s5);
+  border-bottom: 0.5px solid var(--glass-edge, var(--separator));
+  -webkit-app-region: drag;
+}
+
+.content-head .titles {
+  min-width: 0;
+}
+
+.content-head button,
+.content-head .select,
+.content-head .segmented {
+  -webkit-app-region: no-drag;
+}
+
+.content-head h1 {
+  font-size: var(--t-title2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+/* The content layer. Opaque, always: a figure read against a moving backdrop is a figure
+   the reader cannot check, which is design rule 1. */
+.screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s5) var(--s5) var(--s7);
+  background: var(--canvas);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Batch 1 has no charts and no screen content. These placeholders are not decoration:
+   they are a tall scroll container per screen, which together with switching between
+   screens is the interaction pattern wry issue 1848 reports the compositor giving up on. */
+.placeholder {
+  background: var(--surface);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.placeholder .k {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.placeholder .bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.placeholder .bar i {
+  display: block;
+  height: 100%;
+  background: var(--p-development);
+}
+
+.note {
+  flex: none;
+  margin: var(--s2) var(--s5) var(--s3);
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--r-control);
+  padding: 6px var(--s3);
+  align-self: flex-start;
+}
+
+/* The paint probe fills this element, and a checker reads the colour out of a screenshot.
+   It is the one check a stale compositor cannot pass by reporting a healthy DOM. */
+.screen.is-probe > *:not(.probe-fill) {
+  display: none;
+}
+
+.probe-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.screen {
+  position: relative;
+}
+
+/* The screens themselves are in `design/components.css` (shared pieces) and
+   `ui/<screen>.css` (one screen's own). This file is the window around them: the
+   titlebar, the sidebar, the content head and the scrolling area. */

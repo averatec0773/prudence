@@ -1,0 +1,1250 @@
+/* Prudence design tokens and the small component set the mockups are built from.
+   One accent, one fixed colour per purpose, hairlines instead of shadows, motion only
+   for state changes. Light and dark are the same tokens with different values. */
+
+:root {
+  color-scheme: light dark;
+
+  /* Spacing, base 4. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --s8: 40px;
+
+  /* Type scale, SF Pro sizes. */
+  --t-caption2: 11px;
+  --t-caption: 12px;
+  --t-footnote: 13px;
+  --t-body: 15px;
+  --t-headline: 17px;
+  --t-title3: 20px;
+  --t-title2: 24px;
+  --t-title1: 28px;
+
+  /* Radii. */
+  --r-control: 6px;
+  --r-card: 10px;
+  --r-panel: 12px;
+  --r-popover: 12px;
+  --r-chip: 999px;
+
+  /* Motion. State changes only, 150 to 240 ms, ease-out. */
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 240ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* Light. */
+  --canvas: #f2f2f4;
+  --surface: #ffffff;
+  --surface-2: #f7f7f9;
+  --surface-sunken: #ebebef;
+  --sidebar: #f6f6f8;
+  --separator: rgba(0, 0, 0, 0.08);
+  --hairline: rgba(0, 0, 0, 0.13);
+  --text: #1c1c1e;
+  --text-2: #636366;
+  --text-3: #8e8e93;
+  --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --accent-text: #ffffff;
+  --control: #ffffff;
+  --control-2: #e9e9ed;
+  /* The secondary button's own fill: quiet, and a darkening rather than a lightening,
+     so it still reads as a control on a light surface. `--control` above is the
+     mockups' opaque white and is what a text field and a segmented track use. */
+  --control-quiet: rgba(0, 0, 0, 0.05);
+  --control-quiet-hover: rgba(0, 0, 0, 0.08);
+  --control-quiet-press: rgba(0, 0, 0, 0.03);
+  --grid: rgba(0, 0, 0, 0.07);
+  --coverage: rgba(0, 0, 0, 0.16);
+  --shadow-card: 0 0 0 0.5px var(--hairline);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 0.5px var(--hairline);
+  --shadow-popover: 0 10px 28px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.14);
+
+  /* Purpose palette. One colour per purpose, the same in every chart on every screen.
+     Keys are the engine's own labels; `unknown` is shown as "other". */
+  --p-development: #007aff;
+  --p-research: #30b0c7;
+  --p-debugging: #ff9500;
+  --p-conversation: #af52de;
+  --p-mixed: #5856d6;
+  --p-unknown: #8e8e93;
+
+  /* Outcome series. Survival and rework are two readings of the same lines, so they
+     share a hue family and differ in line style, never in "good" and "bad" colour. */
+  --o-alive: #0a7d45;
+  --o-rework: #8a5a00;
+  /* The project scale, for the one chart that draws more than one project at a time.
+     A project's colour is its place in the **sorted** list of project names, so it does
+     not move when the range picker changes which projects have a row, and two shots of
+     different ranges agree about which line is which. None of the six is a purpose
+     colour or one of the outcome pair, and a test asserts it: a project drawn in
+     `development`'s blue would read as a purpose, and red or green would read as a
+     verdict on a project. */
+  --proj-0: #3e6ae1;
+  --proj-1: #a2845e;
+  --proj-2: #b3358c;
+  --proj-3: #00786f;
+  --proj-4: #7a5af8;
+  --proj-5: #6e6e73;
+
+  /* The mark's own ink: which of assets/brand/logo.svg and logo-white.svg a surface
+     is showing. The markup is inlined once with `currentColor`. */
+  --brand-ink: #111111;
+  --menubar: #e6e6e9;
+  --menubar-press: rgba(0, 0, 0, 0.11);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #1c1c1e;
+    --surface: #2c2c2e;
+    --surface-2: #242426;
+    --surface-sunken: #171719;
+    --sidebar: #232325;
+    --separator: rgba(255, 255, 255, 0.1);
+    --hairline: rgba(255, 255, 255, 0.16);
+    --text: #f2f2f7;
+    --text-2: #aeaeb2;
+    --text-3: #8e8e93;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.22);
+    --accent-text: #ffffff;
+    --control: #3a3a3c;
+    --control-2: #48484a;
+    --control-quiet: rgba(255, 255, 255, 0.08);
+    --control-quiet-hover: rgba(255, 255, 255, 0.12);
+    --control-quiet-press: rgba(255, 255, 255, 0.05);
+    --grid: rgba(255, 255, 255, 0.09);
+    --coverage: rgba(255, 255, 255, 0.24);
+    --shadow-card: 0 0 0 0.5px var(--hairline);
+    --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px var(--hairline);
+    --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+    --p-development: #0a84ff;
+    --p-research: #40c8e0;
+    --p-debugging: #ff9f0a;
+    --p-conversation: #bf5af2;
+    --p-mixed: #7d7aff;
+    --p-unknown: #98989d;
+    --o-alive: #3ac07a;
+    --o-rework: #e0a33a;
+    --proj-0: #6e9bff;
+    --proj-1: #c8a579;
+    --proj-2: #e36fc4;
+    --proj-3: #2fb3a6;
+    --proj-4: #a68bff;
+    /* See the note on the other dark block: the printed value collides with
+       `--p-unknown`. */
+    --proj-5: #b3b3bb;
+    --brand-ink: #ffffff;
+    --menubar: #1e1e20;
+    --menubar-press: rgba(255, 255, 255, 0.18);
+  }
+}
+
+:root[data-theme="dark"] {
+  --canvas: #1c1c1e;
+  --surface: #2c2c2e;
+  --surface-2: #242426;
+  --surface-sunken: #171719;
+  --sidebar: #232325;
+  --separator: rgba(255, 255, 255, 0.1);
+  --hairline: rgba(255, 255, 255, 0.16);
+  --text: #f2f2f7;
+  --text-2: #aeaeb2;
+  --text-3: #8e8e93;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.22);
+  --accent-text: #ffffff;
+  --control: #3a3a3c;
+  --control-2: #48484a;
+  --control-quiet: rgba(255, 255, 255, 0.08);
+  --control-quiet-hover: rgba(255, 255, 255, 0.12);
+  --control-quiet-press: rgba(255, 255, 255, 0.05);
+  --grid: rgba(255, 255, 255, 0.09);
+  --coverage: rgba(255, 255, 255, 0.24);
+  --shadow-card: 0 0 0 0.5px var(--hairline);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px var(--hairline);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  --p-development: #0a84ff;
+  --p-research: #40c8e0;
+  --p-debugging: #ff9f0a;
+  --p-conversation: #bf5af2;
+  --p-mixed: #7d7aff;
+  --p-unknown: #98989d;
+  --o-alive: #3ac07a;
+  --o-rework: #e0a33a;
+  --proj-0: #6e9bff;
+  --proj-1: #c8a579;
+  --proj-2: #e36fc4;
+  --proj-3: #2fb3a6;
+  --proj-4: #a68bff;
+  /* `apps/mac/DESIGN.md` prints #98989D here, which in dark is exactly `--p-unknown`,
+     the grey a purpose the engine does not recognise is drawn in. The document's own
+     rule is that no project colour may be a purpose colour, so the document is wrong
+     and this is a shade lighter. Reported to the lead. */
+  --proj-5: #b3b3bb;
+  --brand-ink: #ffffff;
+  --menubar: #1e1e20;
+  --menubar-press: rgba(255, 255, 255, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* `hidden` means hidden.
+ *
+ * The attribute's default is `display: none` at the lowest possible specificity, so any
+ * class that sets `display` silently defeats it. That shipped once: the panel's note is
+ * a `.coverage-chip`, the chip became `display: inline-flex`, and an empty capsule sat
+ * in the footer whenever the note was not showing. It is a whole class of bug and this
+ * is where the class is closed. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--text);
+  /* Design rule 4: **every figure is tabular**, so a value that changes does not reflow
+     the row it sits in. Set once at the root rather than on a `.num` class, because the
+     class version shipped for two batches with no element using it: a rule that has to
+     be remembered at every call site is a rule that is not kept. Numbers inside a
+     sentence are figures too, which is why this is not scoped to figure elements. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "PingFang SC", sans-serif;
+  font-size: var(--t-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:lang(zh) body,
+body:lang(zh) {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Heiti SC", sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+figcaption {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+
+/* --- controls ---------------------------------------------------------------------- */
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--control-2);
+  border-radius: var(--r-control);
+}
+
+.segmented button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-footnote);
+  padding: 3px var(--s3);
+  border-radius: calc(var(--r-control) - 2px);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.segmented button[aria-checked="true"] {
+  background: var(--control);
+  box-shadow: var(--shadow-raised);
+  font-weight: 590;
+}
+
+.segmented button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn {
+  appearance: none;
+  font: inherit;
+  white-space: nowrap;
+  font-size: var(--t-footnote);
+  padding: 4px var(--s3);
+  border-radius: var(--r-control);
+  border: 0.5px solid var(--hairline);
+  background: var(--control);
+  color: var(--text);
+  box-shadow: var(--shadow-raised);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--control) 90%, var(--text) 10%);
+}
+
+.btn:active {
+  transform: scale(0.985);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A button that cannot be pressed has to look like one.
+ *
+ * Nothing in any stylesheet matched `[disabled]`, so a disabled `.btn` was pixel-identical
+ * to a live one: the engine's actions went dead during a run and the only way to find out
+ * was to click and have nothing happen, which is the "control that does nothing" the
+ * design forbids. Dimmed and with the pointer changed, not greyed to a different colour,
+ * because colour here would be saying something about the action rather than about whether
+ * it is available. The hover and the press are cancelled with it. */
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  box-shadow: none;
+}
+
+.btn:disabled:hover {
+  background: var(--control);
+}
+
+.btn.primary:disabled:hover {
+  background: var(--accent);
+}
+
+.btn:disabled:active {
+  transform: none;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+  font-weight: 590;
+}
+
+.btn.primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, #000 12%);
+}
+
+.btn.plain {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--accent);
+}
+
+.btn.wide {
+  width: 100%;
+  justify-content: center;
+}
+
+.select {
+  appearance: none;
+  font: inherit;
+  font-size: var(--t-footnote);
+  padding: 4px var(--s6) 4px var(--s3);
+  border-radius: var(--r-control);
+  border: 0.5px solid var(--hairline);
+  background: var(--control)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='14' viewBox='0 0 10 14'><path d='M5 1.6 8 5H2zM5 12.4 2 9h6z' fill='%238e8e93'/></svg>")
+    no-repeat right 6px center;
+  color: var(--text);
+  box-shadow: var(--shadow-raised);
+  cursor: pointer;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.switch {
+  appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: var(--r-chip);
+  background: var(--control-2);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+  flex: none;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  transition: transform var(--dur) var(--ease);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  transform: translateX(16px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.field {
+  font: inherit;
+  font-size: var(--t-footnote);
+  padding: 4px var(--s2);
+  border-radius: var(--r-control);
+  border: 0.5px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* --- surfaces ---------------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s5);
+}
+
+.card.tight {
+  padding: var(--s4);
+}
+
+.card-title {
+  font-size: var(--t-headline);
+  font-weight: 590;
+  letter-spacing: -0.01em;
+}
+
+.card-sub {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  margin-top: var(--s1);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+.stat-value {
+  font-size: var(--t-title2);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+
+.stat-foot {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  height: 20px;
+  padding: 0 var(--s2);
+  border-radius: var(--r-chip);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-size: var(--t-caption2);
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+
+.coverage-chip {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: baseline;
+  gap: var(--s1);
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  line-height: 1.4;
+  /* A capsule, not a bare line: the caveat is a qualification of the sentence above it,
+     and a chip is how the design says "this modifies that". */
+  padding: 2px var(--s2);
+  border-radius: var(--r-chip);
+  background: var(--surface-sunken);
+}
+
+.method {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  align-items: center;
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+.legend span.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  display: inline-block;
+}
+
+.rowlist {
+  display: flex;
+  flex-direction: column;
+}
+
+.rowlist .row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  border-bottom: 0.5px solid var(--separator);
+  font-size: var(--t-footnote);
+}
+
+.rowlist .row:last-child {
+  border-bottom: 0;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-footnote);
+}
+
+table.data th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-3);
+  font-size: var(--t-caption);
+  padding: var(--s2) var(--s3) var(--s2) 0;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+table.data td {
+  padding: var(--s2) var(--s3) var(--s2) 0;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+table.data tr:last-child td {
+  border-bottom: 0;
+}
+
+table.data td.n,
+table.data th.n {
+  text-align: right;
+  padding-right: 0;
+}
+
+figure {
+  display: block;
+}
+
+figcaption {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  margin-top: var(--s2);
+  line-height: 1.5;
+}
+
+figcaption.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.empty {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  padding: var(--s4) 0;
+}
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.55;
+}
+
+/* --- window shells ------------------------------------------------------------------ */
+
+.window {
+  width: 100%;
+  max-width: 1120px;
+  border-radius: var(--r-panel);
+  background: var(--canvas);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 38px;
+  padding: 0 var(--s4);
+  background: var(--sidebar);
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.titlebar .name {
+  font-size: var(--t-footnote);
+  font-weight: 590;
+  color: var(--text-2);
+  margin-left: var(--s2);
+}
+
+.split {
+  display: flex;
+  min-height: 560px;
+}
+
+.sidebar {
+  width: 188px;
+  flex: none;
+  background: var(--sidebar);
+  border-right: 0.5px solid var(--separator);
+  padding: var(--s3) var(--s2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--t-footnote);
+  color: var(--text);
+  text-align: left;
+  padding: 5px var(--s3);
+  border-radius: var(--r-control);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.sidebar button[aria-current="page"] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 560;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  overflow: hidden;
+}
+
+.content-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.content-head h1 {
+  font-size: var(--t-title2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.content-head .sub {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s4);
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s4);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* --- popover ------------------------------------------------------------------------ */
+
+.popover {
+  width: 360px;
+  border-radius: var(--r-popover);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+
+.popover .pop-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s4) var(--s4) var(--s2);
+}
+
+.popover .pop-head .name {
+  font-size: var(--t-headline);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.popover .pop-head .ver {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.pop-body {
+  padding: 0 var(--s4) var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.pop-sep {
+  height: 0.5px;
+  background: var(--separator);
+  /* The body's gap is the space between blocks. A margin here would be a second helping
+     of it, which is what made the panel read loose around its two dividers. */
+  margin: 2px 0;
+}
+
+.pop-foot {
+  padding: var(--s3) var(--s4) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  background: var(--surface-2);
+  border-top: 0.5px solid var(--separator);
+}
+
+.pop-line {
+  display: flex;
+  gap: var(--s3);
+  font-size: var(--t-footnote);
+}
+
+.pop-line .k {
+  width: 96px;
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-caption);
+  padding-top: 1px;
+}
+
+.pop-line .v {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- charts ------------------------------------------------------------------------- */
+
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart .bar {
+  transition: opacity var(--dur-fast) var(--ease);
+  cursor: pointer;
+}
+
+.chart .col.dim .bar {
+  opacity: 0.38;
+}
+
+.chart text {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.axis {
+  fill: var(--text-3);
+  font-size: 10px;
+}
+
+.gridline {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.track-wrap {
+  width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.chart.paired {
+  --paired-label: 128px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.paired-row {
+  display: grid;
+  grid-template-columns: var(--paired-label) minmax(40px, 1fr) max-content;
+  gap: var(--s3);
+  align-items: center;
+}
+
+.paired-label {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paired-value {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.paired-value b {
+  color: var(--text);
+  font-weight: 620;
+  font-size: var(--t-footnote);
+}
+
+.paired-gap {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  grid-template-columns: var(--paired-label) 1fr;
+}
+
+.chart.share {
+  margin: 0;
+}
+
+.share-stack {
+  position: relative;
+  height: 26px;
+  display: flex;
+  align-items: center;
+}
+
+.share-coverage {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  height: 100% !important;
+}
+
+.share-value {
+  position: relative;
+}
+
+.hover-value {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  min-height: 18px;
+}
+
+.heat rect {
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+
+/* --- the mark, the menu bar and the status item -------------------------------------
+
+   The strip is the real thing: full width at the top of its desktop, 24 px tall, no
+   border, no radius and no shadow. The popover hangs from the status item at the right
+   with the usual small gap. */
+
+.brand-mark {
+  color: var(--brand-ink);
+  display: block;
+  flex: none;
+}
+
+.titlebar .brand-mark {
+  margin-right: var(--s1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}
+
+/* --- material: Liquid Glass ---------------------------------------------------------
+
+   Glass is the control and navigation layer, never the content layer. It goes on the
+   popover, the window frame, the sidebar, the titlebar, the mockup's own top bar and
+   every control. Cards, tables and charts keep an opaque surface, because a figure that
+   has to be read against a moving backdrop is a figure the founder cannot check.
+
+   Everything below is driven by five custom properties, so honouring
+   `prefers-reduced-transparency` is a matter of redefining them rather than unwinding
+   each rule. */
+
+:root[data-material="glass"] {
+  --glass-tint: rgba(255, 255, 255, 0.55);
+  --glass-highlight: rgba(255, 255, 255, 0.7);
+  --glass-edge: rgba(0, 0, 0, 0.1);
+  --glass-specular: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0) 30%
+  );
+  /* Controls: flat frost, one hairline, a top highlight that is barely there. */
+  --glass-control: rgba(255, 255, 255, 0.44);
+  --glass-control-hover: rgba(255, 255, 255, 0.54);
+  --glass-control-active: rgba(236, 236, 240, 0.62);
+  --glass-top: rgba(255, 255, 255, 0.34);
+  --glass-control-ring: inset 0 0 0 0.5px var(--glass-edge),
+    inset 0 1px 0 0 var(--glass-top);
+  --glass-pill: rgba(255, 255, 255, 0.88);
+  --glass-filter: blur(18px) saturate(1.6);
+  --glass-ring: inset 0 1px 0 0 var(--glass-highlight), inset 0 0 0 0.5px var(--glass-edge);
+  --glass-drop: 0 10px 28px rgba(0, 0, 0, 0.14);
+  --wallpaper: radial-gradient(74% 66% at 12% 14%, rgba(122, 156, 224, 0.50), transparent 82%),
+    radial-gradient(68% 60% at 88% 6%, rgba(226, 166, 196, 0.44), transparent 82%),
+    radial-gradient(76% 68% at 72% 92%, rgba(136, 198, 190, 0.46), transparent 84%);
+
+  /* One step larger than Standard, on the glass surfaces only. */
+  --r-control: 8px;
+  --r-panel: 16px;
+  --r-popover: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-material="glass"]:not([data-theme="light"]) {
+    --glass-tint: rgba(0, 0, 0, 0.45);
+    --glass-highlight: rgba(255, 255, 255, 0.2);
+    --glass-edge: rgba(255, 255, 255, 0.14);
+    --glass-specular: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0) 30%
+    );
+    --glass-control: rgba(255, 255, 255, 0.1);
+    --glass-control-hover: rgba(255, 255, 255, 0.16);
+    --glass-control-active: rgba(0, 0, 0, 0.22);
+    --glass-top: rgba(255, 255, 255, 0.11);
+    --glass-control-ring: inset 0 0 0 0.5px var(--glass-edge),
+      inset 0 1px 0 0 var(--glass-top);
+    --glass-pill: rgba(255, 255, 255, 0.18);
+    --glass-drop: 0 12px 34px rgba(0, 0, 0, 0.5);
+    --wallpaper: radial-gradient(74% 66% at 12% 14%, rgba(46, 58, 92, 0.62), transparent 84%),
+      radial-gradient(68% 60% at 88% 6%, rgba(78, 52, 72, 0.50), transparent 84%),
+      radial-gradient(76% 68% at 72% 92%, rgba(40, 68, 70, 0.54), transparent 86%);
+  }
+}
+
+:root[data-material="glass"][data-theme="dark"] {
+  --glass-tint: rgba(0, 0, 0, 0.45);
+  --glass-highlight: rgba(255, 255, 255, 0.2);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-specular: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0) 30%
+  );
+  --glass-control: rgba(255, 255, 255, 0.1);
+  --glass-control-hover: rgba(255, 255, 255, 0.16);
+  --glass-control-active: rgba(0, 0, 0, 0.22);
+  --glass-top: rgba(255, 255, 255, 0.11);
+  --glass-control-ring: inset 0 0 0 0.5px var(--glass-edge),
+    inset 0 1px 0 0 var(--glass-top);
+  --glass-pill: rgba(255, 255, 255, 0.18);
+  --glass-drop: 0 12px 34px rgba(0, 0, 0, 0.5);
+  --wallpaper: radial-gradient(74% 66% at 12% 14%, rgba(46, 58, 92, 0.62), transparent 84%),
+    radial-gradient(68% 60% at 88% 6%, rgba(78, 52, 72, 0.50), transparent 84%),
+    radial-gradient(76% 68% at 72% 92%, rgba(40, 68, 70, 0.54), transparent 86%);
+}
+
+/* The system asks for less translucency: fall back to Standard by redefining the five
+   properties. No rule below needs to know. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-material="glass"] {
+    --glass-tint: var(--surface);
+    --glass-specular: none;
+    --glass-filter: none;
+    --glass-ring: inset 0 0 0 0.5px var(--hairline);
+    --glass-drop: var(--shadow-raised);
+    --glass-control: var(--control);
+    --glass-control-hover: var(--control-2);
+    --glass-control-active: var(--control-2);
+    --glass-control-ring: inset 0 0 0 0.5px var(--hairline);
+    --glass-pill: var(--control);
+    --wallpaper: none;
+  }
+}
+
+/* The wallpaper, so that the translucency has something to be translucent about. Off in
+   Standard, because a plain window on a plain background is the honest Standard look. */
+:root[data-material="glass"] body {
+  background-image: var(--wallpaper);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* The navigation surfaces: they carry the material and their own shadow. */
+:root[data-material="glass"] .popover,
+:root[data-material="glass"] .window {
+  background-image: var(--glass-specular);
+  background-color: var(--glass-tint);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-ring);
+  border-color: transparent;
+}
+
+:root[data-material="glass"] .popover {
+  border-radius: var(--r-popover);
+  box-shadow: var(--glass-ring), var(--glass-drop);
+}
+
+:root[data-material="glass"] .window {
+  border-radius: var(--r-panel);
+  box-shadow: var(--glass-ring), var(--glass-drop);
+}
+
+:root[data-material="glass"] .titlebar,
+:root[data-material="glass"] .sidebar,
+:root[data-material="glass"] .pop-foot {
+  background-color: transparent;
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+:root[data-material="glass"] .sidebar {
+  border-right-color: var(--glass-edge);
+}
+
+:root[data-material="glass"] .titlebar {
+  border-bottom-color: var(--glass-edge);
+}
+
+:root[data-material="glass"] .pop-foot {
+  border-top-color: var(--glass-edge);
+}
+
+/* The controls. Flat frost, one hairline edge, a top inner highlight that is barely
+   there: no specular sweep, no bottom shading, no bevel, and no drop shadow, which is
+   what separated macOS 26 from the Aqua the founder saw. Hover brightens the tint by a
+   few percent, pressed darkens it and nothing moves. */
+:root[data-material="glass"] .btn,
+:root[data-material="glass"] .select,
+:root[data-material="glass"] .segmented {
+  /* The button family: "flat and quiet". A lightening frost on a light surface reads as
+     a white box held together by its border; the quiet fill reads as a control. The
+     frost stays: it is still the material, it is just no longer the whole of the fill. */
+  background-color: var(--control-quiet);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  box-shadow: var(--glass-control-ring);
+  border-color: transparent;
+  border-radius: var(--r-control);
+}
+
+:root[data-material="glass"] .btn,
+:root[data-material="glass"] .segmented {
+  background-image: none;
+}
+
+:root[data-material="glass"] .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 15px;
+  font-size: var(--t-footnote);
+  font-weight: 590;
+}
+
+:root[data-material="glass"] .popover .btn {
+  height: 28px;
+  padding: 0 14px;
+}
+
+:root[data-material="glass"] .btn:hover {
+  background-color: var(--control-quiet-hover);
+}
+
+:root[data-material="glass"] .btn:active {
+  background-color: var(--control-quiet-press);
+  transform: none;
+}
+
+:root[data-material="glass"] .select {
+  height: 30px;
+  padding: 0 var(--s6) 0 var(--s3);
+}
+
+:root[data-material="glass"] .select:hover {
+  background-color: var(--glass-control-hover);
+}
+
+:root[data-material="glass"] .segmented {
+  padding: 2px;
+}
+
+:root[data-material="glass"] .segmented button {
+  height: 26px;
+  padding: 0 var(--s3);
+  font-size: var(--t-footnote);
+  border-radius: calc(var(--r-control) - 2px);
+}
+
+:root[data-material="glass"] .segmented button[aria-checked="true"] {
+  background-color: var(--glass-pill);
+  background-image: none;
+  box-shadow: none;
+  font-weight: 590;
+}
+
+:root[data-material="glass"] .segmented button:hover[aria-checked="false"] {
+  background-color: var(--glass-control-hover);
+}
+
+/* One prominent action per surface: accent fill at 92 per cent behind the same frost,
+   a white label, no gradient. */
+:root[data-material="glass"] .btn.primary {
+  background-color: color-mix(in srgb, var(--accent) 92%, transparent);
+  background-image: none;
+  color: var(--accent-text);
+}
+
+:root[data-material="glass"] .btn.primary:hover {
+  background-color: color-mix(in srgb, var(--accent) 92%, #fff 8%);
+}
+
+:root[data-material="glass"] .btn.primary:active {
+  background-color: color-mix(in srgb, var(--accent) 92%, #000 10%);
+}
+
+:root[data-material="glass"] .btn.plain {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-material="glass"] .btn.plain:hover {
+  background-color: var(--glass-control-hover);
+}
+
+/* The content layer stays opaque: cards, tables, charts and every figure on them. */
+:root[data-material="glass"] .card,
+:root[data-material="glass"] .group,
+:root[data-material="glass"] .segment-card,
+:root[data-material="glass"] .native-note,
+:root[data-material="glass"] .not-ready {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 900px) {
+  .grid-3,
+  .grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

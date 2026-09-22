@@ -1,0 +1,19 @@
+{
+  "name": "prudence-desktop",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Prudence desktop app: Rust shell, HTML frontend, one codebase for macOS and Windows",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "test": "node --test 'test/*.test.mjs'",
+    "check": "tsc -p jsconfig.json"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  },
+  "type": "module"
+}

@@ -119,13 +119,21 @@ claude --plugin-dir ./plugin
 
 Skills `/prudence:sessions`, `/prudence:outcomes`, `/prudence:usage`, `/prudence:recall`, `/prudence:review`, `/prudence:ask`, and an MCP server an agent can query directly (there, `ask` returns the evidence only, because the agent calling it is already a model). See [plugin/README.md](plugin/README.md).
 
-## The macOS app
+## The desktop app
 
-A menu-bar icon whose dropdown shows today, this week's tokens by purpose, the latest observation and the last review; a window with Overview (tokens by purpose per week, survival and rework per project with coverage, where the hours went), Review (the stored review as cards and charts), Observations and Settings. Swift and Swift Charts, reading the same SQLite store through a versioned set of `app_*` views; the app never computes a number of its own. English and Simplified Chinese. See [apps/mac/README.md](apps/mac/README.md).
+A menu-bar icon whose panel shows today, this week's tokens by purpose, the latest observation and the last review; a window with Overview (tokens by purpose per week, survival and rework per project with coverage, where the hours went), Review (the stored review as cards and charts), Observations and Settings. It can find the `prudence` executable and run an ingest or a review for you, and it follows the store, so a run's new numbers arrive on their own.
+
+One codebase for macOS and Windows: a Rust shell around the design system's own HTML, reading the same SQLite store through a versioned set of `app_*` views. **The app never computes a number of its own**: a figure is one the engine produced, a sum of a view's columns, or the ratio of two columns of one row, and nothing else. English and Simplified Chinese, composed per language rather than translated. See [apps/desktop/README.md](apps/desktop/README.md).
 
 ## What it records and what it never records
 
-Raw session data is archived unmodified in a local store with owner-only permissions. Derived tables hold counts, classes and keyed line hashes, never message text, at any capture level. `metadata-only` withholds file paths and line hashes as well. Nothing is uploaded anywhere; observations compare you only with yourself. If you plan to enable Prudence on a work repository, check your employer's policy first.
+Raw session data is archived unmodified in a local store with owner-only permissions. **That happens at every capture level**: the level decides what is derived from your sessions, not what is kept of them, so a `metadata-only` repository's transcripts are archived in full too.
+
+Derived tables never hold message text, at any capture level. At `full` they do hold the commands that were run, the paths of the files that were edited and the working directory; `metadata-only` derives none of those and no line hashes either, so those tables hold shape and counts only.
+
+Nothing is uploaded by the desktop app, and observations compare you only with yourself. Three CLI commands can reach the model named in your configuration, and each has to be asked for: `prudence review --explain` and `prudence explain` send a review's own figures and no session text, and `prudence ask` sends the evidence it retrieved, plus short excerpts of your transcripts when you pass `--with-content`.
+
+If you plan to enable Prudence on a work repository, check your employer's policy first.
 
 ## How it works
 
@@ -133,7 +141,7 @@ Raw session data is archived unmodified in a local store with owner-only permiss
 AI coding-agent transcripts and hooks ──► one local SQLite store (raw archive + derived tables)
         ──► attribution (which session made which commit, with confidence)
         ──► outcomes (survival, rework), facts, observations, reviews
-        ──► CLI · Claude Code plugin and MCP · macOS app (app_* views)
+        ──► CLI · Claude Code plugin and MCP · desktop app (app_* views)
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the layout and the rules that keep it easy to change.

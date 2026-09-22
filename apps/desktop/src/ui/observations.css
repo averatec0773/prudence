@@ -1,0 +1,72 @@
+/* Rules only the observations screen needs.
+ *
+ * Shared pieces (card, stat, chart furniture, data table, empty state, the method
+ * disclosure) live in `design/components.css`. Put a rule here only when this screen is
+ * the only screen that wants it; if a second screen wants it, move it to the shared file
+ * in the same change rather than copying it.
+ *
+ * The paired-bars chart itself is already dressed by `design/tokens.css`
+ * (`.chart.paired`, `.paired-row`, `.paired-label`, `.paired-value`, `.paired-gap`,
+ * `.track-wrap`). Everything below is either the card this screen builds around that
+ * chart, or a rule scoped inside `.obs-card` so it cannot reach another screen's charts.
+ *
+ * No design token may be declared here. A test asserts it.
+ */
+
+/* The three lines above the cards: what the scope is, how the list is ordered, and that
+   the range picker does not apply here. `.notes` puts space above itself for a footer;
+   at the top of a screen that space is a hole. */
+.obs-lede {
+  margin-top: 0;
+}
+
+/* One behaviour's name over the group of cards it heads. Only drawn under "All
+   projects", where the cards come in blocks. */
+.obs-heading {
+  font-size: var(--t-title3);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  margin-top: var(--s3);
+}
+
+/* One outcome of one split. Two outcomes are two readings of the same two groups of
+   sessions, so they are blocks of one card rather than two cards, and a hairline is
+   what separates two readings without dividing them. */
+.obs-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* Between two readings, never above the first. Written as a sibling rule rather than
+   with `:first-of-type`, which counts by tag: the card's first `div` is its head, so
+   `.obs-outcome:first-of-type` matches nothing and every block gets a line above it. */
+.obs-outcome + .obs-outcome {
+  padding-top: var(--s3);
+  border-top: 0.5px solid var(--separator);
+}
+
+
+/* The coverage and the two group sizes, on one line under the bars they qualify. They
+   wrap rather than shrink: a caveat cut in half is worse than a caveat on two lines. */
+.obs-caveat {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+}
+
+/* The bar's own value is the figure the card is about, so it reads as a figure rather
+   than as a caption. Scoped to this screen's cards: `.paired-value` is shared, and the
+   Review screen may want the quieter default. */
+.obs-card .paired-value {
+  font-size: var(--t-footnote);
+  color: var(--text);
+  font-weight: 560;
+}
+
+/* The bar's height. The track is an SVG stretched to its box, so the box has to say how
+   tall a bar is. */
+.obs-card .track-wrap {
+  height: 16px;
+}

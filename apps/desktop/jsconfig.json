@@ -1,0 +1,28 @@
+{
+  "//": "Static checking with no build step and nothing shipped: `tsc --noEmit` over plain JavaScript with JSDoc types. Chosen over eslint because the defects worth catching here are shape defects (a JSON string where an array was expected, an optional read as if it were present), and eslint cannot see those.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "noUnusedLocals": true
+  },
+  "include": [
+    "src/**/*.js",
+    "test/**/*.mjs"
+  ]
+}

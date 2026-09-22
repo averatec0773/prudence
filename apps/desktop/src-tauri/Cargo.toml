@@ -1,0 +1,68 @@
+[package]
+name = "prudence-desktop"
+version = "0.5.0"
+description = "Prudence desktop app"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[features]
+# Everything that exists only so a script can drive the app: the stress runner, the
+# screenshot hooks and the backdrop window. A release build does not have them, so the
+# shipped binary cannot be told to evaluate JavaScript against its own window by setting
+# an environment variable. `Scripts/shot.py` and `Scripts/stress.py` build with it.
+harness = []
+
+[lib]
+name = "prudence_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["config-json"] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+# The file picker, for when the search cannot find `prudence`. Opened from Rust rather
+# than from the page, so the chosen path is verified and remembered on the side that can
+# look at a filesystem, and so no webview capability has to be granted for it.
+tauri-plugin-dialog = "2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# The store is watched so the window follows an ingest instead of showing an hour-old
+# figure. The debounce is ours (see `watcher.rs`): the policy is the interesting part and
+# a second crate would not know it.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "0.8"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", features = [
+  "std",
+  "NSApplication",
+  "NSButton",
+  "NSCell",
+  "NSControl",
+  "NSResponder",
+  "NSScreen",
+  "NSStatusBar",
+  "NSStatusBarButton",
+  "NSStatusItem",
+  "NSView",
+  "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = ["std", "NSString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+window-vibrancy = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+# `true` strips the symbol table, which also strips it out of the macOS crash report, so
+# a start-up failure becomes an icon that bounces once and a report nobody can read.
+strip = "debuginfo"

@@ -25,7 +25,40 @@ Before the first tag can publish, the project owner does this once, on pypi.org:
 
 Nothing else needs a secret. There is no `PYPI_API_TOKEN` to create or rotate.
 
-## Unreleased
+## 0.5.0 - unreleased
+
+M5: the desktop app is one codebase for two systems. The Swift macOS app in `apps/mac/`
+is replaced by `apps/desktop/`, a Rust shell around the design system's own HTML that
+builds for macOS today and is written so that Windows needs no second frontend. It reads
+the same store through the same versioned `app_*` views and computes no number of its own.
+The engine gains source adapters and a correct account of forked sessions (below).
+
+What's included:
+
+- **Four screens.** Overview (three totals, tokens by purpose per week, what became of
+  each week's work with its coverage, where the hours went), Review (one stored review as
+  the engine wrote it), Observations (one card per behaviour, paired bars, every share
+  over its denominator) and Settings (what is recorded and at what level, what is never
+  recorded, where the store is, the engine, an about block).
+- **One week axis.** Every weekly chart's x axis is the range's complete week list, so a
+  week sits at the same place in each chart, and a week nothing was recorded in is an
+  empty slot rather than a zero.
+- **The engine, from the app.** It finds the `prudence` executable the way a login shell
+  would (uv's directories, then Homebrew, then one shell probe), verifies it before
+  trusting it, and can run an ingest or a review. A run that the engine declines says why,
+  in the engine's own words. There is a picker for an executable in an unusual place.
+- **The store is followed.** An ingest that lands while the app is open refreshes the
+  pages, whether the app started it or a terminal did.
+- **English and Simplified Chinese**, composed per language rather than translated, with
+  the engine's own English kept beside a recomposed sentence as the thing to check it
+  against.
+- **Real Liquid Glass** on macOS 26, on the control and navigation layer only; the content
+  layer is opaque, so no figure is read against a moving backdrop.
+
+Not in this release: signing, notarisation and an updater. The app is built from the
+terminal and is unsigned.
+
+Engine changes in the same release:
 
 - **A forked session is its own session, and it starts when it was forked.** Claude Code's
   fork (and a resume into a new file) writes the parent's whole history into the new
