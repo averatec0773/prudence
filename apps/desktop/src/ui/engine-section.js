@@ -106,13 +106,20 @@ function sourceLabel(source) {
   return t("settings.foundAutomatically");
 }
 
-/** The reason a file that *was* found is not being used. */
-function refusal(status) {
-  const kind = String(status?.errorKind ?? "");
-  // "not found" means two things. Here it means the chosen file is not executable; the
-  // other meaning, nothing anywhere, is the empty state above.
+/**
+ * Why a file that *was* found is not being used.
+ *
+ * Shared by the block, which reports a search hit that would not answer `--version`, and
+ * by the picker, which reports a file the reader chose and the shell refused.
+ *
+ * @param {{ errorKind?: string, error?: string }} refused
+ */
+function refusal(refused) {
+  const kind = String(refused?.errorKind ?? "");
+  // "not found" means two things. Here it means this file is not something that can be
+  // run; the other meaning, nothing anywhere, is the empty state above.
   const said = kind === "notFound" ? t("engine.error.notExecutable") : t(`engine.error.${kind}`);
-  return status?.error ? `${said} ${status.error}` : said;
+  return refused?.error ? `${said} ${refused.error}` : said;
 }
 
 function fill(body, status, state) {
@@ -189,7 +196,19 @@ function actions(body, status, state) {
       // answer, and the shell is asked again rather than the page guessing what changed.
       port
         .choose()
-        .then((choice) => (choice?.cancelled ? undefined : redraw()))
+        .then((choice) => {
+          if (choice?.cancelled) return undefined;
+          // A file the reader chose and the shell would not keep. Saying nothing here
+          // would leave them looking at the block they were trying to change, with no
+          // word about the file they picked.
+          if (choice?.errorKind) {
+            announce([
+              line(t("engine.rejected", refusal(choice))),
+              button(t("common.dismiss"), "plain", clear),
+            ]);
+          }
+          return redraw();
+        })
         .catch(redraw);
     })
   );

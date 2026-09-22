@@ -226,6 +226,27 @@ test("cancelling the picker changes nothing, and choosing a file asks the shell 
   assert.equal(asked.status, 2, "a chosen file is a new answer and the shell is asked");
 });
 
+/* Verified before it is trusted. The reader chose a file and the shell would not keep it;
+   redrawing the block without a word would leave them looking at what they tried to
+   change with nothing said about their choice. */
+test("a file the shell refuses is reported, not swallowed", async () => {
+  const strip = engineActivity();
+  const asked = fakePort({
+    status: FOUND,
+    choose: { path: "/Applications/Calculator.app", errorKind: "notFound" },
+  });
+  const block = engineSection(state("0.4.0"));
+  await settled();
+  block.findAll("button").find((n) => n.textContent === Str.t("common.choose")).fire("click");
+  await settled();
+
+  assert.equal(
+    strip.find(".engine-said").textContent,
+    Str.t("engine.rejected", Str.t("engine.error.notExecutable"))
+  );
+  assert.equal(asked.status, 2, "and the block is drawn again from the shell's answer");
+});
+
 /* --- the runner and the strip -------------------------------------------------------- */
 
 test("a run says it is going, then says what the engine said", async () => {
