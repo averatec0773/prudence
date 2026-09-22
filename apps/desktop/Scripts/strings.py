@@ -57,7 +57,10 @@ DESKTOP_ONLY = {
     "review.header.tokens": {"en": "tokens", "zh-Hans": "token"},
     "review.header.figure": {"en": "figure", "zh-Hans": "指标"},
     "review.header.method": {"en": "method", "zh-Hans": "方法"},
-    "review.header.what_your_own_sessions_did": {"en": "what your own sessions did", "zh-Hans": "你自己的会话做了什么"},
+    "review.header.what_your_own_sessions_did": {
+        "en": "what your own sessions did",
+        "zh-Hans": "你自己的会话做了什么",
+    },
     "review.header.coverage_and_method": {"en": "coverage and method", "zh-Hans": "覆盖率与方法"},
     "review.header.previous_period": {"en": "previous period", "zh-Hans": "上一期"},
     "review.header.change": {"en": "change", "zh-Hans": "变化"},
