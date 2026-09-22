@@ -7,3 +7,103 @@
  *
  * No design token may be declared here. A test asserts it.
  */
+
+/* One fact per block, its caption above it. A hairline between two blocks, never above
+   the first: the card's own head is already separated from what follows it. */
+.fact-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.fact,
+.fact-block {
+  padding-bottom: var(--s3);
+}
+
+.fact + .fact,
+.fact + .fact-block {
+  padding-top: var(--s3);
+  border-top: 0.5px solid var(--separator);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fact-list > :last-child {
+  padding-bottom: 0;
+}
+
+.fact-label {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.fact-value {
+  font-size: var(--t-footnote);
+  /* A path has no spaces to break at, and a value that overflows its card takes the
+     card's own width with it. */
+  overflow-wrap: anywhere;
+}
+
+/* A path and a URL exist to be copied somewhere else. `window.css` turns selection off
+   for the whole window, which is right for a surface made of controls and wrong for the
+   two values on this screen whose only use is in a terminal or a browser. */
+.fact-value.is-path {
+  user-select: text;
+  cursor: text;
+}
+
+/* The qualifications under a value. `.notes` is shared and puts space above itself for a
+   footer; inside a block that space would open a hole. */
+.fact-notes {
+  margin-top: 4px;
+}
+
+/* A block inside a card with its own caption and its own note: the fact versions under
+   the store, the platform pairs under the about block. */
+.settings-subhead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--s2);
+}
+
+.settings-subhead h3 {
+  font-size: var(--t-footnote);
+  font-weight: 590;
+  color: var(--text-2);
+}
+
+.settings-subhead p {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+/* The record's promise. A list, because it is six separate statements and prose would
+   let a reader skim past one of them. The margin is zeroed because `tokens.css` resets
+   the headings and the paragraph and leaves a list with the browser's own. */
+.settings-promise {
+  margin: 0;
+  padding-left: var(--s5);
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.settings-promise li {
+  margin-bottom: var(--s2);
+}
+
+.settings-promise li:last-child {
+  margin-bottom: 0;
+}
+
+/* A table whose row header is its first cell. `tokens.css` clears the last row's bottom
+   border on a `td` only, so without this the platform table ends on half a hairline. */
+.settings-pairs tr:last-child th {
+  border-bottom: 0;
+}

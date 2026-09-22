@@ -274,6 +274,166 @@ DESKTOP_ONLY = {
         "en": "observation fact version %1$@, app contract %2$@",
         "zh-Hans": "观察事实版本 %1$@，应用契约 %2$@",
     },
+    # --- the Settings screen ----------------------------------------------------------
+    # The catalogue already carries this screen's labels from the Swift app, and they are
+    # reused (`settings.store`, `settings.databasePath`, `settings.language*`). Everything
+    # below is what the Swift screen did not have. Two reasons it is this much prose:
+    # the desktop screen is **read-only**, because no bridge command writes a setting, so
+    # where the Swift app drew a switch this one has to say what is in force and where it
+    # is changed; and this is the one place a user looks to find out what the tool knows
+    # about them, so the record's own promise belongs here in full.
+    "settings.recorded": {"en": "What is recorded", "zh-Hans": "记录了什么"},
+    "settings.recorded.note": {
+        "en": "Which repositories are on record, and how much of each was kept. Counted from the sessions in the store, so this is what was recorded rather than what is configured.",
+        "zh-Hans": "哪些仓库在记录里，以及每个保留了多少。这是从存储里的会话数出来的，所以它是实际记录下来的东西，不是配置里写的东西。",
+    },
+    "settings.recorded.method": {
+        "en": "capture_level from the app_session_list view, grouped by project. A session is one row of that view, so each figure is the number of rows in one group, and the groups add up to app_status.sessions.",
+        "zh-Hans": "取 app_session_list 视图的 capture_level，按 project 分组。一个会话就是该视图的一行，所以每个数字是一组里的行数，各组相加等于 app_status.sessions。",
+    },
+    "settings.recorded.total": {"en": "%1$@ across %2$@.", "zh-Hans": "共 %1$@，来自 %2$@。"},
+    "settings.recorded.readOnly": {
+        "en": "This screen reads the store and changes nothing. A repository is enabled, and its level set, with `prudence enable <repository> --level full|metadata-only`; `prudence forget` removes what was already recorded.",
+        "zh-Hans": "这个页面只读取存储，不改动任何设置。启用一个仓库并设定它的级别要用 `prudence enable <repository> --level full|metadata-only`；`prudence forget` 会删掉已经记录下来的内容。",
+    },
+    "settings.recorded.empty.title": {
+        "en": "Nothing is recorded yet",
+        "zh-Hans": "还没有记录任何东西",
+    },
+    "settings.recorded.empty.detail": {
+        "en": "No session is on record. Nothing is recorded until a repository is enabled: `prudence init` walks you through it, and `prudence enable <repository> --level full` enables one directly.",
+        "zh-Hans": "存储里还没有任何会话。在启用一个仓库之前不会记录任何东西：`prudence init` 会带你走一遍，`prudence enable <repository> --level full` 直接启用一个。",
+    },
+    "settings.column.level": {"en": "Capture level", "zh-Hans": "记录级别"},
+    "settings.column.sessions": {"en": "Sessions recorded", "zh-Hans": "已记录的会话"},
+    # The two levels `config.LEVELS` has. A level this build has not heard of prints as
+    # the engine's own token rather than as a blank, which is the same fallback the
+    # Observations screen uses for a behaviour it does not know.
+    "settings.level.full": {"en": "Full", "zh-Hans": "完整"},
+    "settings.level.metadataOnly": {"en": "Metadata only", "zh-Hans": "仅元数据"},
+    # The product's promise, in the README's own words. It is on this screen because this
+    # is where somebody comes to ask what is kept about them, and because a promise that
+    # lives only in a README is a promise the app never makes.
+    "settings.never": {"en": "What is never recorded", "zh-Hans": "永远不会记录的东西"},
+    "settings.never.note": {
+        "en": "What the record holds and what it never holds, at any capture level.",
+        "zh-Hans": "记录里有什么、以及在任何记录级别下都不会有什么。",
+    },
+    "settings.never.archive": {
+        "en": "Your sessions' own files are archived unchanged, in a local store only your account can read.",
+        "zh-Hans": "你的会话文件会原样归档在本地存储里，只有你自己的账户能读。",
+    },
+    "settings.never.derived": {
+        "en": "The tables every figure in this app is computed from hold counts, classes and keyed line hashes. They never hold message text, at any capture level.",
+        "zh-Hans": "这个 App 里的每个数字都算自派生表，那些表里只有计数、分类和加密的行哈希，任何记录级别下都不会有消息正文。",
+    },
+    "settings.never.metadataOnly": {
+        "en": "A repository at metadata-only keeps no file paths, no working directory, no command text and no line hashes: shape and counts only.",
+        "zh-Hans": "级别为 metadata-only 的仓库不保留文件路径、工作目录、命令文本和行哈希，只有形状和计数。",
+    },
+    "settings.never.upload": {
+        "en": "Nothing is uploaded anywhere, and an observation compares you only with yourself.",
+        "zh-Hans": "没有任何内容会被上传，观察只拿你和你自己比较。",
+    },
+    # The one exception, said out loud. `reviews/explain.py` sends a compressed form of a
+    # stored review and its numbers inventory, never any text, and only when asked for.
+    # A screen that printed "nothing is uploaded" and stopped there would be wrong.
+    "settings.never.model": {
+        "en": "The one exception is `prudence review --explain`, which you have to ask for: it sends a review's own figures to the model named in your configuration, and no session text.",
+        "zh-Hans": "唯一的例外是需要你主动要求的 `prudence review --explain`：它会把一次回顾自己的数字发给你配置里指定的模型，不会发送任何会话文本。",
+    },
+    "settings.never.employer": {
+        "en": "If you enable Prudence on a work repository, check your employer's policy first.",
+        "zh-Hans": "如果你要在工作仓库上启用 Prudence，请先确认你雇主的政策。",
+    },
+    # Where the record is. The shell reports the one path it opened; it does not report
+    # the configuration's directory, so this screen does not claim to know it.
+    "settings.store.note": {
+        "en": "Where the record is on this machine. The app opens it read-only and never writes to it.",
+        "zh-Hans": "记录在这台机器上的位置。App 以只读方式打开它，从不写入。",
+    },
+    "settings.databasePath.resolved": {
+        "en": "Found the way the engine finds it: PRUDENCE_DATA_DIR when that is set, and this system's standard location otherwise.",
+        "zh-Hans": "查找方式和引擎一致：设置了 PRUDENCE_DATA_DIR 就用它，否则用本系统的标准位置。",
+    },
+    "settings.store.contract": {"en": "Contract", "zh-Hans": "契约"},
+    "settings.store.contract.value": {
+        "en": "%1$@ in this store; this build reads %2$@.",
+        "zh-Hans": "这个存储是 %1$@；这个构建能读 %2$@。",
+    },
+    "settings.store.method": {
+        "en": "last_ingest_at, sessions and the versions below are columns of the app_status view, printed as they are. The path is the file the shell opened.",
+        "zh-Hans": "last_ingest_at、sessions 以及下面的各个版本号都是 app_status 视图的列，原样打印。路径是外壳实际打开的那个文件。",
+    },
+    # The fact versions. They are the provenance of every figure on the other three
+    # screens: a number re-derived after one of these changes can differ from one
+    # computed before it, and without this there is nowhere to see which is which.
+    "settings.versions": {
+        "en": "What produced these figures",
+        "zh-Hans": "这些数字是由什么算出来的",
+    },
+    "settings.versions.note": {
+        "en": "Every step of the engine carries a version. A figure re-derived after one of them changed can differ from one computed before it.",
+        "zh-Hans": "引擎的每一步都带一个版本号。某一步变了之后重算出来的数字，可能和变之前算出来的不一样。",
+    },
+    "settings.versions.column.step": {"en": "Step", "zh-Hans": "步骤"},
+    "settings.versions.column.version": {"en": "Version", "zh-Hans": "版本号"},
+    "settings.version.parser": {"en": "Session parser", "zh-Hans": "会话解析"},
+    "settings.version.purposeRule": {"en": "Purpose rule", "zh-Hans": "用途判定规则"},
+    "settings.version.commit": {"en": "Commit facts", "zh-Hans": "提交事实"},
+    "settings.version.attribution": {"en": "Commit attribution", "zh-Hans": "提交归因"},
+    "settings.version.outcome": {"en": "Outcome facts", "zh-Hans": "结果事实"},
+    "settings.version.observation": {"en": "Observation facts", "zh-Hans": "观察事实"},
+    "settings.version.hook": {"en": "Hook facts", "zh-Hans": "钩子事实"},
+    # Read-only for the same reason as the rest of the screen: `PRUDENCE_FORCE_LANGUAGE`
+    # and `PRUDENCE_FORCE_APPEARANCE` are screenshot hooks rather than settings, and
+    # there is no command that would persist a user's choice of either.
+    "settings.languageAndAppearance": {
+        "en": "Language and appearance",
+        "zh-Hans": "语言与外观",
+    },
+    "settings.languageAndAppearance.note": {
+        "en": "Both follow the system, and the app has no switch for either yet. This is what is in force and where it came from.",
+        "zh-Hans": "两者都跟随系统，App 目前还没有任何开关。这里写的是当前生效的设置，以及它来自哪里。",
+    },
+    "settings.language.forced": {
+        "en": "Forced by %1$@ for this launch.",
+        "zh-Hans": "本次启动由 %1$@ 强制指定。",
+    },
+    "settings.language.fromSystem": {
+        "en": "Followed from the system's language when the app started.",
+        "zh-Hans": "App 启动时跟随了系统语言。",
+    },
+    "settings.appearance": {"en": "Appearance", "zh-Hans": "外观"},
+    "settings.appearance.system": {"en": "Follows the system", "zh-Hans": "与系统一致"},
+    "settings.appearance.note": {
+        "en": "Light and dark come from the system appearance and change without a relaunch. The app has no override of its own.",
+        "zh-Hans": "浅色和深色来自系统外观，切换时不需要重启 App。App 自己没有覆盖选项。",
+    },
+    "settings.about": {"en": "About", "zh-Hans": "关于"},
+    "settings.about.note": {
+        "en": "Which pieces are running, and where the project is.",
+        "zh-Hans": "正在运行的是哪些部分，以及项目在哪里。",
+    },
+    "settings.about.app": {"en": "App version", "zh-Hans": "App 版本"},
+    # Deliberately not "engine version": this is the version that last wrote to the
+    # store, which is not necessarily the executable on the user's PATH today. The
+    # executable and its own version belong to `ui/engine-section.js`.
+    "settings.about.engine": {
+        "en": "Engine that wrote this store",
+        "zh-Hans": "写入该存储的引擎",
+    },
+    "settings.about.licence": {"en": "Licence", "zh-Hans": "许可协议"},
+    "settings.about.project": {"en": "Project home", "zh-Hans": "项目主页"},
+    "settings.about.platform": {"en": "Platform", "zh-Hans": "平台"},
+    "settings.about.platform.note": {
+        "en": "What the shell reports about this machine, in its own words. Worth quoting when something about the window looks wrong.",
+        "zh-Hans": "外壳用它自己的说法报告的本机信息。窗口哪里看起来不对时，把这些一起贴出来会有帮助。",
+    },
+    "settings.about.method": {
+        "en": "The app's version is this build's own. The engine's is app_status.engine_version, which is the version that last wrote to the store.",
+        "zh-Hans": "App 版本是这个构建自己的版本。引擎版本取自 app_status.engine_version，也就是最后一次写入存储的那个版本。",
+    },
 }
 
 # Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from
