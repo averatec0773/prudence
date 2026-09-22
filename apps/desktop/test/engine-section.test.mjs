@@ -360,7 +360,11 @@ test("a second run while one is going is refused rather than started", async () 
 
   const going = run("ingest");
   await run("review");
-  assert.equal(strip.find(".engine-said").textContent, Str.t("engine.busy"));
+
+  // Both lines. The refusal used to *replace* the strip, so it wiped the only thing on
+  // screen saying a run was going, and dismissing it left nothing about the run at all.
+  const said = strip.findAll(".engine-said").map((node) => node.textContent);
+  assert.deepEqual(said, [Str.t("menu.ingesting"), Str.t("engine.busy")]);
   assert.deepEqual(asked.runs, [{ action: "ingest", force: false }]);
 
   release();
@@ -444,4 +448,85 @@ test("the block draws in Chinese without falling back to a key", async () => {
   } finally {
     Str.setLang("en");
   }
+});
+
+/* Every failure kind the shell can send reaches a sentence, not an identifier.
+ *
+ * The previous version of this listed the keys it expected and asserted those exist in
+ * the catalogue. It never asked what key the code builds, so it passed while a run that
+ * failed with `notFound` printed the literal string "engine.error.notFound" on screen:
+ * there is no such key. This drives the real path for every kind, in both languages, and
+ * fails on anything that looks like a key rather than a sentence. */
+test("every failure the shell can send is a sentence on screen, never a key", async () => {
+  // Read out of the Rust, not typed here: a list I wrote from memory included `read`,
+  // which the shell cannot send, so the test demanded a sentence for a kind that does not
+  // exist. A new kind in `EngineError::kind()` with no sentence now fails this.
+  const source = readFileSync(join(app, "src-tauri/src/engine.rs"), "utf8");
+  const kinds = [...source.matchAll(/Self::\w+(?:\([^)]*\)|\s*\{[^}]*\})?\s*=>\s*"(\w+)"/g)].map(
+    (m) => m[1]
+  );
+  assert.ok(kinds.length >= 5, `only found ${kinds.length} failure kinds in engine.rs`);
+  // Plus the one `refusal` uses, which is a sentence rather than a kind.
+  kinds.push("notExecutable");
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    for (const kind of [...kinds, "somethingFromAFutureBuild"]) {
+      const strip = engineActivity();
+      fakePort({ run: () => Promise.resolve({ action: "ingest", errorKind: kind }) });
+      await run("ingest");
+
+      const said = strip.findAll(".engine-said").map((node) => node.textContent);
+      assert.ok(said.length > 0, `${language} ${kind}: the strip said nothing`);
+      for (const text of said) {
+        assert.doesNotMatch(
+          text,
+          /^[a-z]+(\.[a-zA-Z]+)+$/,
+          `${language} ${kind}: an unresolved key reached the screen: ${text}`
+        );
+      }
+    }
+  }
+  Str.setLang("en");
+});
+
+/* The buttons. `if (running) button.disabled = true` was evaluated once, at build time,
+ * so the tree that started a run disabled nothing, and a tree built during a run stayed
+ * disabled for ever because nothing redrew the block when the run ended. */
+test("a run disables the actions it starts, and finishing brings them back", async () => {
+  engineActivity();
+  let release = () => {};
+  fakePort({
+    status: FOUND,
+    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true }))),
+  });
+
+  const block = /** @type {any} */ (engineSection(state("0.4.0")));
+  await settled();
+  const labels = () =>
+    block.findAll("button").map((node) => [node.textContent, Boolean(node.disabled)]);
+
+  assert.deepEqual(
+    labels().filter(([, off]) => off),
+    [],
+    "something was disabled before any run started"
+  );
+
+  const going = run("ingest");
+  const during = labels();
+  assert.ok(
+    during.some(([label, off]) => label === Str.t("menu.ingestNow") && off),
+    `Ingest now was not disabled during a run: ${JSON.stringify(during)}`
+  );
+  assert.ok(
+    during.some(([label, off]) => label === Str.t("common.choose") && !off),
+    "Choose was disabled, though it starts no run and is the way out"
+  );
+
+  release();
+  await going;
+  assert.deepEqual(
+    labels().filter(([, off]) => off),
+    [],
+    "the actions never came back after the run ended"
+  );
 });

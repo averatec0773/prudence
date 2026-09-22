@@ -49,6 +49,42 @@ NOTE = (
 
 # Keys the desktop added after the Swift app was frozen. Nothing in `apps/mac/` uses them.
 DESKTOP_ONLY = {
+    # The column headers `reviews/build.py` writes, and the only part of a stored
+    # review that is translated rather than printed as stored. They are a closed set
+    # (five header rows, sixteen labels), so a lookup cannot drift: a header this build
+    # has not heard of falls back to the engine's own word. Everything else in a review
+    # stays as the engine wrote it, which is the decision on the record.
+    "review.header.tokens": {"en": "tokens", "zh-Hans": "token"},
+    "review.header.figure": {"en": "figure", "zh-Hans": "指标"},
+    "review.header.method": {"en": "method", "zh-Hans": "方法"},
+    "review.header.what_your_own_sessions_did": {"en": "what your own sessions did", "zh-Hans": "你自己的会话做了什么"},
+    "review.header.coverage_and_method": {"en": "coverage and method", "zh-Hans": "覆盖率与方法"},
+    "review.header.previous_period": {"en": "previous period", "zh-Hans": "上一期"},
+    "review.header.change": {"en": "change", "zh-Hans": "变化"},
+    "review.header.suggestion": {"en": "suggestion", "zh-Hans": "建议"},
+    "review.header.then": {"en": "then", "zh-Hans": "当时"},
+    "review.header.since": {"en": "since", "zh-Hans": "之后"},
+    # A refusal and the engine's own words, as one sentence rather than two fragments
+    # glued in JavaScript. The detail is the engine's and stays English, which is
+    # registered; what this fixes is the punctuation around it.
+    "engine.rejectedWithDetail": {
+        "en": "%1$@ The engine said: %2$@",
+        "zh-Hans": "%1$@引擎的原话是：%2$@",
+    },
+    # The page opened without a shell behind it, which happens when `window.html` is
+    # loaded in a browser to work on layout. The general "not found" sentence ends by
+    # telling the reader to choose the file themselves, and there is nothing to choose
+    # with here, so this branch gets its own.
+    "engine.noShell.detail": {
+        "en": "This page is open without the app around it, so nothing has looked for the engine. Run the app to see where it is.",
+        "zh-Hans": "这个页面是在应用之外打开的，所以没有去找过引擎。要看引擎在哪里，请运行应用。",
+    },
+    # A failure kind this build has never heard of. A reader is never shown an identifier,
+    # so an unknown kind gets the general sentence instead of its own name.
+    "engine.failed.detail": {
+        "en": "The engine stopped in a way this version does not recognise.",
+        "zh-Hans": "引擎以这个版本无法识别的方式中断了。",
+    },
     # The method line under each chart, rewritten for a reader. The view and column names
     # moved into `*.method`, which the page puts behind a disclosure: principle 3 asks for
     # the method stated, and a caption that opens with `alive_30d / measured_30d` states
@@ -83,7 +119,7 @@ DESKTOP_ONLY = {
     "screen.notBuilt.title": {"en": "Not built yet", "zh-Hans": "这个页面还没写"},
     "screen.notBuilt.detail": {
         "en": "This screen arrives in the next delivery. Nothing is wrong with your store.",
-        "zh-Hans": "这个页面会在下一次交付里出现。你的库没有问题。",
+        "zh-Hans": "这个页面会在下一次交付里出现。你的存储没有问题。",
     },
     # Two line charts stacked in one card with identical furniture. The legend said which
     # stroke meant what, which was no use when they are separate pictures.
@@ -231,7 +267,7 @@ DESKTOP_ONLY = {
         # app confidently telling the reader the old one. Describing the shape of the
         # rule cannot go stale.
         "en": "An observation needs enough sessions on both sides of a threshold, and a wide enough gap between the two medians. No behaviour in this store clears both floors yet. Nothing is wrong with your store.",
-        "zh-Hans": "一条观察需要某个阈值两侧都有足够多的会话，并且两个中位数之间的差距足够大。这个库里还没有任何行为同时满足这两条。你的库没有问题。",
+        "zh-Hans": "一条观察需要某个阈值两侧都有足够多的会话，并且两个中位数之间的差距足够大。这个存储里还没有任何行为同时满足这两条。你的存储没有问题。",
     },
     # The range picker sits above this screen and changes nothing on it: an observation is
     # computed over every session in the store, and there is no date window anywhere in
@@ -301,7 +337,7 @@ DESKTOP_ONLY = {
     # than worth stopping for.
     "engine.versionMismatch": {
         "en": "The engine on this machine is version %1$@, and the store was last written by %2$@. Both still read; the next ingest will be written by %1$@.",
-        "zh-Hans": "这台机器上的引擎是 %1$@ 版，而这个库上次是由 %2$@ 写入的。两者都还能读；下一次采集会由 %1$@ 写入。",
+        "zh-Hans": "这台机器上的引擎是 %1$@ 版，而这个存储上次是由 %2$@ 写入的。两者都还能读；下一次采集会由 %1$@ 写入。",
     },
     # Nothing was found. The title is the dropdown's `menu.engineMissing`; this is the
     # line under it, and it has to say what stops working and what to do about it.
@@ -314,7 +350,7 @@ DESKTOP_ONLY = {
     # the store holds once the run is done. This says that instead of implying the other.
     "engine.ingestFinished.sessions": {
         "en": "Ingest finished. The store now holds %1$@.",
-        "zh-Hans": "采集完成。这个库现在有 %1$@。",
+        "zh-Hans": "采集完成。这个存储现在有 %1$@。",
     },
     # A run that failed. The title, then one line naming which kind of failure it was,
     # then the engine's own words underneath it. The engine's words are English, as the

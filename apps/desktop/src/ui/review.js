@@ -79,12 +79,41 @@ function methodNotes(notes, extra) {
   return how;
 }
 
-/** A stored section's table, exactly as the engine formatted it. */
+/**
+ * A column header in the reader's language, or the engine's own word.
+ *
+ * The rest of a review is printed as stored, because a key per engine figure label would
+ * drift from the engine in silence. Headers are the exception, and the reason is that they
+ * are a closed set: `reviews/build.py` writes five header rows, sixteen labels. A header
+ * this build has not heard of prints as the engine wrote it, so an engine that adds one is
+ * never mistranslated, only untranslated.
+ */
+const HEADER_KEYS = {
+  "purpose": "chart.purpose",
+  "sessions": "chart.sessionsShort",
+  "active h": "chart.hours",
+  "value": "chart.value",
+  "coverage": "overview.legend.coverageName",
+  "this period": "compare.nowShort",
+};
+
+function headerLabel(title) {
+  const head = String(title);
+  // Six of the sixteen are words the product has already chosen elsewhere, so they are
+  // reused rather than written twice: `strings.test.mjs` refuses two keys with the same
+  // text unless the pair is two deliberate decisions, and these would have been one
+  // decision written twice.
+  const key = HEADER_KEYS[head] ?? `review.header.${head.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`;
+  const said = t(key);
+  return said === key ? head : said;
+}
+
+/** A stored section's table, with the engine's own cells and translated column headers. */
 function storedTable(section, { swatches = false } = {}) {
   const table = el("table", { class: "data" });
   const head = el("tr");
   for (const [index, title] of (section.headers ?? []).entries()) {
-    head.appendChild(el("th", { class: index ? "n" : "", text: title }));
+    head.appendChild(el("th", { class: index ? "n" : "", text: headerLabel(title) }));
   }
   table.appendChild(el("thead", {}, [head]));
 

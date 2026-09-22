@@ -158,12 +158,21 @@ function whatIsRecorded(data) {
   }
   table.appendChild(body);
 
-  // The total and the number of projects are the engine's own columns rather than this
-  // screen's sum of the column above it: one source of truth per fact. Adding the column
-  // up is how a reader checks the two against each other, which is what the method says.
+  // The session total is the engine's own column, so adding up the column above it is
+  // how a reader checks the two against each other.
+  //
+  // **The project count is the number of groups in this table**, not
+  // `app_status.projects`. That column is `(SELECT COUNT(*) FROM repository)`, and
+  // `repos.py` drops and rebuilds `repository` from `config.toml` on every ingest, so it
+  // counts what is *enabled* whether or not a session was ever recorded in it. Enable a
+  // fourth repository and the card read "150 sessions across 4 projects" above a
+  // three-row table adding to 150. It was 3 = 3 on the founder's store by coincidence,
+  // and the card's own note says this is "what was recorded rather than what is
+  // configured". Counting the groups the reader already produced is not the app owning a
+  // figure; taking a count of a different population and printing it here was.
   const footer = el("div", { class: "notes" });
   if (status) {
-    const projects = Number(status.projects) || 0;
+    const projects = new Set(rows.map((row) => row.project)).size;
     footer.appendChild(
       el("div", {
         text: t(

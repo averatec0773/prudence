@@ -320,6 +320,32 @@ a:hover {
   outline-offset: 1px;
 }
 
+/* A button that cannot be pressed has to look like one.
+ *
+ * Nothing in any stylesheet matched `[disabled]`, so a disabled `.btn` was pixel-identical
+ * to a live one: the engine's actions went dead during a run and the only way to find out
+ * was to click and have nothing happen, which is the "control that does nothing" the
+ * design forbids. Dimmed and with the pointer changed, not greyed to a different colour,
+ * because colour here would be saying something about the action rather than about whether
+ * it is available. The hover and the press are cancelled with it. */
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  box-shadow: none;
+}
+
+.btn:disabled:hover {
+  background: var(--control);
+}
+
+.btn.primary:disabled:hover {
+  background: var(--accent);
+}
+
+.btn:disabled:active {
+  transform: none;
+}
+
 .btn.primary {
   background: var(--accent);
   border-color: transparent;

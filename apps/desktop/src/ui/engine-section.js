@@ -74,7 +74,12 @@ export function engineSection(state) {
   if (!port) {
     // No shell: the page is open in a browser, which is a real thing to do while working
     // on layout. It says so rather than pretending to have looked.
-    body.appendChild(emptyState(t("menu.engineMissing"), t("engine.notFound.detail")));
+    //
+    // `engine.notFound.detail` ends by telling the reader to choose the file themselves,
+    // and this branch drew no Choose button, so the one sentence on screen named an
+    // action that was not there. There is nothing to pick with either, so the sentence is
+    // the one for a page with no shell behind it.
+    body.appendChild(emptyState(t("menu.engineMissing"), t("engine.noShell.detail")));
     return root;
   }
 
@@ -119,11 +124,16 @@ function refusal(refused) {
   // "not found" means two things. Here it means this file is not something that can be
   // run; the other meaning, nothing anywhere, is the empty state above.
   const said = kind === "notFound" ? t("engine.error.notExecutable") : t(`engine.error.${kind}`);
-  return refused?.error ? `${said} ${refused.error}` : said;
+  // One key with two placeholders. This glued a localised sentence to the engine's raw
+  // English with an ASCII space, which in Chinese put a space after a full-width full
+  // stop and a newline inside one paragraph.
+  return refused?.error ? t("engine.rejectedWithDetail", said, String(refused.error)) : said;
 }
 
 function fill(body, status, state) {
   body.innerHTML = "";
+  // The buttons about to be replaced are gone; the new ones register themselves.
+  buttons.clear();
 
   if (status?.found) {
     body.appendChild(el("p", { class: "engine-path", text: String(status.path) }));
@@ -183,7 +193,8 @@ function actions(body, status, state) {
   } else {
     // The search is cheap to repeat and the answer changes the moment the engine is
     // installed, so the way out of "not found" is not a relaunch.
-    row.appendChild(action(t("common.tryAgain"), "", redraw));
+    // Not disabled by a run: it starts none, and it is how a reader recovers.
+    row.appendChild(action(t("common.tryAgain"), "", redraw, { whileRunning: "keep" }));
   }
 
   // Offered whether or not something was found: an engine found in one place and wanted
@@ -210,7 +221,7 @@ function actions(body, status, state) {
           return redraw();
         })
         .catch(redraw);
-    })
+    }, { whileRunning: "keep" })
   );
 
   if (status?.remembered) {
@@ -219,17 +230,50 @@ function actions(body, status, state) {
         const port = ENGINE.port;
         if (!port) return;
         port.forget().then(redraw).catch(redraw);
-      })
+      }, { whileRunning: "keep" })
     );
   }
   return row;
 }
 
-function action(label, variant, onClick) {
+/**
+ * A button in the block, remembered so that a run can disable it and a run's end can
+ * bring it back.
+ *
+ * `if (running) button.disabled = true` was evaluated once, when the button was built, so
+ * in the tree that *started* a run nothing was disabled, and a tree built *during* a run
+ * had every button disabled for ever, because nothing redrew the block when the run
+ * ended. A review the engine declines does not change the store, so there was no refresh
+ * either: the screen's primary actions stayed dead with no explanation.
+ *
+ * `Choose` is deliberately not disabled. It starts no run, and it is the way out when the
+ * remembered path is the problem.
+ */
+function action(label, variant, onClick, { whileRunning = "disable" } = {}) {
   const button = el("button", { class: `btn ${variant}`.trim(), type: "button", text: label });
-  if (running) /** @type {any} */ (button).disabled = true;
   button.addEventListener("click", onClick);
+  if (whileRunning === "disable") {
+    buttons.add(button);
+    /** @type {any} */ (button).disabled = running;
+  }
   return button;
+}
+
+/** Every button a run disables, in whichever tree is on screen. */
+const buttons = new Set();
+
+/**
+ * Disable or restore them, so the state of a run is visible wherever it is drawn.
+ *
+ * No pruning by `isConnected`: that made correctness depend on a real-DOM property, and
+ * under the test shim every button was dropped from the set instead of disabled, so the
+ * first version of this fix did nothing and a test caught it. The set is emptied when the
+ * block is rebuilt, and setting `disabled` on a node that has since been replaced is
+ * harmless.
+ */
+function setRunning(value) {
+  running = value;
+  for (const button of buttons) /** @type {any} */ (button).disabled = value;
 }
 
 /* --- the strip ----------------------------------------------------------------------- */
@@ -249,6 +293,26 @@ export function engineActivity() {
   return strip;
 }
 
+/**
+ * The sentence for a failure kind, with no way to reach a key that is not there.
+ *
+ * Every kind the shell can send is named here. A kind this build has never heard of gets
+ * the general sentence rather than its own name, because a reader should never be shown
+ * an identifier.
+ */
+function failureSentence(kind) {
+  // `busy` and `notFound` have their own sentences elsewhere in the catalogue: "a run is
+  // already going", and the general "the engine is not there", which is a different
+  // statement from a file that will not say what it is.
+  if (kind === "busy") return t("engine.busy");
+  if (kind === "notFound") return t("menu.engineMissing");
+  // The kinds with a key of their own. `EngineError::kind()` can return exactly
+  // `notFound`, `launch`, `failed`, `noVersion` and `busy`; `notExecutable` is not a kind
+  // but is the sentence for a file that was found and refused, used by `refusal`.
+  const known = ["notExecutable", "noVersion", "launch", "failed"];
+  return known.includes(kind) ? t(`engine.error.${kind}`) : t("engine.failed.detail");
+}
+
 /** Nothing on screen. What the reader's Dismiss and Cancel do. */
 function clear() {
   if (!strip) return;
@@ -261,6 +325,13 @@ function announce(nodes) {
   if (!strip) return;
   strip.innerHTML = "";
   for (const node of nodes) strip.appendChild(node);
+  strip.hidden = false;
+}
+
+/** One more line on the strip, keeping what is already there. */
+function add(node) {
+  if (!strip) return;
+  strip.appendChild(node);
   strip.hidden = false;
 }
 
@@ -291,19 +362,22 @@ export function run(action, options) {
     return Promise.resolve();
   }
   if (running) {
-    announce([line(t("engine.busy")), button(t("common.dismiss"), "plain", clear)]);
+    // Added to the strip, not in place of it. `announce` clears first, so refusing a
+    // second action used to replace the only line saying a run was going, and dismissing
+    // that left nothing on screen about it at all.
+    add(line(t("engine.busy")));
     return Promise.resolve();
   }
-  running = true;
+  setRunning(true);
   announce([line(action === "ingest" ? t("menu.ingesting") : t("menu.writingReview"))]);
   return port
     .run(action, Boolean(options?.force))
     .then((outcome) => {
-      running = false;
+      setRunning(false);
       report(outcome);
     })
     .catch((error) => {
-      running = false;
+      setRunning(false);
       // The shell itself did not answer. Not the engine's failure, and it still has to be
       // said: a swallowed rejection here is a strip that reads "Ingesting..." for ever.
       announce([
@@ -318,7 +392,12 @@ export function run(action, options) {
 function report(outcome) {
   if (outcome?.errorKind) {
     const kind = String(outcome.errorKind);
-    const said = kind === "busy" ? t("engine.busy") : t(`engine.error.${kind}`);
+    // `notFound` from a *run* means the search found nothing at press time, which is a
+    // different sentence from a file that will not say what it is. There is no
+    // `engine.error.notFound` key, so this printed the literal string
+    // "engine.error.notFound" on screen: the block was drawn while `prudence` was on
+    // disk and the path moved before the button was pressed.
+    const said = failureSentence(kind);
     const nodes = [line(t("engine.failed.title")), line(said)];
     // The engine's own words, as `store.rs`'s errors are shown as they come.
     if (outcome.error) nodes.push(line(String(outcome.error)));

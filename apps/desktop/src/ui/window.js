@@ -192,6 +192,8 @@ function titlebar() {
  *  DOM, not listeners on `document`. Once is once. */
 let listening = false;
 let firstDraw = true;
+/** A scripted press happens once, not on every redraw. Harness only. */
+let pressed = false;
 
 function keyboard() {
   if (listening) return;
@@ -325,7 +327,15 @@ export const page = {
     // A button a script asked to have pressed, once everything is drawn. Never set in a
     // release build. The result is logged, so a script that asked for a button that is
     // not there learns that rather than waiting for something that will not happen.
-    if (info?.press) pressWhenItExists(String(info.press));
+    // Once, not on every redraw. `render` runs again on every store change with the same
+    // `info`, which is what `firstDraw` above is for, and the press had no such guard: it
+    // pressed Ingest, the ingest finished, the watcher announced, the button was pressed
+    // again. An ingest loop for as long as the app was open, and any timing taken with
+    // the hook was meaningless. Harness only, so this never shipped.
+    if (info?.press && !pressed) {
+      pressed = true;
+      pressWhenItExists(String(info.press));
+    }
 
     if (info?.harness) /** @type {any} */ (globalThis).Stress = Stress;
   },
