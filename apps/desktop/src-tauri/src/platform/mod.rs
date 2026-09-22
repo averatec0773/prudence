@@ -102,6 +102,15 @@ pub fn hide_app(app: &tauri::AppHandle) {
     imp::hide_app(app);
 }
 
+/// The line a reader types to install uv, when the Engine tab's button could not.
+///
+/// A different installer per system, and a string the app prints rather than a command it
+/// runs: installing a package manager by piping a script into a shell is a thing a person
+/// decides to do, not a thing a menu bar app does on their behalf.
+pub fn install_uv_command() -> &'static str {
+    imp::install_uv_command()
+}
+
 /// One line per platform fact the spike has to report, gathered where the answer lives.
 pub fn describe() -> Vec<(String, String)> {
     imp::describe()

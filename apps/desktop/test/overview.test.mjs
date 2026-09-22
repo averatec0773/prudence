@@ -10,14 +10,20 @@ import assert from "node:assert/strict";
 
 import { readPayload } from "../src/store/payload.js";
 import {
+  RANGES,
+  axis,
+  buckets,
+  bucketOf,
   cards,
   firstDay,
+  grainOf,
   heat,
+  lastDayOf,
   mondayOf,
   outcomes,
   projectColour,
   runs,
-  weeks,
+  weekAxis,
 } from "../src/store/overview.js";
 
 const NOW = new Date(2026, 8, 21, 12, 0, 0); // Monday 21 September 2026, local
@@ -31,7 +37,50 @@ function payload({ usage = [], outcomes: out = [], commits = [], sessions = [] }
   });
 }
 
-/* --- weeks -------------------------------------------------------------------------- */
+/* --- the bucket rule -----------------------------------------------------------------
+ *
+ * Days up to sixty, weeks from ninety out. It is written in `RANGES` and everything else
+ * reads it from there, so these tests are of the rule and not of a copy of it.
+ */
+
+test("the picker offers seven ranges, shortest first, ending in all", () => {
+  assert.deepEqual(
+    RANGES.map((one) => one.key),
+    ["1d", "7d", "30d", "60d", "90d", "365d", "all"]
+  );
+  assert.deepEqual(
+    RANGES.map((one) => one.days),
+    [1, 7, 30, 60, 90, 365, null]
+  );
+});
+
+test("a bucket is a day up to sixty days and a week beyond it", () => {
+  assert.deepEqual(
+    RANGES.map((one) => [one.key, grainOf(one.key)]),
+    [
+      ["1d", "day"],
+      ["7d", "day"],
+      ["30d", "day"],
+      ["60d", "day"],
+      ["90d", "week"],
+      ["365d", "week"],
+      ["all", "week"],
+    ]
+  );
+});
+
+test("a range this build does not have falls back to the default rather than throwing", () => {
+  assert.equal(grainOf("8w"), "day", "the old eight-week key is not a range any more");
+  assert.equal(firstDay("8w", NOW), firstDay("30d", NOW));
+});
+
+test("a day belongs to itself, and a week to the Monday it starts on", () => {
+  assert.equal(bucketOf("2026-09-23", "day"), "2026-09-23");
+  assert.equal(bucketOf("2026-09-23", "week"), "2026-09-21");
+  // The last day a bucket covers, which is what filters the cards when one is clicked.
+  assert.equal(lastDayOf("2026-09-23", "day"), "2026-09-23");
+  assert.equal(lastDayOf("2026-09-21", "week"), "2026-09-27");
+});
 
 test("a day lands in the ISO week that starts on its Monday", () => {
   assert.equal(mondayOf("2026-09-21"), "2026-09-21", "a Monday is its own week");
@@ -39,7 +88,85 @@ test("a day lands in the ISO week that starts on its Monday", () => {
   assert.equal(mondayOf("2026-09-22"), "2026-09-21");
 });
 
-test("weeks come out oldest first, in the fixed purpose order", () => {
+/* --- how far back each range looks, at a month boundary ------------------------------
+ *
+ * Every range's day arithmetic, asked on a day chosen so that each answer crosses at
+ * least one month end and one of them crosses a year end. Counting days by subtracting
+ * numbers from a date string is how an off-by-a-month gets in, and a range whose first day
+ * is a month out silently drops or invents a month of work.
+ */
+
+const FIRST_OF_MARCH = new Date(2026, 2, 1, 9, 0, 0); // Sunday 1 March 2026, local
+
+test("every range's first day is counted inclusively, across a month boundary", () => {
+  assert.equal(firstDay("1d", FIRST_OF_MARCH), "2026-03-01", "one day is today itself");
+  assert.equal(firstDay("7d", FIRST_OF_MARCH), "2026-02-23");
+  // 2026 is not a leap year, so February has 28 days: thirty days back inclusive is
+  // 1 March minus 29, which is 31 January.
+  assert.equal(firstDay("30d", FIRST_OF_MARCH), "2026-01-31");
+  assert.equal(firstDay("60d", FIRST_OF_MARCH), "2026-01-01");
+  assert.equal(firstDay("90d", FIRST_OF_MARCH), "2025-12-02");
+  assert.equal(firstDay("365d", FIRST_OF_MARCH), "2025-03-02");
+  assert.equal(firstDay("all", FIRST_OF_MARCH), null, "all has no first day");
+});
+
+test("a leap day is a day like any other", () => {
+  const firstOfMarch2024 = new Date(2024, 2, 1, 9, 0, 0);
+  // February 2024 has 29 days, so the same thirty-day range reaches one day further into
+  // January than it does in 2026.
+  assert.equal(firstDay("30d", firstOfMarch2024), "2024-02-01");
+  assert.equal(firstDay("365d", firstOfMarch2024), "2023-03-03");
+});
+
+test("a daily axis has one slot per day, first day to today", () => {
+  const data = payload();
+  for (const [range, slots] of /** @type {[string, number][]} */ ([
+    ["1d", 1],
+    ["7d", 7],
+    ["30d", 30],
+    ["60d", 60],
+  ])) {
+    const out = axis(data, { range, now: FIRST_OF_MARCH });
+    assert.equal(out.length, slots, `${range} should be ${slots} days`);
+    assert.equal(out[0], firstDay(range, FIRST_OF_MARCH));
+    assert.equal(out[out.length - 1], "2026-03-01", `${range} should end today`);
+  }
+});
+
+/* One day is a real question, and the answer is one bar. An empty chart would be the app
+   refusing to draw what it was asked for. */
+test("one day is one bucket and never an empty chart", () => {
+  const data = payload({
+    usage: [
+      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 40, active_minutes: 30 },
+      { day: "2026-09-20", project: "a", purpose: "development", total_tokens: 99, active_minutes: 30 },
+    ],
+  });
+  const out = buckets(data, { range: "1d", now: NOW });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].bucket, "2026-09-21");
+  assert.equal(out[0].measured, true);
+  assert.equal(out[0].total, 40, "yesterday is not in a one-day range");
+});
+
+test("a weekly axis has one slot per ISO week the range touches", () => {
+  const data = payload();
+  // 90 days back from Sunday 1 March 2026 is 2 December 2025, whose Monday is 1 December.
+  // 1 December to 23 February inclusive is thirteen Mondays, and today's own week makes
+  // fourteen slots.
+  const ninety = axis(data, { range: "90d", now: FIRST_OF_MARCH });
+  assert.equal(ninety[0], "2025-12-01");
+  assert.equal(ninety[ninety.length - 1], "2026-02-23", "1 March is a Sunday");
+  assert.equal(ninety.length, 13);
+
+  const year = axis(data, { range: "365d", now: FIRST_OF_MARCH });
+  assert.equal(year[0], mondayOf(firstDay("365d", FIRST_OF_MARCH)));
+  assert.equal(year.length, 53);
+});
+
+/* --- buckets -------------------------------------------------------------------------- */
+
+test("buckets come out oldest first, in the fixed purpose order", () => {
   const data = payload({
     usage: [
       { day: "2026-09-21", project: "a", purpose: "research", total_tokens: 10, active_minutes: 1 },
@@ -47,53 +174,95 @@ test("weeks come out oldest first, in the fixed purpose order", () => {
       { day: "2026-09-15", project: "a", purpose: "development", total_tokens: 5, active_minutes: 1 },
     ],
   });
-  const out = weeks(data, { range: "8w", now: NOW });
-  // Every week the range touches, not only the ones with rows: one shared axis, and a
-  // week with nothing in it is a slot rather than an absence (delivery A review, ruling 1).
-  assert.deepEqual(out.map((w) => w.week).slice(-2), ["2026-09-14", "2026-09-21"]);
-  assert.equal(out.length, 9, "a 56-day range touches nine ISO weeks");
+  const out = buckets(data, { range: "90d", now: NOW });
+  // Every week the range touches, not only the ones with rows: a week with nothing in it
+  // is a slot rather than an absence (delivery A review, ruling 1).
+  assert.deepEqual(out.map((w) => w.bucket).slice(-2), ["2026-09-14", "2026-09-21"]);
   assert.deepEqual(
-    out.filter((w) => w.measured).map((w) => w.week),
+    out.filter((w) => w.measured).map((w) => w.bucket),
     ["2026-09-14", "2026-09-21"]
   );
-  const fourteenth = out.find((w) => w.week === "2026-09-14");
+  const fourteenth = out.find((w) => w.bucket === "2026-09-14");
   assert.equal(fourteenth.total, 25, "the two days of one week are summed");
   // The buckets, not the key order of `byPurpose`: that order is `emptyBuckets()`
   // whatever the data is, so asserting it could not fail. The order the legend and the
   // table walk is `PURPOSES`, which `purposes.test.mjs` pins against the engine.
   assert.equal(fourteenth.byPurpose.development, 25);
   assert.equal(fourteenth.byPurpose.research, 0);
-  const twentyFirst = out.find((w) => w.week === "2026-09-21");
+  const twentyFirst = out.find((w) => w.bucket === "2026-09-21");
   assert.equal(twentyFirst.byPurpose.research, 10);
   assert.equal(twentyFirst.byPurpose.development, 0);
 });
 
-test("a week outside the range is not in the answer", () => {
+/* The same rows under a daily range are two separate days, not one week. This is the
+   bucket rule doing its work, and it is what a reader on "7 days" is asking for. */
+test("the same two days are one weekly bucket and two daily ones", () => {
+  const data = payload({
+    usage: [
+      { day: "2026-09-20", project: "a", purpose: "development", total_tokens: 20, active_minutes: 2 },
+      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 5, active_minutes: 1 },
+    ],
+  });
+  const daily = buckets(data, { range: "7d", now: NOW }).filter((one) => one.measured);
+  assert.deepEqual(
+    daily.map((one) => [one.bucket, one.total]),
+    [
+      ["2026-09-20", 20],
+      ["2026-09-21", 5],
+    ]
+  );
+
+  // 20 September 2026 is a Sunday, so weekly it belongs to the week before 21 September.
+  const weekly = buckets(data, { range: "90d", now: NOW }).filter((one) => one.measured);
+  assert.deepEqual(
+    weekly.map((one) => [one.bucket, one.total]),
+    [
+      ["2026-09-14", 20],
+      ["2026-09-21", 5],
+    ]
+  );
+});
+
+test("a bucket outside the range is not in the answer", () => {
   const data = payload({
     usage: [
       { day: "2026-01-05", project: "a", purpose: "development", total_tokens: 99, active_minutes: 1 },
       { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 1, active_minutes: 1 },
     ],
   });
-  // The January row is outside an eight-week range, so no slot is drawn for it at all;
+  // The January row is outside a thirty-day range, so no slot is drawn for it at all;
   // the axis starts where the range does, not where the data does.
-  const eight = weeks(data, { range: "8w", now: NOW });
-  assert.equal(eight.length, 9, "nine slots for the range");
-  assert.deepEqual(eight.filter((w) => w.measured).map((w) => w.week), ["2026-09-21"]);
+  const month = buckets(data, { range: "30d", now: NOW });
+  assert.equal(month.length, 30, "thirty slots for thirty days");
+  assert.deepEqual(month.filter((w) => w.measured).map((w) => w.bucket), ["2026-09-21"]);
 
   // "All" reaches back to the January row, so the axis spans every week between the two
-  // and the thirty-six silent weeks in the middle are slots, not an absence.
-  const all = weeks(data, { range: "all", now: NOW });
-  assert.equal(all[0].week, "2026-01-05");
-  assert.equal(all[all.length - 1].week, "2026-09-21");
-  assert.deepEqual(all.filter((w) => w.measured).map((w) => w.week), ["2026-01-05", "2026-09-21"]);
+  // and the silent weeks in the middle are slots, not an absence.
+  const all = buckets(data, { range: "all", now: NOW });
+  assert.equal(all[0].bucket, "2026-01-05");
+  assert.equal(all[all.length - 1].bucket, "2026-09-21");
+  assert.deepEqual(all.filter((w) => w.measured).map((w) => w.bucket), ["2026-01-05", "2026-09-21"]);
   assert.equal(all.length, 38, "every week between the two, inclusive");
 });
 
-test("the ranges look back as far as they say", () => {
-  assert.equal(firstDay("8w", NOW), "2026-07-28", "eight weeks is 56 days inclusive");
-  assert.equal(firstDay("90d", NOW), "2026-06-24");
-  assert.equal(firstDay("all", NOW), null);
+/* --- the outcomes axis ----------------------------------------------------------------
+ *
+ * `app_outcomes_by_week` has one row per project per week and there is no daily view, so
+ * re-bucketing it into days would be the app inventing a figure. The chart stays weekly
+ * under every range and the card's note says so.
+ */
+
+test("the outcomes axis is weekly under a daily range too", () => {
+  const data = payload();
+  for (const range of ["1d", "7d", "30d", "60d", "90d"]) {
+    const weeks = weekAxis(data, { range, now: NOW });
+    assert.ok(weeks.length >= 1, `${range} should still have a week`);
+    for (const week of weeks) {
+      assert.equal(mondayOf(week), week, `${range}: ${week} is not a Monday`);
+    }
+  }
+  // A one-day range is the week that day falls in, which is one slot and not none.
+  assert.deepEqual(weekAxis(data, { range: "1d", now: NOW }), ["2026-09-21"]);
 });
 
 /* --- a hole is a hole ---------------------------------------------------------------- */
@@ -170,17 +339,33 @@ test("commits come from the view that counts a commit once", () => {
       { day: "2026-01-01", project: "a", commits: 9, commits_fact: 9, commits_inferred: 0 },
     ],
   });
-  const out = cards(data, { range: "8w", now: NOW });
-  assert.equal(out.commits, 3, "the January commit is outside eight weeks");
+  const out = cards(data, { range: "30d", now: NOW });
+  assert.equal(out.commits, 3, "the January commit is outside thirty days");
   assert.equal(out.fact, 2);
   assert.equal(out.inferred, 1);
+});
+
+/* Clicking a bar filters the cards to that bucket. A day is one day; a week is the seven
+   days it covers, which is what `lastDayOf` decides. */
+test("a chosen bucket filters the cards to exactly the days it covers", () => {
+  const data = payload({
+    commits: [
+      { day: "2026-09-21", project: "a", commits: 1, commits_fact: 1, commits_inferred: 0 },
+      { day: "2026-09-23", project: "a", commits: 4, commits_fact: 4, commits_inferred: 0 },
+    ],
+  });
+  const later = new Date(2026, 8, 27, 12, 0, 0); // Sunday 27 September 2026
+  const oneDay = cards(data, { range: "30d", bucket: "2026-09-21", now: later });
+  assert.equal(oneDay.commits, 1, "a daily bucket is one day");
+  const oneWeek = cards(data, { range: "90d", bucket: "2026-09-21", now: later });
+  assert.equal(oneWeek.commits, 5, "a weekly bucket is its seven days");
 });
 
 /* Nil rather than zero: a Claude Code version that writes no usage fields is not zero
    hours, it is no measurement. */
 test("no active time measured is a dash, not a zero", () => {
   const empty = payload({ commits: [{ day: "2026-09-21", project: "a", commits: 1, commits_fact: 1, commits_inferred: 0 }] });
-  assert.equal(cards(empty, { range: "8w", now: NOW }).hours, null);
+  assert.equal(cards(empty, { range: "30d", now: NOW }).hours, null);
 });
 
 test("a project filter applies to every figure on the screen", () => {
@@ -194,13 +379,13 @@ test("a project filter applies to every figure on the screen", () => {
       { day: "2026-09-21", project: "b", commits: 5, commits_fact: 5, commits_inferred: 0 },
     ],
   });
-  const onlyA = cards(data, { project: "a", range: "8w", now: NOW });
+  const onlyA = cards(data, { project: "a", range: "30d", now: NOW });
   assert.equal(onlyA.commits, 1);
   assert.equal(onlyA.hours, 1);
-  const weekOfA = weeks(data, { project: "a", range: "8w", now: NOW }).find(
-    (one) => one.week === "2026-09-21"
+  const dayOfA = buckets(data, { project: "a", range: "30d", now: NOW }).find(
+    (one) => one.bucket === "2026-09-21"
   );
-  assert.equal(weekOfA.total, 10);
+  assert.equal(dayOfA.total, 10);
 });
 
 /* --- the heat strip --------------------------------------------------------------------- */
@@ -209,7 +394,7 @@ test("the heat strip has seven rows, Monday first, and contiguous weeks", () => 
   const data = payload({
     usage: [{ day: "2026-09-16", project: "a", purpose: "development", total_tokens: 1, active_minutes: 90 }],
   });
-  const strip = heat(data, { range: "8w", now: NOW });
+  const strip = heat(data, { range: "90d", now: NOW });
   assert.ok(strip.weeks.length >= 8);
   for (const column of strip.weeks) assert.equal(column.days.length, 7);
   // Wednesday 16 September is the third row of its column.
@@ -227,7 +412,7 @@ test("a day with no row is missing, not a measured zero", () => {
   const data = payload({
     usage: [{ day: "2026-09-16", project: "a", purpose: "development", total_tokens: 1, active_minutes: 90 }],
   });
-  const strip = heat(data, { range: "8w", now: NOW });
+  const strip = heat(data, { range: "90d", now: NOW });
   const column = strip.weeks.find((c) => c.week === "2026-09-14");
   assert.equal(column.days[0].hours, null, "Monday had no row");
   assert.equal(column.days[2].hours, 1.5);
@@ -241,7 +426,7 @@ test("the cells add up to the view's own active minutes", () => {
       { day: "2026-09-17", project: "a", purpose: "development", total_tokens: 1, active_minutes: 15 },
     ],
   });
-  const strip = heat(data, { range: "8w", now: NOW });
+  const strip = heat(data, { range: "90d", now: NOW });
   const total = strip.weeks
     .flatMap((c) => c.days)
     .reduce((sum, cell) => sum + (cell.hours ?? 0), 0);

@@ -7,8 +7,9 @@
  *
  * ## Three surfaces, one runner
  *
- * - `engineSection` is the block on the Settings screen: the path, the two versions, the
- *   two actions, and the picker.
+ * - `engineSection` is the block on the Settings screen's Engine tab: the path, the two
+ *   versions, the actions, the picker, and the Install or Update button with the area
+ *   under it that reports what uv did.
  * - `engineActivity` is one strip, put on the page once, that says what a run is doing
  *   and how it ended. It exists because a run can be started from the Review screen too,
  *   and an action that takes a minute and reports nowhere is an action that silently does
@@ -18,25 +19,24 @@
  * ## Why the shell does the work
  *
  * Nothing here looks at a filesystem or starts a process, because a page cannot.
- * `bridge.js` asks, `src-tauri/src/engine.rs` answers, and this file draws the answer.
- * That is also why it computes nothing: the version is the string the CLI printed, the
- * session count is the figure the engine's own ingest summary carried, and a "not ready"
- * reason is the engine's own sentence.
+ * `ui/wiring.js` points [`ENGINE`] at the bridge, `src-tauri/src/engine.rs` and
+ * `installer.rs` answer, and this file draws the answer. That is also why it computes
+ * nothing: the version is the string the CLI printed, the session count is the figure the
+ * engine's own ingest summary carried, a "not ready" reason is the engine's own sentence,
+ * and the install report is uv's own output.
  */
 
 import { emptyState } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { sessions as sessionPhrase } from "../text/fmt.js";
 import { t } from "../text/strings.js";
-import { REVIEW_NOW } from "./review.js";
-import * as Bridge from "../bridge.js";
 
 /**
  * What the block and the runner ask the shell.
  *
  * Injected rather than imported directly so that a test can drive the whole block
  * against a fake engine, which is the only way to exercise "not found", "not ready" and
- * "it failed" without a machine in each of those states. `wireEngine` sets it to the
+ * "it failed" without a machine in each of those states. `ui/wiring.js` sets it to the
  * bridge.
  *
  * @typedef {{
@@ -44,6 +44,9 @@ import * as Bridge from "../bridge.js";
  *   run: (action: string, force: boolean) => Promise<any>,
  *   choose: () => Promise<any>,
  *   forget: () => Promise<any>,
+ *   install: (upgrade: boolean) => Promise<any>,
+ *   onInstallProgress: (handler: (lines: string[]) => void) => Promise<() => void>,
+ *   link: (name: string) => Promise<any>,
  * }} EnginePort
  *
  * @type {{ port: EnginePort | null }}
@@ -169,10 +172,12 @@ function fill(body, status, state) {
     );
   }
 
-  body.appendChild(actions(body, status, state));
+  const area = installArea();
+  body.appendChild(actions(body, status, state, area));
+  body.appendChild(area);
 }
 
-function actions(body, status, state) {
+function actions(body, status, state, area) {
   const row = el("div", { class: "engine-actions" });
 
   const redraw = () => {
@@ -190,7 +195,15 @@ function actions(body, status, state) {
   if (status?.found) {
     row.appendChild(action(t("menu.ingestNow"), "primary", () => run("ingest")));
     row.appendChild(action(t("menu.reviewNow"), "", () => run("review")));
+    // Secondary where the engine is already here: updating is a thing a reader chooses,
+    // not the thing this block is for.
+    row.appendChild(action(t("engine.install.update"), "", () => install(area, true, redraw)));
   } else {
+    // The primary action of a machine with no engine is to get one. Everything else on
+    // the block is a way of finding one that is already installed.
+    row.appendChild(
+      action(t("engine.install.install"), "primary", () => install(area, false, redraw))
+    );
     // The search is cheap to repeat and the answer changes the moment the engine is
     // installed, so the way out of "not found" is not a relaunch.
     // Not disabled by a run: it starts none, and it is how a reader recovers.
@@ -447,27 +460,97 @@ function message(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-/* --- the wiring ---------------------------------------------------------------------- */
+/* --- installing it --------------------------------------------------------------------
+ *
+ * One button, and one area under it that says what happened. What the button runs is two
+ * constants in `src-tauri/src/installer.rs`; the page sends a boolean and nothing else.
+ *
+ * The package is not on PyPI yet, so failing is today's ordinary outcome and is treated as
+ * one: the same area then prints the manual route, which is the two commands a reader
+ * types, selectable, with the README link beside them.
+ */
+
+/** The area under the Install button. Rebuilt with the block, like everything else here. */
+function installArea() {
+  const area = el("div", { class: "engine-install" });
+  area.hidden = true;
+  return area;
+}
+
+/** Replace what the area says, keeping it one element so nothing accumulates. */
+function said(area, nodes) {
+  area.innerHTML = "";
+  for (const node of nodes) area.appendChild(node);
+  area.hidden = false;
+}
+
+/** uv's own output, as it printed it. Monospaced, because it is a terminal's words. */
+function output(lines) {
+  return el(
+    "pre",
+    { class: "engine-output" },
+    lines.map((line) => el("div", { text: line }))
+  );
+}
+
+/** The two commands a reader runs when the button could not. Selectable: their only use
+ *  is in a terminal, and `window.css` turns selection off for the window. */
+function manualRoute(commands, redraw) {
+  const block = el("div", { class: "engine-manual" }, [
+    el("p", { class: "engine-note", text: t("engine.install.manual") }),
+    el(
+      "pre",
+      { class: "engine-output is-copyable" },
+      commands.map((line) => el("div", { text: line }))
+    ),
+  ]);
+  const row = el("div", { class: "engine-actions" });
+  row.appendChild(action(t("engine.install.readme"), "plain", () => ENGINE.port?.link?.("install")));
+  row.appendChild(action(t("common.tryAgain"), "plain", redraw, { whileRunning: "keep" }));
+  block.appendChild(row);
+  return block;
+}
 
 /**
- * Point this module at the shell, put the strip on the page, and set the Review screen's
- * seam.
+ * Press once: run uv, stream its lines, and say what it ended as.
  *
- * Called once per page, from `window.html`, before the first draw. The panel does not
- * call it: its own two buttons are a later batch, and the panel sizes itself by measuring
- * its content, so a strip appended to its body would be measured.
+ * The button is disabled for the whole run through the same set every other action uses,
+ * so an install and an ingest cannot be started over one another.
  */
-export function wireEngine() {
-  ENGINE.port = {
-    status: () => Bridge.engineStatus(),
-    run: (action, force) => Bridge.runEngine(action, force),
-    choose: () => Bridge.chooseEngine(),
-    forget: () => Bridge.forgetEngine(),
-  };
-  // The Review screen's button. `review.js` exports the seam and refuses to invent a run
-  // of its own, because a screen may not call the bridge.
-  REVIEW_NOW.run = () => {
-    run("review");
-  };
-  document.body.appendChild(engineActivity());
+function install(area, upgrade, redraw) {
+  const port = ENGINE.port;
+  if (!port) return;
+  setRunning(true);
+  said(area, [line(t("engine.install.running"))]);
+
+  let stop = /** @type {(() => void) | null} */ (null);
+  port
+    .onInstallProgress((lines) => said(area, [line(t("engine.install.running")), output(lines)]))
+    .then((off) => {
+      stop = off;
+    })
+    .catch(() => {});
+
+  port
+    .install(upgrade)
+    .then((outcome) => {
+      setRunning(false);
+      stop?.();
+      if (outcome?.ok) {
+        said(area, [line(t("engine.install.done"))]);
+        // The locator is asked again rather than the page assuming: the whole point of
+        // the button is that the answer above it changes.
+        redraw();
+        return;
+      }
+      const nodes = [line(t(outcome?.errorKind === "noUv" ? "engine.install.noUv" : "engine.install.failed"))];
+      if (outcome?.lines?.length) nodes.push(output(outcome.lines.map(String)));
+      if (outcome?.manual?.length) nodes.push(manualRoute(outcome.manual.map(String), redraw));
+      said(area, nodes);
+    })
+    .catch((error) => {
+      setRunning(false);
+      stop?.();
+      said(area, [line(t("engine.install.failed")), line(message(error))]);
+    });
 }

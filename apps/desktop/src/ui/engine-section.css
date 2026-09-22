@@ -55,6 +55,52 @@
   padding-top: var(--s1);
 }
 
+/* What uv is doing, and what it did.
+ *
+ * Under the actions rather than on the activity strip: an install is a thing a reader
+ * watches, and the strip is a one-line report that can be dismissed. Opaque, like every
+ * other piece of content. */
+.engine-install {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+}
+
+.engine-install[hidden] {
+  display: none;
+}
+
+/* A terminal's own words, in a terminal's own type. Scrolled rather than grown: twelve
+   lines of a resolver is enough to read and not enough to take the card over. */
+.engine-output {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The two commands of the manual route. Their only use is in a terminal, and
+   `window.css` turns selection off for the whole window. */
+.engine-output.is-copyable {
+  user-select: text;
+  cursor: text;
+  color: var(--text);
+}
+
+.engine-manual {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
 /* The activity strip.
  *
  * It sits on the page rather than in a screen, because a run outlives the screen it was

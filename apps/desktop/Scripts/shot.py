@@ -186,6 +186,14 @@ def main() -> int:
         help="the screen to photograph. Without it the window opens where it was left, "
         "which is not reproducible.",
     )
+    parser.add_argument(
+        "--press",
+        metavar="LABEL",
+        help="press the button with this exact label once the page has drawn, and "
+        "photograph what happens. It is how a Settings tab, or a run started from the "
+        "panel, gets into a picture: an agent cannot click, and the shell's own eval "
+        "channel only reaches the window. Harness builds only.",
+    )
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")
     parser.add_argument(
@@ -251,6 +259,8 @@ def main() -> int:
         env["PRUDENCE_SCROLL"] = str(args.scroll)
     if args.section:
         env["PRUDENCE_SECTION"] = args.section
+    if args.press:
+        env["PRUDENCE_PRESS"] = args.press
 
     log = out / f"{args.name}.log"
     started = []

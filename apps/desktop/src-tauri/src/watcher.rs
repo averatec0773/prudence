@@ -37,6 +37,81 @@ const QUIET: Duration = Duration::from_millis(750);
 /// then wait for the next event rather than spinning.
 const RETRIES: u32 = 8;
 
+/* --- the debounce, as a thing a test can drive -------------------------------------- */
+
+/// What to do when the quiet period has elapsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// Nothing to do: either nothing was pending, or nothing actually moved.
+    Wait,
+    /// The store changed and reads cleanly. Tell the pages.
+    Announce,
+    /// The store changed and will not read yet. Wait another quiet period.
+    Retry,
+    /// It has not read cleanly in [`RETRIES`] tries. Stop asking, and wait for the next
+    /// file event.
+    GiveUp,
+}
+
+/// The debounce's own state: whether a quiet period is pending, and how many reads of the
+/// changed store have failed so far.
+///
+/// **It is a struct so that "does it re-arm" is a test rather than a claim.** The rule is
+/// that every path out of [`Self::elapsed`] leaves this able to react to the next event,
+/// including the two that end badly. Before this the whole loop was inline in a spawned
+/// thread and the only way to ask the question was to run the app and watch a log.
+#[derive(Debug, Default)]
+pub struct Debounce {
+    pending: bool,
+    tries: u32,
+}
+
+impl Debounce {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A file event about the store arrived. The quiet period starts again from here, and
+    /// the retry count with it: this is a new burst, not a continuation of an old one.
+    pub fn touched(&mut self) {
+        self.pending = true;
+        self.tries = 0;
+    }
+
+    /// Is a quiet period running? The loop waits on it rather than on a fixed timeout.
+    pub fn pending(&self) -> bool {
+        self.pending
+    }
+
+    /// The quiet period is up. `changed` is whether the store's own files moved, and
+    /// `readable` whether it could then be read.
+    ///
+    /// The fingerprint is asked before the read because a file event is not evidence that
+    /// anything happened: a reader writes `-shm`, and the shell's own reads would
+    /// otherwise make this chase itself forever.
+    pub fn elapsed(&mut self, changed: bool, readable: bool) -> Step {
+        if !self.pending {
+            return Step::Wait;
+        }
+        self.pending = false;
+        if !changed {
+            self.tries = 0;
+            return Step::Wait;
+        }
+        if readable {
+            self.tries = 0;
+            return Step::Announce;
+        }
+        self.tries += 1;
+        if self.tries < RETRIES {
+            self.pending = true;
+            Step::Retry
+        } else {
+            Step::GiveUp
+        }
+    }
+}
+
 /// Is this event about the store?
 ///
 /// The engine keeps its config and its line-hash key in the same directory, and the
@@ -110,8 +185,8 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
             .file_name()
             .map(|n| n.to_owned())
             .unwrap_or_default();
+        let mut debounce = Debounce::new();
         let mut due: Option<Instant> = None;
-        let mut tries = 0;
         // What the store looks like once it has been opened the way we will keep opening
         // it. The open matters: a read-only connection to a WAL store *creates* `-wal` if
         // it is absent, so fingerprinting before the first open would record a state the
@@ -130,44 +205,48 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                     // The database and its journal files, and nothing else in a
                     // directory the engine also keeps a config and a key in.
                     if concerns_the_store(&event.paths, name.to_str().unwrap_or("")) {
+                        debounce.touched();
                         due = Some(Instant::now() + QUIET);
-                        tries = 0;
                     }
                 }
                 Ok(Err(error)) => eprintln!("[watch] {error}"),
                 Err(RecvTimeoutError::Timeout) => {
-                    if due.take().is_none() {
+                    due = None;
+                    if !debounce.pending() {
                         continue;
                     }
                     // Nothing actually moved: the event was somebody reading, including
                     // very possibly us. Say nothing, and do not read the store to find out.
                     let now = fingerprint(&database);
-                    if now == last {
-                        tries = 0;
-                        continue;
-                    }
-
+                    let changed = now != last;
                     // The read is the test. A store mid-write answers with an error, and
                     // announcing a refresh then would make every page draw the failure.
                     // It is the cheap read: the pages fetch the payload themselves, and
                     // pulling all seven views here only to drop them tripled the work.
-                    match crate::store::readable(&database) {
-                        Ok(_) => {
-                            last = now;
-                            tries = 0;
+                    let read = changed.then(|| crate::store::readable(&database));
+                    let readable = matches!(read, Some(Ok(_)));
+
+                    match debounce.elapsed(changed, readable) {
+                        Step::Wait => {}
+                        Step::Announce => {
+                            // Sampled **after** the read, not before it. Opening a WAL
+                            // store can move `-wal`, and recording the earlier state would
+                            // make our own read look like somebody else's write at the
+                            // next event.
+                            last = fingerprint(&database);
                             if let Err(error) = app.emit(STORE_CHANGED, ()) {
                                 eprintln!("[watch] could not announce: {error}");
                             } else {
                                 eprintln!("[watch] the store changed; the pages will re-read");
                             }
                         }
-                        Err(error) => {
-                            tries += 1;
-                            if tries < RETRIES {
-                                due = Some(Instant::now() + QUIET);
-                            } else {
-                                eprintln!("[watch] gave up after {tries} tries: {error}");
-                            }
+                        Step::Retry => due = Some(Instant::now() + QUIET),
+                        Step::GiveUp => {
+                            let why = match read {
+                                Some(Err(error)) => error.to_string(),
+                                _ => String::new(),
+                            };
+                            eprintln!("[watch] gave up after {RETRIES} tries: {why}");
                         }
                     }
                 }
@@ -250,5 +329,92 @@ mod tests {
     #[test]
     fn a_store_with_no_name_matches_nothing() {
         assert!(!concerns_the_store(&paths(&["prudence.db"]), ""));
+    }
+
+    /* --- the debounce, and whether it re-arms --------------------------------------- */
+
+    /// One ingest from a terminal, start to finish.
+    fn one_ingest(debounce: &mut Debounce) -> Step {
+        debounce.touched();
+        debounce.elapsed(true, true)
+    }
+
+    #[test]
+    fn a_change_that_reads_cleanly_is_announced() {
+        let mut debounce = Debounce::new();
+        assert_eq!(one_ingest(&mut debounce), Step::Announce);
+    }
+
+    /// **The question this batch was asked.** An ingest the app did not start is one the
+    /// app hears about only through the watcher, so a watcher that announces once and then
+    /// stops leaves every figure frozen until the next relaunch, with nothing on screen
+    /// saying so.
+    ///
+    /// Three in a row, because a bug that leaves a flag set usually survives one.
+    #[test]
+    fn the_watcher_re_arms_after_an_ingest_it_did_not_start() {
+        let mut debounce = Debounce::new();
+        for round in 1..=3 {
+            assert_eq!(
+                one_ingest(&mut debounce),
+                Step::Announce,
+                "the store changed for the {round}th time and nothing was announced"
+            );
+            assert!(!debounce.pending(), "a quiet period was left running");
+        }
+    }
+
+    /// A store caught mid-write is retried, and the retry is still one burst: the count
+    /// carries across the tries and is cleared the moment one succeeds.
+    #[test]
+    fn a_store_that_is_not_readable_yet_is_retried_and_then_announced() {
+        let mut debounce = Debounce::new();
+        debounce.touched();
+        for _ in 0..(RETRIES - 1) {
+            assert_eq!(debounce.elapsed(true, false), Step::Retry);
+            assert!(
+                debounce.pending(),
+                "a retry has to leave the period running"
+            );
+        }
+        assert_eq!(debounce.elapsed(true, true), Step::Announce);
+        // And the next ingest is a fresh burst with its own full allowance.
+        assert_eq!(one_ingest(&mut debounce), Step::Announce);
+    }
+
+    /// Giving up is not giving up for good. The whole allowance is spent, and the next
+    /// file event still starts a new burst: the shell's log records the give-up, and the
+    /// app has to be able to catch up when the next ingest lands.
+    #[test]
+    fn giving_up_still_re_arms_for_the_next_event() {
+        let mut debounce = Debounce::new();
+        debounce.touched();
+        for _ in 0..(RETRIES - 1) {
+            assert_eq!(debounce.elapsed(true, false), Step::Retry);
+        }
+        assert_eq!(debounce.elapsed(true, false), Step::GiveUp);
+        assert!(!debounce.pending(), "a give-up left a period running");
+        assert_eq!(one_ingest(&mut debounce), Step::Announce);
+    }
+
+    /// The shell's own reads. `-shm` is already filtered out by name, but a rename or a
+    /// touch of the database can still produce an event with nothing behind it, and
+    /// announcing then would make both pages re-read for nothing, forever.
+    #[test]
+    fn an_event_with_nothing_behind_it_is_not_announced_and_costs_nothing() {
+        let mut debounce = Debounce::new();
+        debounce.touched();
+        assert_eq!(debounce.elapsed(false, true), Step::Wait);
+        assert!(!debounce.pending());
+        // And the allowance was not spent by it.
+        debounce.touched();
+        assert_eq!(debounce.elapsed(true, false), Step::Retry);
+    }
+
+    /// A quiet period that elapses with nothing pending is the loop's own 3600 second
+    /// timeout coming round. It must not announce.
+    #[test]
+    fn nothing_pending_is_nothing_to_do() {
+        assert_eq!(Debounce::new().elapsed(true, true), Step::Wait);
     }
 }

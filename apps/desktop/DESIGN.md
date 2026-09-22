@@ -144,18 +144,39 @@ the two start-up files shared 106 identical lines and had already drifted.
 ## The bridge
 
 **Every Tauri call in the frontend is in `src/bridge.js`.** Nothing under `src/design/`,
-`src/panel.js` or `src/window.js` knows what a Tauri is.
+`src/store/` or `src/ui/` knows what a Tauri is.
 
 This is load bearing, not tidiness. If the webview under this frontend ever has to change,
 the shell and that one file are rewritten and everything else moves unchanged. That is the
 way out if Tauri fails on a later macOS, and it stays open only while the rule holds.
 
-The surface is thirteen commands: read the store, ask the shell about itself, log a line,
-fit the panel to its content, hide the panel, open and close the window, remember the
-section, quit, and the four the engine needs (where it is, run an action, choose the
-executable, forget the choice). `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts
-that the names and the **argument names** match, because renaming a Rust parameter breaks
-the page at runtime with no error on either side.
+The surface is twenty-one commands: read the store, ask the shell about itself, log a
+line, fit the panel to its content, hide the panel, open and close the window, remember
+the section, quit; the five the engine needs (where it is, run an action, choose the
+executable, forget the choice, install or update it); two for the model settings (read
+them, set the prose language); five for the app's own settings (read them, and one per
+setting); and one that opens a link **by name**, because the shell owns the addresses and
+a command that took a URL would open whatever it was handed.
+`test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts that the names and
+the **argument names** match, because renaming a Rust parameter breaks the page at runtime
+with no error on either side.
+
+**Three events go the other way**, and each is a string on both sides with nothing else to
+catch a rename, so the same test asserts them too: `store-changed`, `settings-changed` and
+`engine-install`. The first two carry no payload, on purpose: there is one way to get the
+store's contents and one way to get the settings, and both are a command. The third
+carries uv's lines, because they are the whole point and the process has moved on by the
+time anything could ask again.
+
+**`src/ui/wiring.js` is the one file under `src/ui/` that calls the bridge.** A screen may
+not, and two pieces of the window need to: the engine block and the Settings screen's
+controls. Both declare a port and `wiring.js` fills it in, which is also what lets each be
+driven against a fake shell in a test. It was inside `engine-section.js` while the engine
+block was the only thing that needed it; Settings arriving with four controls of its own
+made that the second file importing the bridge, which is one more than the rule allows.
+The panel is the exception and says so in its own file: it talks to `bridge.js` directly,
+because it has no wiring file of its own and its port exists only so a test can press its
+two engine buttons.
 
 **There is one channel in the other direction and it is not the bridge.** With the
 `harness` feature built in, the shell drives `window.eval("window.Stress...")` against
@@ -195,10 +216,17 @@ That is the whole surface. Nothing else in the app names a screen.
 ### What a screen may and may not do
 
 **It is handed everything and reaches for nothing.** The one argument carries `data` (the
-whole store payload), `info` (`shell_info`), the scope (`project`, `range`, `week`), and
-two callbacks (`onWeek`, `redraw`). A screen does not import the bridge, does not read the
-store, does not touch `document` outside the tree it is building, and keeps no state
+whole store payload), `info` (`shell_info`), the scope (`project`, `range`, `bucket`), and
+two callbacks (`onBucket`, `redraw`). A screen does not import the bridge, does not read
+the store, does not touch `document` outside the tree it is building, and keeps no state
 between renders: it is called again from scratch whenever anything changes.
+
+**One exception, and only one: a screen may remember its own navigation.** The Settings
+screen keeps which of its four tabs is open in a module-level variable. Which tab is open
+is navigation, not data, and a screen rebuilt because an ingest landed must not throw the
+reader back to the first tab while they are half way through changing a setting. Nothing
+about the data may be kept this way, and the four panes are built together and shown by a
+flag, so choosing a tab redraws nothing at all.
 
 **It returns one element** and appends nothing to the page itself.
 
@@ -260,6 +288,40 @@ harness-only line that is not in a release build. Related: the menu bar takes it
 from the desktop picture rather than from the appearance setting, so there is no light
 menu bar to photograph without changing the wallpaper.
 
+## The range picker and the bucket rule
+
+Seven ranges: **1 day, 7 days, 30 days, 60 days, 90 days, 365 days, all.** The labels are
+one plural entry (`unit.rangeDays`) and one word for "All", so English says "1 day" and
+"7 days" and Chinese says "1 天" either way, and seven near-identical catalogue keys
+cannot drift apart.
+
+**A bucket is a local day up to sixty days, and an ISO week from ninety days out.** It is
+written once, in `RANGES` in `src/store/overview.js`, and everything else reads it from
+there.
+
+The boundary is set by the plot, not by the data. The charts draw into a box 760 units
+wide and thin their labels past fourteen slots and again past twenty-eight
+(`design/charts.js`, `labelEvery`). Sixty daily slots is about twelve units each, which is
+the narrowest bar that is still a bar; ninety would be eight and a year would be two. Past
+sixty days the honest picture is weeks.
+
+Three consequences, each with a test:
+
+- **One day is one bucket, never an empty chart.** A range of a day is a real question,
+  usually asked of the three cards, and the chart under them draws its single bar rather
+  than saying there is not enough to draw.
+- **The outcomes chart is weekly under every range.** `app_outcomes_by_week` has one row
+  per project per week and there is no daily view; re-bucketing a weekly row into a day
+  would be the app inventing a figure. Under a daily range the card's note carries the
+  extra sentence saying so, as a whole key in each language rather than two glued
+  together.
+- **The two charts no longer share one axis under a daily range.** They did while both
+  were weekly. The tokens chart follows the range's own grain and the outcomes chart stays
+  weekly, so the note is what tells the reader which is which.
+
+The heat strip is unchanged: it was always one cell per local day, seven rows Monday
+first, whatever the range.
+
 ## The app owns no numbers
 
 `src-tauri/src/store.rs` opens the store read-only, refuses a contract version outside
@@ -287,11 +349,17 @@ make every page draw the failure.
 
 - **Assumes:** an ingest's writes are never more than 750 ms apart, and one that is still
   going after eight tries (about 6 seconds) will produce another file event when it ends.
-- **When it breaks:** a very slow ingest announces twice, so the pages re-read twice; or
-  the watcher gives up and the pages stay one ingest behind until the next write. Both are
-  logged by the shell.
+- **When it breaks:** the first half of that assumption does not hold on a large store and
+  the cost is higher than this entry used to claim. Measured on 2026-09-22 against an
+  851 MB copy with the window open: **one `prudence ingest` from a terminal announced
+  eleven times, and the next announced fifteen.** The view rebuild writes in bursts
+  further than 750 ms apart, and every quiet gap that then reads cleanly is an
+  announcement, so both pages re-read the whole payload eleven times for one ingest. The
+  figures are always right and the window is busy while they arrive. With nobody writing
+  at all it announces **zero** times in thirty seconds, so it is not chasing its own reads.
 - **Removed when:** the engine signals the end of an ingest directly, which is the honest
-  fix and belongs on the engine side.
+  fix and belongs on the engine side. Lengthening `QUIET` would trade one guess for
+  another; the engine knows when it has finished and nothing here does.
 
 ### `in_the_menu_bar` allows a point of slack
 
@@ -405,6 +473,48 @@ is English, because the CLI is. `store.rs` already does the same with its errors
   decision. Translating it here would make the app and the CLI say different things about
   the same failure, which is worse.
 
+### `prudence config model` is read, not decoded
+
+`model.rs`. Every other call the app makes to the engine appends `--json` and decodes the
+answer. `config model` has no `--json`, so its seven lines are matched against their seven
+labels and split there. The labels are the parse and not the whitespace: the CLI pads each
+one to a column, so six are followed by a run of spaces and `key variable` by exactly one,
+because that label is already as wide as the column.
+
+- **Assumes:** those seven labels keep their spelling, and a line that is not one of them
+  is prose rather than a setting.
+- **When it breaks:** a renamed label reads as missing, and the Model tab leaves that row
+  out rather than showing something wrong. A whole new line is ignored.
+- **Removed when:** `prudence config model` grows `--json`, which is an engine change and
+  is the honest fix.
+
+### The timed ingest looks at the clock every thirty seconds
+
+`timer.rs`, `TICK`. The interval is compared against a monotonic clock, and the comparison
+is made when the next one is due or one tick from now, whichever comes first. The wait is
+on a condition variable rather than a sleep, so changing the setting takes effect at once
+rather than at the end of whatever wait was under way.
+
+- **Assumes:** a timed ingest that starts up to thirty seconds late is a timed ingest that
+  ran. The shortest interval offered is fifteen minutes.
+- **When it breaks:** nothing a reader can see. A machine asleep through a due time runs
+  the ingest when it wakes, once, not once per interval missed.
+- **Removed when:** an interval shorter than a minute is offered, at which point the tick
+  has to be the interval and this stops being a simplification.
+
+### Open at login is asked for every time rather than remembered
+
+`lib.rs`, `app_settings`. It is the one setting this app does not store: the system stores
+it, and macOS can refuse to register a login item for a copy that is not where it expects
+one. So it is read from `tauri-plugin-autostart` on every `shell_info`, and the control is
+ticked from that answer rather than from what was asked for.
+
+- **Assumes:** asking the plugin is cheap enough to do on every page load. It reads one
+  file.
+- **When it breaks:** a slow answer would slow the first draw of both pages.
+- **Removed when:** it is measured and found to cost anything, at which point it is cached
+  for the launch and invalidated by the setter.
+
 ### `window.css` is not covered by the no-tokens test
 
 `test/tokens.test.mjs` asserts that `app.css` declares no custom property; `window.css`
@@ -467,8 +577,10 @@ Grown by each batch. Batch 1 adds the window shell only.
 | The window shell | The system's titlebar overlaid, a sidebar with four entries, the heading and the screen's controls on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
 | `miniStack` | One row of a stacked bar: the composition of a whole, in a single line | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
-| The engine block | Where `prudence` is, its version against the store's, the two actions, the picker | `src/ui/engine-section.js`, `ui/engine-section.css` |
+| The engine block | Where `prudence` is, its version against the store's, the actions, the picker, and the Install or Update button with uv's own output under it | `src/ui/engine-section.js`, `ui/engine-section.css` |
 | The activity strip | One report at the foot of the window: what a run is doing, and how it ended | same file |
+| The tab strip | The Settings screen's four tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
+| A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
 
 **The engine block is placed, not owned, by a screen.** The Settings screen puts it where
 it goes and the block says what is in it, so the two can be written at the same time. It
@@ -493,6 +605,18 @@ batch that builds each screen writes that screen's chart against the rules at th
 Not beside the store: nothing this app remembers is the engine's business, and the
 engine's directory is somewhere an agent may be pointing at a copy.
 
+Six things: the window's frame, the section it was on, where the user said `prudence` is,
+and the three the General tab sets (the language, the appearance, and how often the shell
+runs an ingest on its own). Open at login is **not** here, for the reason registered under
+Known compromises: the system owns it.
+
+**The appearance is two halves and both are needed.** `window.set_theme` changes the
+titlebar, the scrollbars and the native material; the page's own `data-theme` changes
+everything inside them. Setting only the theme leaves a light page in a dark frame, and
+setting only `data-theme` leaves a dark page in a light frame. `system` is
+`set_theme(None)` plus the media query, and the page's listener reads the setting rather
+than the query alone, so a window pinned to light does not move at sunset.
+
 **A remembered value this build no longer understands is ignored rather than forced**, and
 a frame below this build's own floor or carrying a non-finite number is dropped rather
 than clamped, because a window in the wrong place is worse than a window in the default
@@ -504,6 +628,6 @@ is what every screenshot run uses.
 | Key | Does |
 |---|---|
 | Cmd-1 / 2 / 3 / 4 | Overview, Review, Observations, Settings |
-| Cmd-, | Settings |
+| Cmd-, | Settings. It opens the screen, not a particular tab: the screen remembers which one was last open |
 | Cmd-R | Goes to the Review screen. Its button now runs the engine; the shortcut still only navigates |
 | Esc | Closes the panel |

@@ -149,9 +149,9 @@ function screenFor(rows, project = null, status = { observation_fact_version: 1 
       data: { observations: rows, status, contract: 3 },
       info: null,
       project,
-      range: "8w",
-      week: null,
-      onWeek() {},
+      range: "30d",
+      bucket: null,
+      onBucket() {},
       redraw() {},
     })
   );

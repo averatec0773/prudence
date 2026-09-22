@@ -65,14 +65,14 @@ export function miniStack(options) {
   return figure(svg, options.caption, { visuallyHidden: true });
 }
 
-/* --- the axis every weekly chart shares --------------------------------------------
+/* --- the axis a chart over time draws on --------------------------------------------
  *
- * The x axis is the **complete list of weeks in the range**, in order, whether or not
- * anything happened in one. Both Overview charts are handed the same list, so a week sits
- * at the same x in each and the two can be read against one another. It is ordinal: every
- * slot is the same width, because a week is a week.
+ * The x axis is the **complete list of buckets in the range**, in order, whether or not
+ * anything happened in one. It is ordinal: every slot is the same width, because a day is
+ * a day and a week is a week. What a bucket is comes from the range and is decided in
+ * `store/overview.js`, which holds the rule and its reason.
  *
- * The first slot may be a partial week. A range is counted in days (56, 90) and a day is
+ * A week slot may be a partial week. A range is counted in days (90, 365) and a day is
  * rarely a Monday, so the earliest week the range touches is usually entered part-way.
  * The alternative is to drop the data in it, which would be worse.
  */
@@ -98,12 +98,13 @@ export function niceMax(value) {
 }
 
 /**
- * How often to print a week's label, so they never collide.
+ * How often to print a slot's label, so they never collide.
  *
- * The labels are drawn at a fixed size in a box 760 units wide; past about fifteen weeks
+ * The labels are drawn at a fixed size in a box 760 units wide; past about fifteen slots
  * the names touch, and past thirty they overlap whatever is done with them. Printing
  * every second or every fourth is the honest way out: the axis still reads, and the table
- * under the chart has every week in full.
+ * under the chart has every bucket in full. It is also the measurement the bucket rule in
+ * `store/overview.js` rests on: sixty daily slots is the most this box can carry.
  */
 export function labelEvery(count) {
   if (count <= 14) return 1;
@@ -132,17 +133,17 @@ function axisFurniture({ fractions, format, plotH }) {
   return marks;
 }
 
-/** The week names under the plot, thinned so they cannot collide. */
-function weekLabels({ weeks, label, at, height }) {
-  const every = labelEvery(weeks.length);
-  return weeks
-    .map((week, index) =>
+/** The slot names under the plot, thinned so they cannot collide. */
+function slotLabels({ slots, label, at, height }) {
+  const every = labelEvery(slots.length);
+  return slots
+    .map((slot, index) =>
       index % every === 0
         ? svgEl("text", {
             x: at(index),
             y: height - 8,
             "text-anchor": "middle",
-            text: label(week),
+            text: label(slot),
             class: "axis",
           })
         : null
@@ -152,31 +153,31 @@ function weekLabels({ weeks, label, at, height }) {
 
 /* --- composition of a whole, over time ---------------------------------------------
  *
- * One bar per ISO week across the whole range, the fixed purpose order, a quiet value
- * axis on the right and the week under each bar. A week the store has no row for is an
+ * One bar per bucket across the whole range, the fixed purpose order, a quiet value axis
+ * on the right and the bucket under each bar. A bucket the store has no row for is an
  * **empty slot**: no bar at all, because nothing recorded and nothing spent are different
  * statements and must not look alike.
  */
 
 /**
  * @param {{
- *   weeks: {week: string, byPurpose: Record<string, number>, total: number, measured: boolean}[],
+ *   buckets: {bucket: string, byPurpose: Record<string, number>, total: number, measured: boolean}[],
  *   caption: string,
- *   label: (week: string) => string,
+ *   label: (bucket: string) => string,
  *   axisFormat: (value: number) => string,
  *   selected?: string | null,
- *   onHover?: (week: string | null) => void,
- *   onSelect?: (week: string | null) => void,
+ *   onHover?: (bucket: string | null) => void,
+ *   onSelect?: (bucket: string | null) => void,
  * }} options
  */
 export function stackedBars(options) {
-  const { weeks } = options;
+  const { buckets } = options;
   const height = 200;
   const plotW = PLOT.width - PLOT.padLeft - PLOT.padRight;
   const plotH = height - PLOT.padTop - PLOT.padBottom;
-  const max = niceMax(Math.max(0, ...weeks.map((week) => week.total)));
-  const slot = plotW / Math.max(weeks.length, 1);
-  // Capped, so three weeks do not draw three slabs a third of the card wide.
+  const max = niceMax(Math.max(0, ...buckets.map((one) => one.total)));
+  const slot = plotW / Math.max(buckets.length, 1);
+  // Capped, so a single day does not draw one slab the width of the card.
   const barWidth = Math.min(slot * 0.62, 56);
   const at = (index) => PLOT.padLeft + slot * index + slot / 2;
 
@@ -186,16 +187,16 @@ export function stackedBars(options) {
     plotH,
   });
 
-  weeks.forEach((week, index) => {
+  buckets.forEach((one, index) => {
     const x = at(index) - barWidth / 2;
     const group = svgEl("g", {
-      class: week.week === options.selected ? "col is-selected" : "col",
-      "data-week": week.week,
+      class: one.bucket === options.selected ? "col is-selected" : "col",
+      "data-bucket": one.bucket,
     });
 
     let y = PLOT.padTop + plotH;
     for (const purpose of PURPOSES) {
-      const value = week.byPurpose[purpose] || 0;
+      const value = one.byPurpose[purpose] || 0;
       if (value <= 0) continue;
       const h = (value / max) * plotH;
       y -= h;
@@ -212,9 +213,9 @@ export function stackedBars(options) {
       );
     }
 
-    // A week with no row draws the empty slot itself, so the gap is visibly a slot and
+    // A bucket with no row draws the empty slot itself, so the gap is visibly a slot and
     // not the chart having stopped.
-    if (!week.measured) {
+    if (!one.measured) {
       group.appendChild(
         svgEl("rect", {
           class: "bar-empty",
@@ -227,7 +228,7 @@ export function stackedBars(options) {
       );
     }
 
-    // One transparent rectangle per week over the whole column, so pointing anywhere in
+    // One transparent rectangle per bucket over the whole column, so pointing anywhere in
     // the column answers rather than only at the ink.
     const hit = svgEl("rect", {
       class: "hit",
@@ -237,17 +238,17 @@ export function stackedBars(options) {
       height: plotH,
       fill: "transparent",
     });
-    hit.addEventListener("mouseenter", () => options.onHover?.(week.week));
+    hit.addEventListener("mouseenter", () => options.onHover?.(one.bucket));
     hit.addEventListener("mouseleave", () => options.onHover?.(null));
     hit.addEventListener("click", () =>
-      options.onSelect?.(week.week === options.selected ? null : week.week)
+      options.onSelect?.(one.bucket === options.selected ? null : one.bucket)
     );
     group.appendChild(hit);
     marks.push(group);
   });
 
   marks.push(
-    ...weekLabels({ weeks: weeks.map((w) => w.week), label: options.label, at, height })
+    ...slotLabels({ slots: buckets.map((one) => one.bucket), label: options.label, at, height })
   );
 
   const svg = svgEl("svg", { viewBox: `0 0 ${PLOT.width} ${height}`, class: "bars" }, marks);
@@ -340,7 +341,7 @@ export function linesWithGaps(options) {
     }
   }
 
-  marks.push(...weekLabels({ weeks, label: options.label, at: slot, height }));
+  marks.push(...slotLabels({ slots: weeks, label: options.label, at: slot, height }));
 
   const svg = svgEl("svg", { viewBox: `0 0 ${PLOT.width} ${height}`, class: "lines" }, marks);
   return figure(svg, options.caption);

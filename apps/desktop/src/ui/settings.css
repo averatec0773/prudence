@@ -8,8 +8,128 @@
  * No design token may be declared here. A test asserts it.
  */
 
-/* One fact per block, its caption above it. A hairline between two blocks, never above
-   the first: the card's own head is already separated from what follows it. */
+.settings-screen {
+  /* The strip and the pane under it are one block, so they sit closer to each other than
+     two cards would. The panes' own cards keep the screen's own gap. */
+  gap: var(--s3);
+}
+
+/* --- the tab strip -------------------------------------------------------------------
+ *
+ * **Control layer**, which is design rule 1: it navigates, so it takes the frost where
+ * the platform has one and the panes under it stay opaque. The frost itself is in
+ * `tokens.css` under `data-material="glass"`, beside every other control; this file only
+ * says where the strip goes and how a tab reads. */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: var(--r-control);
+  background: var(--control-2);
+  /* Four short words; on a narrow window they wrap rather than pushing the screen wider
+     than the scroll area. */
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 5px var(--s3);
+  border: 0;
+  border-radius: calc(var(--r-control) - 3px);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-footnote);
+  font-weight: 510;
+  cursor: default;
+}
+
+.tab:hover[aria-selected="false"] {
+  color: var(--text);
+  background: var(--control-quiet);
+}
+
+/* The open tab is the one carrying the surface, not the one carrying the accent: colour
+   here would be a fifth saturated thing on a screen that already has an accent. */
+.tab[aria-selected="true"] {
+  background: var(--control);
+  color: var(--text);
+  box-shadow: var(--shadow-raised);
+  font-weight: 590;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tab-panes,
+.tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.tab-pane[hidden] {
+  display: none;
+}
+
+/* --- one setting ---------------------------------------------------------------------
+ *
+ * The name and its control on one row, the sentence under both. A hairline between two
+ * settings and never above the first: the card's own head already separates them. */
+
+.setting-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: var(--s3);
+}
+
+.setting + .setting {
+  padding-top: var(--s3);
+  border-top: 0.5px solid var(--separator);
+}
+
+.setting-list > :last-child {
+  padding-bottom: 0;
+}
+
+.setting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  /* Narrow window: the control drops under its own name rather than squeezing five
+     segments into sixty points. */
+  flex-wrap: wrap;
+}
+
+.setting-label {
+  font-size: var(--t-footnote);
+  font-weight: 510;
+}
+
+.setting-note {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.45;
+  /* A sentence the width of the window is not read. */
+  max-width: 62ch;
+}
+
+/* --- facts ---------------------------------------------------------------------------
+ *
+ * One fact per block, its caption above it. Used by the Engine tab's store block and by
+ * About. */
+
 .fact-list {
   display: flex;
   flex-direction: column;
@@ -50,7 +170,7 @@
 
 /* A path and a URL exist to be copied somewhere else. `window.css` turns selection off
    for the whole window, which is right for a surface made of controls and wrong for the
-   two values on this screen whose only use is in a terminal or a browser. */
+   values on this screen whose only use is in a terminal or a browser. */
 .fact-value.is-path {
   user-select: text;
   cursor: text;
@@ -81,25 +201,6 @@
   font-size: var(--t-caption);
   color: var(--text-3);
   line-height: 1.45;
-}
-
-/* The record's promise. A list, because it is six separate statements and prose would
-   let a reader skim past one of them. The margin is zeroed because `tokens.css` resets
-   the headings and the paragraph and leaves a list with the browser's own. */
-.settings-promise {
-  margin: 0;
-  padding-left: var(--s5);
-  font-size: var(--t-footnote);
-  color: var(--text-2);
-  line-height: 1.5;
-}
-
-.settings-promise li {
-  margin-bottom: var(--s2);
-}
-
-.settings-promise li:last-child {
-  margin-bottom: 0;
 }
 
 /* A table whose row header is its first cell. `tokens.css` clears the last row's bottom

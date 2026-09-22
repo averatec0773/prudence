@@ -5,21 +5,27 @@ One codebase for macOS and Windows: a Rust shell around the design system's own 
 A menu bar panel and a four-screen window, in English and Simplified Chinese,
 on real Liquid Glass where the system has it:
 
-- **Overview**: the three totals, tokens by purpose per week, what became of each week's
-  work with its coverage, and where the hours went. Every weekly chart shares one axis,
-  the range's complete week list, so a week is in the same place in each.
+- **Overview**: the three totals, tokens by purpose per bucket, what became of each week's
+  work with its coverage, and where the hours went. Seven ranges from one day to all, and
+  a bucket is a day up to sixty days and an ISO week beyond; the outcomes chart stays
+  weekly under every range, because the engine measures an outcome per week.
 - **Review**: one stored review as the engine wrote it, keeping the period reviewed and
   the outcome window apart, with the engine's own figures and its notes behind a
   disclosure.
 - **Observations**: one card per behaviour, paired bars on a single axis, each share over
   the number of sessions it is over, with the coverage and the commit mix beside it.
-- **Settings**: what is recorded and at what capture level, what is never recorded, where
-  the store is and what produced it, the engine and its two actions, and an about block.
-  Read-only, and it says so rather than showing controls that do nothing.
+- **Settings**: four tabs. **General** is the app's own four settings (language,
+  appearance, open at login, timed ingest), each a segmented control that writes through
+  the shell. **Engine** is where `prudence` is, the actions, the Install or Update button,
+  and where the store is kept with what produced it. **Model** is what
+  `prudence config model` prints, with the one field this app may set; it never calls a
+  model. **About** is what is running, on what, under what licence, with links to the
+  project, the developer and what is recorded.
 
-It can also **find the `prudence` executable and run it**: ingest and review, with a
-picker when the executable cannot be found, and the store watched so a run's new numbers
-arrive on their own.
+It can also **find the `prudence` executable and run it**: ingest and review, from the
+window or from the panel, with a picker when the executable cannot be found, uv to install
+it when it is not there at all, an interval at which the shell ingests on its own, and the
+store watched so a run's new numbers arrive on their own.
 
 No updater and no signing yet. What each batch proved and what it did not is in
 `docs/reports/desktop/` (local files, not in git).
@@ -109,6 +115,7 @@ here. None of them is reachable by anything a user does.
 | `PRUDENCE_FORCE_APPEARANCE=dark` | pins the windows to dark (or `light`) |
 | `PRUDENCE_FORCE_LANGUAGE=zh-Hans` | draws the pages in Chinese (or `en`) |
 | `PRUDENCE_GLASS_OPAQUE=0` | glass with nothing behind it. The panel defaults to a filled backing and the window to clear; this overrides both |
+| `PRUDENCE_PRESS=Engine` | presses the button with that exact label once the page has drawn, on whichever surface is open. It is how a Settings tab, an Overview range or a run started from the panel gets into a picture. `Scripts/shot.py --press` sets it |
 
 There is no store override beyond `PRUDENCE_DATA_DIR` and `PRUDENCE_CONFIG_DIR`. The spike
 had a `PRUDENCE_DB`; it is gone, because the engine does not honour that name and a guessed
@@ -151,8 +158,9 @@ apps/desktop/
     window.css         the window's own layout
     design/            tokens.css, dom.js, brand.js, purposes.js, charts.js
     text/              strings.{en,zh-Hans}.json, strings.js, fmt.js, sentences.js
-    store/             payload.js: the shell's answer, as rows
-    ui/                panel.js, window.js: one file per surface
+    store/             payload.js: the shell's answer, as rows; one reader per screen
+    ui/                one file per surface, plus wiring.js: THE ONLY FILE UNDER ui/
+                       THAT CALLS THE BRIDGE
   src-tauri/
     tauri.conf.json    one window, transparent, frameless, hidden from the Dock
     capabilities/      what the page is allowed to ask the shell for
@@ -162,6 +170,10 @@ apps/desktop/
       panel.rs         show, hide, and where the panel goes
       window.rs        the main window, and the screenshot backdrop
       store.rs         read-only SQLite over the app_* views, and the contract check
+      engine.rs        finding `prudence` and running it
+      installer.rs     installing or updating it with uv, and the manual route
+      model.rs         what `prudence config model` prints, read
+      timer.rs         the timed ingest: one thread, outliving every window
       ui_state.rs      what the window remembers between launches
       harness.rs       the automation, behind `--features harness`, absent from a release
       platform/        everything true of one operating system and not the other

@@ -30,10 +30,11 @@ const Str = await import("../src/text/strings.js");
 const Fmt = await import("../src/text/fmt.js");
 // `any`, deliberately: the tree the block returns is the shim's, and asking it for
 // `find` is the whole point of the shim.
-const { ENGINE, engineSection, engineActivity, run, wireEngine } = /** @type {any} */ (
+const { ENGINE, engineSection, engineActivity, run } = /** @type {any} */ (
   await import("../src/ui/engine-section.js")
 );
 const { REVIEW_NOW } = /** @type {any} */ (await import("../src/ui/review.js"));
+const { wireWindow } = /** @type {any} */ (await import("../src/ui/wiring.js"));
 
 for (const language of Str.LANGUAGES) {
   Str.load(
@@ -50,10 +51,19 @@ const settled = () => new Promise(setImmediate);
 /**
  * A shell that answers whatever the test says, and records what it was asked.
  *
- * @param {{ status?: any, run?: any, choose?: any }} answers
+ * @param {{ status?: any, run?: any, choose?: any, install?: any }} answers
  */
 function fakePort(answers = {}) {
-  const asked = { status: 0, runs: [], choose: 0, forget: 0 };
+  const asked = {
+    status: 0,
+    runs: [],
+    choose: 0,
+    forget: 0,
+    installs: [],
+    links: [],
+    progress: null,
+    stopped: false,
+  };
   ENGINE.port = {
     status: () => {
       asked.status += 1;
@@ -73,6 +83,24 @@ function fakePort(answers = {}) {
     },
     forget: () => {
       asked.forget += 1;
+      return Promise.resolve();
+    },
+    install: (upgrade) => {
+      asked.installs.push(upgrade);
+      const answer = answers.install;
+      return Promise.resolve(typeof answer === "function" ? answer(upgrade) : (answer ?? { ok: true }));
+    },
+    // The stream of lines uv is printing. A test hands the handler back so it can be
+    // called, which is how "the status area follows the process" is asserted without a
+    // process.
+    onInstallProgress: (handler) => {
+      asked.progress = handler;
+      return Promise.resolve(() => {
+        asked.stopped = true;
+      });
+    },
+    link: (name) => {
+      asked.links.push(name);
       return Promise.resolve();
     },
   };
@@ -141,10 +169,17 @@ test("nothing found says engine not found, and offers a way to fix it", async ()
   assert.equal(block.find(".empty-detail").textContent, Str.t("engine.notFound.detail"));
 
   const labels = block.findAll("button").map((node) => node.textContent);
-  assert.deepEqual(labels, [Str.t("common.tryAgain"), Str.t("common.choose")]);
-  // No action is offered for an engine that is not there: a button that cannot work is
+  // Installing is the primary action of a machine with no engine; the other two are ways
+  // of finding one that is already there.
+  assert.deepEqual(labels, [
+    Str.t("engine.install.install"),
+    Str.t("common.tryAgain"),
+    Str.t("common.choose"),
+  ]);
+  // No ingest or review for an engine that is not there: a button that cannot work is
   // worse than no button.
   assert.ok(!labels.includes(Str.t("menu.ingestNow")));
+  assert.ok(!labels.includes(Str.t("menu.reviewNow")));
 });
 
 /* Found means verified. A file that is there and cannot say what it is has to be named,
@@ -378,18 +413,131 @@ test("with no shell at all the strip says the engine is not there", async () => 
   assert.equal(strip.find(".engine-said").textContent, Str.t("menu.engineMissing"));
 });
 
+/* --- the install button ---------------------------------------------------------------
+ *
+ * `prudence-core` is not on PyPI yet, so the ordinary outcome today is a failure and the
+ * manual route. That is the state these tests spend most of their lines on, because it is
+ * the one a reader will actually meet.
+ */
+
+test("with no engine the primary action installs, and with one it offers an update", async () => {
+  const missing = fakePort({ status: { found: false, errorKind: "notFound" } });
+  const without = engineSection(state("0.4.0"));
+  await settled();
+  const install = without
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("engine.install.install"));
+  assert.ok(install, "no Install button where there is no engine");
+  assert.ok(install.className.split(/\s+/).includes("primary"), "installing is the primary action");
+  install.fire("click");
+  await settled();
+  assert.deepEqual(missing.installs, [false], "the button asked for an install, not an upgrade");
+
+  const present = fakePort({ status: { found: true, path: "/x/prudence", version: "0.4.0" } });
+  const with_ = engineSection(state("0.4.0"));
+  await settled();
+  const update = with_
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("engine.install.update"));
+  assert.ok(update, "no Update button where the engine is there");
+  assert.equal(update.className.trim(), "btn", "updating is a secondary action");
+  update.fire("click");
+  await settled();
+  assert.deepEqual(present.installs, [true]);
+});
+
+test("uv's lines appear while it is still printing them, and the stream is closed after", async () => {
+  let finish;
+  const asked = fakePort({
+    status: { found: false, errorKind: "notFound" },
+    install: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  const block = engineSection(state("0.4.0"));
+  await settled();
+  block.findAll("button").find((n) => n.textContent === Str.t("engine.install.install")).fire("click");
+  await settled();
+
+  const area = block.find(".engine-install");
+  assert.ok(area, "no area to report into");
+  assert.equal(area.hidden, false);
+  assert.ok(area.textContent.includes(Str.t("engine.install.running")));
+
+  assert.equal(typeof asked.progress, "function", "nothing subscribed to uv's output");
+  asked.progress(["Resolved 12 packages", "Prepared 3 packages"]);
+  assert.ok(area.textContent.includes("Prepared 3 packages"), area.textContent);
+
+  finish({ ok: true });
+  await settled();
+  assert.ok(asked.stopped, "the stream was left open after the install finished");
+});
+
+test("a failure shows the engine's own output and the two commands to run by hand", async () => {
+  const manual = ["curl -LsSf https://astral.sh/uv/install.sh | sh", 'uv tool install --python 3.12 "prudence-core[mcp,model]"'];
+  const asked = fakePort({
+    status: { found: false, errorKind: "notFound" },
+    install: () => Promise.resolve({
+      ok: false,
+      errorKind: "failed",
+      lines: ["error: Distribution `prudence-core` not found in the package registry"],
+      manual,
+    }),
+  });
+  const block = engineSection(state("0.4.0"));
+  await settled();
+  block.findAll("button").find((n) => n.textContent === Str.t("engine.install.install")).fire("click");
+  await settled();
+
+  const area = block.find(".engine-install");
+  assert.ok(area.textContent.includes(Str.t("engine.install.failed")));
+  assert.ok(area.textContent.includes("not found in the package registry"), area.textContent);
+  for (const command of manual) {
+    assert.ok(area.textContent.includes(command), `the manual route is missing ${command}`);
+  }
+  // The commands are there to be copied, and the window turns selection off everywhere
+  // else; the README link is the other half of the way out.
+  assert.ok(area.find(".is-copyable"), "the commands cannot be selected");
+  area.findAll("button").find((n) => n.textContent === Str.t("engine.install.readme")).fire("click");
+  assert.deepEqual(asked.links, ["install"], "the link is the README's install section");
+});
+
+test("uv missing altogether says so, and still gives the way out", async () => {
+  fakePort({
+    status: { found: false, errorKind: "notFound" },
+    install: () => Promise.resolve({ ok: false, errorKind: "noUv", lines: [], manual: ["a", "b"] }),
+  });
+  const block = engineSection(state("0.4.0"));
+  await settled();
+  block.findAll("button").find((n) => n.textContent === Str.t("engine.install.install")).fire("click");
+  await settled();
+  const area = block.find(".engine-install");
+  assert.ok(area.textContent.includes(Str.t("engine.install.noUv")));
+  assert.ok(area.textContent.includes(Str.t("engine.install.manual")));
+});
+
 /* --- the wiring ---------------------------------------------------------------------- */
 
-test("the wiring sets the Review screen's seam and puts the strip on the page", () => {
+test("the wiring fills in both ports, the Review seam, and puts the strip on the page", async () => {
+  const { SETTINGS } = /** @type {any} */ (await import("../src/ui/settings.js"));
   const before = document.body.children.length;
   try {
-    wireEngine();
+    wireWindow();
     assert.equal(typeof REVIEW_NOW.run, "function", "the Review now button is live");
+    // Both ports, because `wiring.js` is the only file under `src/ui/` that may call the
+    // bridge and a port left null is a screen full of controls that do nothing.
+    assert.ok(ENGINE.port, "the engine block has no shell behind it");
+    assert.ok(SETTINGS.port, "the settings tabs have no shell behind them");
+    for (const name of ["read", "language", "appearance", "openAtLogin", "timedIngest", "model", "modelLanguage", "link"]) {
+      assert.equal(typeof SETTINGS.port[name], "function", `the settings port has no ${name}`);
+    }
+    for (const name of ["status", "run", "choose", "forget", "install", "onInstallProgress", "link"]) {
+      assert.equal(typeof ENGINE.port[name], "function", `the engine port has no ${name}`);
+    }
     assert.equal(document.body.children.length, before + 1);
     assert.equal(document.body.children[before].className, "engine-activity");
   } finally {
     REVIEW_NOW.run = null;
     ENGINE.port = null;
+    SETTINGS.port = null;
   }
 });
 

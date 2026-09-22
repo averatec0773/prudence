@@ -10,10 +10,10 @@
  * computes no figures of its own; and its stylesheet may declare no design token.
  */
 
-import { RANGES } from "../store/overview.js";
+import { rangeOf } from "../store/overview.js";
 import { chosen, reviewsFor } from "../store/review.js";
 import { wholeStore } from "./review.js";
-import { day as formatDay } from "../text/fmt.js";
+import { day as formatDay, rangeName } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 import { observations } from "./observations.js";
 import { overview } from "./overview.js";
@@ -26,8 +26,8 @@ import { settings } from "./settings.js";
  *   info: any,
  *   project: string|null,
  *   range: string,
- *   week: string|null,
- *   onWeek: (week: string|null) => void,
+ *   bucket: string|null,
+ *   onBucket: (bucket: string|null) => void,
  *   redraw: () => void,
  * }} ScreenState
  */
@@ -97,8 +97,7 @@ export function screenExists(key) {
 
 function overviewSubtitle(state) {
   const scope = state.project ?? t("scope.allProjects");
-  const range = RANGES.find((one) => one.key === state.range) ?? RANGES[0];
-  return t("scope.subtitle", scope, t(range.label));
+  return t("scope.subtitle", scope, rangeName(rangeOf(state.range)));
 }
 
 function reviewSubtitle(state) {

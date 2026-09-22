@@ -28,6 +28,7 @@ const frontend = walk(join(app, "src")).filter((path) => path.endsWith(".js"));
 const bridgeSource = readFileSync(join(app, "src/bridge.js"), "utf8");
 const shellSource = readFileSync(join(app, "src-tauri/src/lib.rs"), "utf8");
 const watcherSource = readFileSync(join(app, "src-tauri/src/watcher.rs"), "utf8");
+const installerSource = readFileSync(join(app, "src-tauri/src/installer.rs"), "utf8");
 
 /** Every `invoke("name", { a, b })` in the bridge, as name -> sorted argument names. */
 function commandsTheBridgeCalls() {
@@ -111,19 +112,29 @@ test("no file in the frontend except bridge.js touches a Tauri API", () => {
    string on both sides with nothing to catch a rename: `cargo test` green, `node --test`
    green, CI green, and the window quietly stops following the store. This test exists
    because that was the one direction the bridge test did not cover. */
-test("the event the shell emits is the event the bridge listens for", () => {
-  const emitted = watcherSource.match(/pub const STORE_CHANGED: &str = "([^"]+)"/);
-  assert.ok(emitted, "watcher.rs no longer declares STORE_CHANGED");
-
+test("every event the shell emits is an event the bridge listens for", () => {
   const listened = [...bridgeSource.matchAll(/event\.listen\(\s*"([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(
-    listened.includes(emitted[1]),
-    `the shell emits "${emitted[1]}" and bridge.js listens for ${JSON.stringify(listened)}`
-  );
 
-  // And the shell must actually emit the constant, not a literal that drifted from it.
-  assert.ok(
-    /app\.emit\(STORE_CHANGED/.test(watcherSource),
-    "watcher.rs declares STORE_CHANGED but does not emit it"
-  );
+  // One row per event: where it is declared, what the constant is called, and where the
+  // shell emits it. Three events now, and each one is a string on both sides with nothing
+  // but this to catch a rename.
+  const events = [
+    ["watcher.rs", watcherSource, "STORE_CHANGED", watcherSource],
+    ["lib.rs", shellSource, "SETTINGS_CHANGED", shellSource],
+    ["installer.rs", installerSource, "INSTALL_PROGRESS", shellSource],
+  ];
+
+  for (const [file, declared, name, emitter] of events) {
+    const found = declared.match(new RegExp(`const ${name}: &str = "([^"]+)"`));
+    assert.ok(found, `${file} no longer declares ${name}`);
+    assert.ok(
+      listened.includes(found[1]),
+      `the shell emits "${found[1]}" and bridge.js listens for ${JSON.stringify(listened)}`
+    );
+    // And the shell must actually emit the constant, not a literal that drifted from it.
+    assert.ok(
+      new RegExp(`emit\\(\\s*(?:installer::)?${name}`).test(emitter),
+      `${name} is declared and never emitted`
+    );
+  }
 });

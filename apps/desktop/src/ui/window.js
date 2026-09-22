@@ -10,7 +10,8 @@ import { el } from "../design/dom.js";
 import { icon } from "../design/icons.js";
 import { mark } from "../design/brand.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
-import { RANGES } from "../store/overview.js";
+import { rangeName } from "../text/fmt.js";
+import { DEFAULT_RANGE, RANGES } from "../store/overview.js";
 import { SCREENS, screenExists, screenFor } from "./screens.js";
 
 /** The four entries, in the order the sidebar shows them and Cmd-1 to Cmd-4 follow.
@@ -24,9 +25,10 @@ const state = {
   info: /** @type {any} */ (null),
   /** null is "all projects". */
   project: /** @type {string|null} */ (null),
-  range: "8w",
-  /** A week selected in the stacked bars, which filters the three cards. */
-  week: /** @type {string|null} */ (null),
+  range: DEFAULT_RANGE,
+  /** A bucket selected in the stacked bars, which filters the three cards. A day or a
+   *  week, depending on the range; `store/overview.js` holds that rule. */
+  bucket: /** @type {string|null} */ (null),
   scroll: /** @type {Record<string, number>} */ ({}),
   data: /** @type {any} */ (null),
 };
@@ -86,9 +88,9 @@ function screenState() {
     info: state.info,
     project: state.project,
     range: state.range,
-    week: state.week,
-    onWeek: (week) => {
-      state.week = week;
+    bucket: state.bucket,
+    onBucket: (bucket) => {
+      state.bucket = bucket;
       redraw();
     },
     redraw,
@@ -130,23 +132,26 @@ function projectPicker() {
   select.value = state.project ?? "";
   select.addEventListener("change", () => {
     state.project = select.value || null;
-    // A week selected in one project's chart means nothing in another's.
-    state.week = null;
+    // A bucket selected in one project's chart means nothing in another's.
+    state.bucket = null;
     redraw();
   });
   return select;
 }
 
-/** A segmented control: the range. */
+/** A segmented control: the range. Seven of them, so the labels are the shortest thing
+ *  that says what each is: a day count in the reader's plural, and "All". */
 function rangePicker() {
   const group = el("div", { class: "segmented", role: "radiogroup", "aria-label": t("scope.range") });
   group.title = t("scope.range.help");
   for (const range of RANGES) {
-    const button = el("button", { type: "button", role: "radio", text: t(range.label) });
+    const button = el("button", { type: "button", role: "radio", text: rangeName(range) });
     button.setAttribute("aria-checked", String(range.key === state.range));
     button.addEventListener("click", () => {
       state.range = range.key;
-      state.week = null;
+      // A bucket chosen under one range is a day or a week that the next range may not
+      // have a slot for at all.
+      state.bucket = null;
       redraw();
     });
     group.appendChild(button);

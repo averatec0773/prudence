@@ -24,6 +24,12 @@ pub fn set_dock_visible(_app: &AppHandle, _visible: bool) {}
 
 pub fn hide_app(_app: &AppHandle) {}
 
+/// The line a reader types to install uv. See the macOS implementation for why the app
+/// prints this rather than running it.
+pub fn install_uv_command() -> &'static str {
+    "curl -LsSf https://astral.sh/uv/install.sh | sh"
+}
+
 pub fn describe() -> Vec<(String, String)> {
     vec![("platform".into(), std::env::consts::OS.to_string())]
 }

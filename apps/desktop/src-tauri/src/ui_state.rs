@@ -17,6 +17,21 @@ use tauri::{AppHandle, Manager};
 /// The four sections the window has. A stored value outside this list is dropped.
 pub const SECTIONS: &[&str] = &["overview", "review", "observations", "settings"];
 
+/// What the General tab may set the interface's language to. `system` is not a language:
+/// it means the page keeps following the machine's own.
+pub const LANGUAGES: &[&str] = &["system", "en", "zh-Hans"];
+
+/// What the General tab may set the appearance to, with the same meaning for `system`.
+pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
+
+/// The intervals the General tab offers for a timed ingest, in minutes. Zero is off, and
+/// it is in the list because "off" is a choice in the same control as the rest.
+///
+/// A value outside this list is not honoured. The page sends one of these five and
+/// nothing else, and a stored number from a build with a different list is dropped rather
+/// than rounded, which is the same rule the section and the frame follow.
+pub const INGEST_INTERVALS: &[u32] = &[0, 15, 30, 60, 360];
+
 /// The window's floor, from `MainWindowController` in the Swift app.
 pub const MIN_WIDTH: f64 = 900.0;
 pub const MIN_HEIGHT: f64 = 600.0;
@@ -40,6 +55,16 @@ pub struct UiState {
     /// which engine this machine has is the app's business, not the engine's.
     #[serde(default)]
     pub engine: Option<String>,
+    /// The interface's language, as the General tab set it. `None` and `system` are the
+    /// same thing: follow the machine.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Light, dark, or the system's own.
+    #[serde(default)]
+    pub appearance: Option<String>,
+    /// How often the shell runs an ingest on its own, in minutes. `None` and `0` are off.
+    #[serde(default)]
+    pub ingest_every_minutes: Option<u32>,
 }
 
 impl UiState {
@@ -77,6 +102,35 @@ impl UiState {
             .map(str::trim)
             .filter(|value| !value.is_empty())
     }
+
+    /// The remembered language, or `system` when there is none and when this build no
+    /// longer has the one that was stored. Never `None`: every caller wants a word to act
+    /// on, and "follow the machine" is that word.
+    pub fn usable_language(&self) -> &str {
+        one_of(self.language.as_deref(), LANGUAGES, "system")
+    }
+
+    /// The remembered appearance, on the same rule.
+    pub fn usable_appearance(&self) -> &str {
+        one_of(self.appearance.as_deref(), APPEARANCES, "system")
+    }
+
+    /// The remembered ingest interval in minutes, and `0` for off. An interval this build
+    /// does not offer is dropped rather than rounded to the nearest one it does: a timer
+    /// that runs at a rate nobody chose is worse than a timer that is off.
+    pub fn usable_ingest_minutes(&self) -> u32 {
+        self.ingest_every_minutes
+            .filter(|value| INGEST_INTERVALS.contains(value))
+            .unwrap_or(0)
+    }
+}
+
+/// A stored word, or the fallback when it is absent or is one this build does not have.
+fn one_of<'a>(stored: Option<&'a str>, allowed: &[&str], fallback: &'a str) -> &'a str {
+    stored
+        .map(str::trim)
+        .filter(|value| allowed.contains(value))
+        .unwrap_or(fallback)
 }
 
 /// Holds the state in memory and writes it out at the moments worth writing at, rather
@@ -154,6 +208,33 @@ impl Memory {
         }
     }
 
+    /// Remember the interface's language. A word this build does not have is refused
+    /// here rather than stored and dropped on the way out, so the answer the page gets
+    /// back is the answer that will survive a relaunch.
+    pub fn set_language(&self, language: &str) -> bool {
+        if !LANGUAGES.contains(&language) {
+            return false;
+        }
+        self.state.lock().unwrap().language = Some(language.to_string());
+        true
+    }
+
+    pub fn set_appearance(&self, appearance: &str) -> bool {
+        if !APPEARANCES.contains(&appearance) {
+            return false;
+        }
+        self.state.lock().unwrap().appearance = Some(appearance.to_string());
+        true
+    }
+
+    pub fn set_ingest_minutes(&self, minutes: u32) -> bool {
+        if !INGEST_INTERVALS.contains(&minutes) {
+            return false;
+        }
+        self.state.lock().unwrap().ingest_every_minutes = Some(minutes);
+        true
+    }
+
     /// Write what is remembered, and say whether it was written.
     ///
     /// It used to end in `let _ = std::fs::write(...)`, so a failed write was invisible.
@@ -197,8 +278,7 @@ mod tests {
                 width,
                 height,
             }),
-            section: None,
-            engine: None,
+            ..UiState::default()
         }
     }
 
@@ -229,9 +309,8 @@ mod tests {
     #[test]
     fn a_remembered_engine_path_comes_back_trimmed_and_a_blank_one_does_not() {
         let remembered = |value: Option<&str>| UiState {
-            window: None,
-            section: None,
             engine: value.map(str::to_string),
+            ..UiState::default()
         };
         assert_eq!(
             remembered(Some("  /opt/homebrew/bin/prudence  ")).usable_engine(),
@@ -248,9 +327,8 @@ mod tests {
     #[test]
     fn a_section_this_build_does_not_have_is_ignored() {
         let state = UiState {
-            window: None,
             section: Some("suggestions".into()),
-            engine: None,
+            ..UiState::default()
         };
         assert!(state.usable_section().is_none());
     }
@@ -259,9 +337,8 @@ mod tests {
     fn every_section_this_build_has_round_trips() {
         for section in SECTIONS {
             let state = UiState {
-                window: None,
                 section: Some((*section).to_string()),
-                engine: None,
+                ..UiState::default()
             };
             assert_eq!(state.usable_section(), Some(*section));
         }
@@ -273,5 +350,60 @@ mod tests {
         assert!(state.is_err());
         let partial: UiState = serde_json::from_str("{}").unwrap();
         assert!(partial.usable_frame().is_none());
+    }
+
+    /* --- the General tab's three settings -------------------------------------------- */
+
+    /// Nothing remembered is "follow the machine", for both words, and off for the timer.
+    /// This is the state of a first launch, so it decides what the app does before
+    /// anybody has opened Settings at all.
+    #[test]
+    fn nothing_remembered_follows_the_system_and_runs_no_timer() {
+        let fresh = UiState::default();
+        assert_eq!(fresh.usable_language(), "system");
+        assert_eq!(fresh.usable_appearance(), "system");
+        assert_eq!(fresh.usable_ingest_minutes(), 0);
+    }
+
+    #[test]
+    fn every_choice_the_general_tab_offers_round_trips() {
+        for language in LANGUAGES {
+            let state = UiState {
+                language: Some((*language).to_string()),
+                ..UiState::default()
+            };
+            assert_eq!(state.usable_language(), *language);
+        }
+        for appearance in APPEARANCES {
+            let state = UiState {
+                appearance: Some((*appearance).to_string()),
+                ..UiState::default()
+            };
+            assert_eq!(state.usable_appearance(), *appearance);
+        }
+        for minutes in INGEST_INTERVALS {
+            let state = UiState {
+                ingest_every_minutes: Some(*minutes),
+                ..UiState::default()
+            };
+            assert_eq!(state.usable_ingest_minutes(), *minutes);
+        }
+    }
+
+    /// The same rule the section follows: a remembered value this build no longer
+    /// understands is ignored rather than forced. An interval is not rounded to the
+    /// nearest one this build offers, because a timer running at a rate nobody chose is
+    /// worse than a timer that is off.
+    #[test]
+    fn a_remembered_value_this_build_does_not_have_falls_back() {
+        let state = UiState {
+            language: Some("fr".into()),
+            appearance: Some("sepia".into()),
+            ingest_every_minutes: Some(7),
+            ..UiState::default()
+        };
+        assert_eq!(state.usable_language(), "system");
+        assert_eq!(state.usable_appearance(), "system");
+        assert_eq!(state.usable_ingest_minutes(), 0);
     }
 }

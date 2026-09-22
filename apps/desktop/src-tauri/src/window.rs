@@ -29,7 +29,30 @@ pub fn open(app: &AppHandle) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+    raise_for_a_screenshot(&window);
 }
+
+/// While a script is driving the app, put its window above everything else.
+///
+/// `Scripts/shot.py` refuses to capture unless our own window is the frontmost thing over
+/// the rectangle it is about to photograph, which is the rule that stops it photographing
+/// somebody else's screen. Activating by PID is not always enough: an application that
+/// takes the focus back, or one whose window the system keeps in front, leaves the check
+/// failing and nothing is written. Observed on 2026-09-22, where every shot was refused
+/// with "'Claude' window 'Claude' is in front".
+///
+/// Raising our own window makes the check pass **by being true**, which is the only
+/// acceptable way to make it pass. It is harness only and only while
+/// `harness::driving()`: an ordinary launch, and every release build, is untouched.
+#[cfg(feature = "harness")]
+fn raise_for_a_screenshot(window: &WebviewWindow) {
+    if crate::harness::driving() {
+        let _ = window.set_always_on_top(true);
+    }
+}
+
+#[cfg(not(feature = "harness"))]
+fn raise_for_a_screenshot(_window: &WebviewWindow) {}
 
 pub fn close(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN) else {
@@ -98,7 +121,12 @@ pub fn open_backdrop(app: &AppHandle) {
 
     match built {
         Ok(window) => {
-            let _ = window.set_always_on_top(false);
+            // Above the desktop and whatever else is on it, for the same reason
+            // `raise_for_a_screenshot` exists: the backdrop is what makes a shot of a
+            // frosted surface reproducible, and a backdrop under somebody else's window
+            // is a backdrop that is not behind ours. The panel and the main window are
+            // raised too and are ordered in front of it.
+            let _ = window.set_always_on_top(true);
             let _ = window.show();
         }
         Err(error) => eprintln!("[prudence] no backdrop: {error}"),

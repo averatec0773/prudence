@@ -749,6 +749,15 @@ pub fn shared() -> &'static Engine {
     })
 }
 
+/// Is a run going right now?
+///
+/// The timed ingest asks before it starts one. [`Engine::run`] would refuse the second
+/// run anyway, but refusing is not the same as not asking: a refusal puts "a run is
+/// already going" on the page for something the reader never pressed.
+pub fn is_running() -> bool {
+    shared().running.load(Ordering::SeqCst)
+}
+
 /// Holds the "a run is going" flag and clears it however the run ends, panic included.
 /// A flag cleared at the end of a happy path is a flag that stays set the first time
 /// something throws, and then the buttons never come back.
@@ -785,6 +794,48 @@ impl Engine {
             }
         }
         status
+    }
+
+    /// Where uv is, if it is in one of the directories the engine is looked for in.
+    ///
+    /// The Engine tab's Install button needs it. The search order is the engine's own,
+    /// because the engine is installed with uv and the two therefore live together; the
+    /// login-shell probe is deliberately not repeated for uv, and `installer.rs` says why.
+    pub fn locate_uv(&self) -> Option<PathBuf> {
+        crate::installer::locate(&self.locator.search_path(), &|path| {
+            self.locator.files.is_executable(path)
+        })
+    }
+
+    /// Ask the engine something and hand back what it printed.
+    ///
+    /// For `prudence config model`, which has no `--json` and is therefore read rather
+    /// than decoded. The arguments are constants at every call site; nothing from a page
+    /// reaches this. The executable is verified first, on the same rule as [`Self::run`]:
+    /// a remembered path that is no longer the engine is not handed a command.
+    ///
+    /// No deadline, for the reason registered in `DESIGN.md`: the engine exits. The
+    /// verification above it does have one, so a file that hangs never gets this far.
+    pub fn read(
+        &self,
+        remembered: Option<&str>,
+        arguments: &[&str],
+    ) -> Result<String, EngineError> {
+        let Some(found) = self.locator.locate(remembered, SHELL_TIMEOUT) else {
+            return Err(EngineError::NotFound);
+        };
+        version_of(&found.path)?;
+        // Logged like a run is, and for the same reason: the shell's standard error is the
+        // only place anybody can see what a menu bar app asked the engine.
+        eprintln!("[engine] {} {}", found.path.display(), arguments.join(" "));
+        let answer = run(&found.path, arguments, &[])?;
+        eprintln!(
+            "[engine] {} exit {} ({} bytes)",
+            arguments.join(" "),
+            answer.status,
+            answer.stdout.len()
+        );
+        Ok(answer.stdout)
     }
 
     /// Is this path an engine? The picker's answer, and the reason a chosen path is
@@ -1652,6 +1703,42 @@ mod tests {
         // modify somebody's data.
         assert_eq!(json["data"], copy);
         assert_eq!(json["config"], copy);
+    }
+
+    /// The child gets this process's environment, which is the whole isolation story.
+    ///
+    /// The module header says an app pointed at a copy of the store "can never have the
+    /// engine ingest into the real one", and that claim rests entirely on `Command`
+    /// inheriting the parent's environment: production passes no extra variables at all.
+    /// Nothing asserted it. The test above passes `PRUDENCE_DATA_DIR` explicitly, which
+    /// would keep passing if inheritance were lost tomorrow, and then an app launched
+    /// against a scratch directory would quietly ingest into the founder's own store.
+    ///
+    /// The variable is set on this process for the length of the test and removed after.
+    /// It is not one anything else in the suite reads.
+    #[cfg(unix)]
+    #[test]
+    fn the_child_inherits_this_process_environment_with_nothing_passed() {
+        let executable = fake_engine(
+            "inherited",
+            r#"printf '{"data":"%s","config":"%s"}' "$PRUDENCE_DATA_DIR" "$PRUDENCE_CONFIG_DIR""#,
+        );
+        let copy = scratch("inherited").join("store").display().to_string();
+        // Safety: this process is the test binary and the variable is read by the child
+        // through `Command`'s inherited environment, which is the thing under test.
+        unsafe {
+            std::env::set_var("PRUDENCE_DATA_DIR", &copy);
+            std::env::set_var("PRUDENCE_CONFIG_DIR", &copy);
+        }
+        let answer = run(&executable, &Action::Ingest.arguments(false), &[]);
+        unsafe {
+            std::env::remove_var("PRUDENCE_DATA_DIR");
+            std::env::remove_var("PRUDENCE_CONFIG_DIR");
+        }
+
+        let json = answer.expect("it ran").json.expect("the fake answered");
+        assert_eq!(json["data"], copy, "the child did not inherit the store");
+        assert_eq!(json["config"], copy, "the child did not inherit the config");
     }
 
     /// A non-zero exit whose stdout is still JSON is an answer, not an error: the reason

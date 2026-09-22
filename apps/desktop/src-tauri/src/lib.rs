@@ -6,9 +6,12 @@
 
 mod contract;
 mod engine;
+mod installer;
+mod model;
 mod panel;
 mod platform;
 mod store;
+mod timer;
 mod ui_state;
 mod watcher;
 mod window;
@@ -21,13 +24,14 @@ mod window;
 mod harness;
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde_json::Value;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use tauri_plugin_autostart::ManagerExt;
 
 use ui_state::Memory;
 
@@ -59,6 +63,48 @@ pub struct Shell {
     pub material: Mutex<platform::MaterialReport>,
     pub tray_highlight_works: Mutex<bool>,
     pub memory: Memory,
+    /// The timed ingest's schedule. Held here rather than in a static so that the thread
+    /// and the commands are talking to one object whose lifetime is the app's.
+    pub timer: Arc<timer::Timer>,
+}
+
+/// What the General tab sets, in one answer.
+///
+/// `language` and `appearance` are the **settings** (`system`, `en`, `zh-Hans` and
+/// `system`, `light`, `dark`), not what they resolve to: a control ticked from a resolved
+/// value would move on its own when the machine's own setting changed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    language: String,
+    appearance: String,
+    /// Zero is off.
+    ingest_every_minutes: u32,
+    open_at_login: bool,
+    /// Why open-at-login could not be read or set, in the plugin's own words. English,
+    /// like every other message from something that is not this app; the page puts its own
+    /// sentence above it.
+    login_error: Option<String>,
+}
+
+/// Read the three remembered settings, and ask the platform about the fourth.
+///
+/// Open-at-login is the one setting this app does not store: the system stores it, and a
+/// copy kept here would disagree with it the first time somebody turned it off in System
+/// Settings. So it is asked every time.
+fn app_settings(app: &AppHandle, memory: &Memory) -> AppSettings {
+    let state = memory.read();
+    let (open_at_login, login_error) = match app.autolaunch().is_enabled() {
+        Ok(enabled) => (enabled, None),
+        Err(error) => (false, Some(error.to_string())),
+    };
+    AppSettings {
+        language: state.usable_language().to_string(),
+        appearance: state.usable_appearance().to_string(),
+        ingest_every_minutes: state.usable_ingest_minutes(),
+        open_at_login,
+        login_error,
+    }
 }
 
 #[derive(Serialize)]
@@ -69,9 +115,13 @@ pub struct ShellInfo {
     tray_highlight: bool,
     platform: Vec<(String, String)>,
     supported_contract: Vec<u32>,
-    /// `en` or `zh-Hans` when the screenshot hook forced one, otherwise null and the page
-    /// keeps the frontend's default. Proper language selection is batch 8.
+    /// The language the pages are to draw in, or null to follow the machine. It is the
+    /// screenshot hook's forced value first, then the General tab's setting; `system` is
+    /// sent as null, because "follow the machine" is what the page does with no answer.
     language: Option<String>,
+    /// The General tab's own settings, so the first draw already has them and Settings
+    /// does not have to ask separately.
+    settings: AppSettings,
     /// The section the window last had, or null when this build no longer has it.
     section: Option<String>,
     /// Whether this build carries the automation hooks. The page exposes its own test
@@ -109,7 +159,8 @@ async fn store_read(shell: State<'_, Shell>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
+fn shell_info(app: AppHandle, shell: State<'_, Shell>) -> ShellInfo {
+    let settings = app_settings(&app, &shell.memory);
     ShellInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         database: shell.database.display().to_string(),
@@ -117,7 +168,8 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         tray_highlight: *shell.tray_highlight_works.lock().unwrap(),
         platform: platform::describe(),
         supported_contract: store::supported_contract(),
-        language: forced_language(),
+        language: forced_language().or_else(|| chosen_language(&settings.language)),
+        settings,
         section: scripted_section()
             .or_else(|| shell.memory.read().usable_section().map(str::to_string)),
         harness: cfg!(feature = "harness"),
@@ -217,7 +269,14 @@ async fn engine_run(
         return Err(format!("no such engine action: {action}"));
     };
     let remembered = shell.memory.read().usable_engine().map(str::to_string);
-    scheduled(move || engine::shared().run(remembered.as_deref(), action, force)).await
+    let timer = shell.timer.clone();
+    let outcome =
+        scheduled(move || engine::shared().run(remembered.as_deref(), action, force)).await;
+    // The timed ingest's clock starts again from any run, not only from its own. Without
+    // this a reader who presses Ingest now a minute before the interval is up gets a
+    // second ingest a minute later, for nothing.
+    timer.ran();
+    outcome
 }
 
 /// The user picks the executable, and it is verified before it is trusted.
@@ -266,6 +325,227 @@ fn engine_forget(shell: State<'_, Shell>) {
     let _ = shell.memory.save();
 }
 
+/// Install or update `prudence-core` with uv.
+///
+/// The page sends one boolean and nothing else; every word of both command lines is a
+/// constant in `installer.rs`, which says why. uv's output is streamed to the page as it
+/// arrives, over [`installer::INSTALL_PROGRESS`], and the same lines come back at the end
+/// with the outcome, so a page that missed an event still has them.
+///
+/// When uv is not on this machine there is nothing to run and nothing failed: the answer
+/// carries the manual route, which is the two commands a reader types.
+#[tauri::command]
+async fn engine_install(
+    app: AppHandle,
+    upgrade: bool,
+) -> Result<installer::InstallOutcome, String> {
+    scheduled(move || {
+        let Some(uv) = engine::shared().locate_uv() else {
+            return installer::InstallOutcome {
+                error_kind: Some("noUv".into()),
+                manual: installer::manual(),
+                ..installer::InstallOutcome::default()
+            };
+        };
+        let report = app.clone();
+        let outcome = installer::install(&uv, upgrade, &move |lines| {
+            let _ = report.emit(
+                installer::INSTALL_PROGRESS,
+                installer::InstallProgress {
+                    lines: lines.to_vec(),
+                },
+            );
+        });
+        match outcome {
+            Ok(done) => done,
+            Err(error) => installer::InstallOutcome {
+                error_kind: Some(error.kind().into()),
+                lines: vec![error.detail()]
+                    .into_iter()
+                    .filter(|l| !l.is_empty())
+                    .collect(),
+                manual: installer::manual(),
+                ..installer::InstallOutcome::default()
+            },
+        }
+    })
+    .await
+}
+
+/* --- the model settings --------------------------------------------------------------
+ *
+ * The app never calls a model. These two read what `prudence config model` prints and set
+ * the one field the Model tab offers, which is the language the engine writes its optional
+ * prose in. `model.rs` holds the parsing and the three words the language may be.
+ */
+
+#[tauri::command]
+async fn model_read(shell: State<'_, Shell>) -> Result<model::ModelSettings, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        engine::shared()
+            .read(remembered.as_deref(), &["config", "model"])
+            .map(|printed| model::parse(&printed))
+            .map_err(|error| error.kind().to_string())
+    })
+    .await?
+}
+
+/// `prudence config model --language <code>`, for one of three codes.
+///
+/// The word is checked against `model::LANGUAGES` **here**, before anything is spawned, so
+/// a page that sent something else reaches no command line at all. The answer is the
+/// settings as they are after the change, read back from the engine rather than assumed.
+#[tauri::command]
+async fn model_set_language(
+    shell: State<'_, Shell>,
+    language: String,
+) -> Result<model::ModelSettings, String> {
+    let Some(arguments) = model::language_arguments(&language) else {
+        // Not a user-visible sentence: the page can only send one of three words, so
+        // anything else is a defect in the bridge rather than something to translate.
+        return Err(format!("no such model language: {language}"));
+    };
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        let engine = engine::shared();
+        engine
+            .read(remembered.as_deref(), &arguments)
+            .and_then(|_| engine.read(remembered.as_deref(), &["config", "model"]))
+            .map(|printed| model::parse(&printed))
+            .map_err(|error| error.kind().to_string())
+    })
+    .await?
+}
+
+/* --- the General tab ------------------------------------------------------------------
+ *
+ * Four settings, four commands, and one event. Each command answers with the whole
+ * settings block rather than with nothing, so the page draws what is in force instead of
+ * what it just asked for: open-at-login in particular can refuse, and a control that ticks
+ * itself on a refusal is a control that lies.
+ */
+
+/// Told to both pages whenever a setting changes, so the panel follows a language chosen
+/// in the window. The payload is empty, on the same rule as `store-changed`: there is one
+/// way to get the settings and it is `shell_info`.
+const SETTINGS_CHANGED: &str = "settings-changed";
+
+#[tauri::command]
+fn settings_read(app: AppHandle, shell: State<'_, Shell>) -> AppSettings {
+    app_settings(&app, &shell.memory)
+}
+
+#[tauri::command]
+fn settings_language(
+    app: AppHandle,
+    shell: State<'_, Shell>,
+    language: String,
+) -> Result<AppSettings, String> {
+    if !shell.memory.set_language(&language) {
+        return Err(format!("no such language: {language}"));
+    }
+    shell.memory.save()?;
+    Ok(announce_settings(&app, &shell.memory))
+}
+
+/// The appearance, set on the app's own windows as well as remembered.
+///
+/// **Two halves, and both are needed.** The window theme is what makes the titlebar, the
+/// scrollbars and the system's own material change; the page's `data-theme` is what makes
+/// the content change, and the page reads the setting out of `shell_info` rather than
+/// being told separately. Neither half alone gives a dark window: setting only the theme
+/// leaves a light page inside a dark frame.
+#[tauri::command]
+fn settings_appearance(
+    app: AppHandle,
+    shell: State<'_, Shell>,
+    appearance: String,
+) -> Result<AppSettings, String> {
+    if !shell.memory.set_appearance(&appearance) {
+        return Err(format!("no such appearance: {appearance}"));
+    }
+    shell.memory.save()?;
+    apply_appearance(&app, &appearance);
+    Ok(announce_settings(&app, &shell.memory))
+}
+
+#[tauri::command]
+fn settings_timed_ingest(
+    app: AppHandle,
+    shell: State<'_, Shell>,
+    minutes: u32,
+) -> Result<AppSettings, String> {
+    if !shell.memory.set_ingest_minutes(minutes) {
+        return Err(format!("no such interval: {minutes}"));
+    }
+    shell.memory.save()?;
+    shell.timer.set(minutes);
+    Ok(announce_settings(&app, &shell.memory))
+}
+
+/// Register, or unregister, this copy of the app as a login item.
+///
+/// The answer is read back from the system rather than assumed: macOS can refuse a login
+/// item for a copy that is not where it expects one, and the page shows what is actually
+/// in force with the plugin's own reason under it.
+#[tauri::command]
+fn settings_open_at_login(
+    app: AppHandle,
+    shell: State<'_, Shell>,
+    enabled: bool,
+) -> Result<AppSettings, String> {
+    let asked = if enabled {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
+    if let Err(error) = asked {
+        eprintln!("[settings] open at login: {error}");
+    }
+    Ok(announce_settings(&app, &shell.memory))
+}
+
+/// The settings as they now are, told to both pages.
+fn announce_settings(app: &AppHandle, memory: &Memory) -> AppSettings {
+    let settings = app_settings(app, memory);
+    if let Err(error) = app.emit(SETTINGS_CHANGED, ()) {
+        eprintln!("[settings] could not announce: {error}");
+    }
+    settings
+}
+
+/// The links the About tab offers, by name.
+///
+/// **The page asks by name and the shell owns the address.** A command that took a URL
+/// would be a command that opens whatever it is handed, and the whole reason the frontend
+/// talks to the shell through one door is that the door decides.
+const LINKS: &[(&str, &str)] = &[
+    ("project", "https://github.com/averatec0773/prudence"),
+    ("developer", "https://github.com/averatec0773"),
+    // The anchors are GitHub's own, taken from the headings in the repository's README:
+    // "## Install" and "## What it records and what it never records".
+    (
+        "install",
+        "https://github.com/averatec0773/prudence#install",
+    ),
+    (
+        "recorded",
+        "https://github.com/averatec0773/prudence#what-it-records-and-what-it-never-records",
+    ),
+];
+
+#[tauri::command]
+fn open_link(app: AppHandle, name: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let Some((_, url)) = LINKS.iter().find(|(key, _)| *key == name) else {
+        return Err(format!("no such link: {name}"));
+    };
+    app.opener()
+        .open_url(*url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 /// The page's own report of what it ended up drawing, on the shell's standard error.
 /// An agent cannot open the web inspector of a window it did not click, and a spike that
 /// cannot say what the page computed is a spike that guesses.
@@ -282,9 +562,13 @@ fn app_quit(app: AppHandle) {
     app.exit(0);
 }
 
-/// The language and the appearance are settings that batch 8 will read from the store's
-/// own configuration. Until then they are read from the environment, which is why these
-/// two are **not** behind the `harness` feature: they are the setting, early.
+/// A language forced for one launch, for a screenshot run. It beats the setting, because
+/// a picture has to be of the language the caller asked for and not of whatever this
+/// machine last remembered.
+///
+/// **Not** behind the `harness` feature, unlike the other hooks: `shot.py` sets it on a
+/// harness build, and it was here before the setting existed. It stays because a forced
+/// language changes nothing a user can reach and is how every screenshot is taken.
 fn forced_language() -> Option<String> {
     match std::env::var("PRUDENCE_FORCE_LANGUAGE").ok()?.as_str() {
         "en" => Some("en".into()),
@@ -293,16 +577,41 @@ fn forced_language() -> Option<String> {
     }
 }
 
-fn forced_appearance(window: &WebviewWindow) {
-    let Ok(appearance) = std::env::var("PRUDENCE_FORCE_APPEARANCE") else {
-        return;
-    };
-    let theme = match appearance.as_str() {
+/// The General tab's language, as a language the page can draw in. `system` is null: the
+/// page follows the machine when it is told nothing.
+fn chosen_language(setting: &str) -> Option<String> {
+    (setting != "system").then(|| setting.to_string())
+}
+
+/// The appearance a screenshot run forced, or the one the General tab remembered.
+fn appearance_now(memory: &Memory) -> String {
+    std::env::var("PRUDENCE_FORCE_APPEARANCE")
+        .ok()
+        .filter(|value| value == "light" || value == "dark")
+        .unwrap_or_else(|| memory.read().usable_appearance().to_string())
+}
+
+/// Pin both windows to an appearance, or hand them back to the system.
+///
+/// `set_theme(None)` is what "follow the system" is: a window pinned to light stays light
+/// through a system change until it is told otherwise.
+fn apply_appearance(app: &AppHandle, appearance: &str) {
+    let theme = match appearance {
         "dark" => Some(tauri::Theme::Dark),
         "light" => Some(tauri::Theme::Light),
-        _ => return,
+        _ => None,
     };
-    let _ = window.set_theme(theme);
+    for label in [PANEL, MAIN] {
+        if let Some(window) = app.get_webview_window(label) {
+            set_theme(&window, theme);
+        }
+    }
+}
+
+fn set_theme(window: &WebviewWindow, theme: Option<tauri::Theme>) {
+    if let Err(error) = window.set_theme(theme) {
+        eprintln!("[prudence] the window would not take the theme: {error}");
+    }
 }
 
 /// May the panel dismiss itself because it lost the focus?
@@ -340,6 +649,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_dialog::init())
+        // Opening a link in the system browser, for the three the About tab offers. The
+        // page asks by name and `LINKS` holds the addresses, so no webview capability is
+        // granted and no URL crosses the bridge.
+        .plugin(tauri_plugin_opener::init())
+        // Open at login. `LaunchAgent` rather than the newer API because it is the one
+        // that works for an app that is not in /Applications, which is where this app is
+        // while it is being built.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             store_read,
             shell_info,
@@ -353,15 +673,27 @@ pub fn run() {
             engine_run,
             engine_choose,
             engine_forget,
+            engine_install,
+            model_read,
+            model_set_language,
+            settings_read,
+            settings_language,
+            settings_appearance,
+            settings_timed_ingest,
+            settings_open_at_login,
+            open_link,
             app_quit
         ])
         .setup(move |app| {
+            let memory = Memory::load(app.handle());
+            let timer = Arc::new(timer::Timer::new(memory.read().usable_ingest_minutes()));
             app.manage(Shell {
                 database,
                 started,
                 material: Mutex::new(platform::MaterialReport::none("not applied yet")),
                 tray_highlight_works: Mutex::new(false),
-                memory: Memory::load(app.handle()),
+                memory,
+                timer: timer.clone(),
             });
 
             // No Dock icon and no app switcher entry until a window is open. Set before
@@ -375,8 +707,9 @@ pub fn run() {
                 .get_webview_window(MAIN)
                 .expect("the main window is declared in tauri.conf.json");
 
-            forced_appearance(&panel_window);
-            forced_appearance(&main_window);
+            // The setting, or what a screenshot run forced. Applied before the first
+            // material is, so a window never flashes the system's appearance first.
+            apply_appearance(app.handle(), &appearance_now(&app.state::<Shell>().memory));
 
             let report = platform::apply_material(&panel_window, platform::Surface::Panel);
             eprintln!("[prudence] panel material: {}", report.kind);
@@ -443,6 +776,10 @@ pub fn run() {
             // The window follows the store: an ingest that lands while the app is open
             // refreshes the pages instead of leaving them an hour behind.
             watcher::watch(app.handle(), app.state::<Shell>().database.clone());
+
+            // The timed ingest. One thread, started here and not when a window opens: the
+            // setting exists precisely for the hours this app spends with no window.
+            timer::start(app.handle(), timer);
 
             #[cfg(feature = "harness")]
             harness::start(app.handle());

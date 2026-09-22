@@ -24,11 +24,11 @@
     <script type="module">
       import { boot } from "./boot.js";
       import { page } from "./ui/window.js";
-      import { wireEngine } from "./ui/engine-section.js";
-      // The window is the only page with the engine's actions on it, so the wiring is
-      // here and not in `boot.js`, which both pages share. Before `boot`, so the first
-      // Settings draw already has it.
-      wireEngine();
+      import { wireWindow } from "./ui/wiring.js";
+      // The window is the only page with the engine's actions and the settings controls
+      // on it, so the wiring is here and not in `boot.js`, which both pages share. Before
+      // `boot`, so the first Settings draw already has it.
+      wireWindow();
       boot(page);
     </script>
   </body>

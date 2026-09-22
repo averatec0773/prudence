@@ -101,6 +101,62 @@ export function forgetEngine() {
   return core().invoke("engine_forget");
 }
 
+/** Install `prudence-core` with uv, or update it. One boolean: every word of both command
+ *  lines is a constant in `src-tauri/src/installer.rs`. */
+export function installEngine(upgrade) {
+  return core().invoke("engine_install", { upgrade: Boolean(upgrade) });
+}
+
+/* --- the model settings ---------------------------------------------------------------
+ *
+ * The app never calls a model. These read what `prudence config model` prints and set the
+ * one field the Model tab offers, which is the language the engine writes its optional
+ * prose in.
+ */
+
+export function modelSettings() {
+  return core().invoke("model_read");
+}
+
+/** One of `system`, `en` or `zh-Hans`; the shell refuses anything else before it spawns. */
+export function setModelLanguage(language) {
+  return core().invoke("model_set_language", { language: String(language) });
+}
+
+/* --- the app's own settings -----------------------------------------------------------
+ *
+ * Each of these answers with the whole settings block rather than with nothing, so the
+ * page draws what is in force instead of what it asked for. Open at login in particular
+ * can refuse, and a control that ticks itself on a refusal is a control that lies.
+ */
+
+export function settings() {
+  return core().invoke("settings_read");
+}
+
+export function setLanguage(language) {
+  return core().invoke("settings_language", { language: String(language) });
+}
+
+export function setAppearance(appearance) {
+  return core().invoke("settings_appearance", { appearance: String(appearance) });
+}
+
+/** How often the shell runs an ingest on its own, in minutes. Zero is off. */
+export function setTimedIngest(minutes) {
+  return core().invoke("settings_timed_ingest", { minutes: Number(minutes) });
+}
+
+export function setOpenAtLogin(enabled) {
+  return core().invoke("settings_open_at_login", { enabled: Boolean(enabled) });
+}
+
+/** Open one of the About tab's links in the system browser, **by name**: the shell owns
+ *  the addresses, so no URL crosses this bridge and nothing the page invents is opened. */
+export function openLink(name) {
+  return core().invoke("open_link", { name: String(name) });
+}
+
 /**
  * The shell watches the store and says when an ingest has landed. The payload is
  * deliberately empty: the page re-reads through `readStore`, so there is one way to get
@@ -113,4 +169,37 @@ export function onStoreChanged(handler) {
   const tauri = /** @type {any} */ (globalThis).__TAURI__;
   if (!tauri?.event) return Promise.resolve(() => {});
   return tauri.event.listen("store-changed", () => handler());
+}
+
+/**
+ * A setting changed, wherever it was changed from. Empty payload, on the same rule as
+ * `onStoreChanged`: there is one way to get the settings and it is `info()`.
+ *
+ * Both pages listen, which is the point: the panel has no settings screen of its own and
+ * still has to follow a language chosen in the window.
+ *
+ * @param {() => void} handler
+ * @returns {Promise<() => void>}
+ */
+export function onSettingsChanged(handler) {
+  const tauri = /** @type {any} */ (globalThis).__TAURI__;
+  if (!tauri?.event) return Promise.resolve(() => {});
+  return tauri.event.listen("settings-changed", () => handler());
+}
+
+/**
+ * The lines uv is printing, while it is still printing them. Unlike the two above, this
+ * one carries its payload: the lines are the whole point, and asking for them again would
+ * mean asking a process that has already moved on.
+ *
+ * @param {(lines: string[]) => void} handler
+ * @returns {Promise<() => void>}
+ */
+export function onInstallProgress(handler) {
+  const tauri = /** @type {any} */ (globalThis).__TAURI__;
+  if (!tauri?.event) return Promise.resolve(() => {});
+  return tauri.event.listen("engine-install", (event) => {
+    const lines = /** @type {any} */ (event)?.payload?.lines;
+    handler(Array.isArray(lines) ? lines.map(String) : []);
+  });
 }

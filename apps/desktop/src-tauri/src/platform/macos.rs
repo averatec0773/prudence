@@ -301,6 +301,16 @@ pub fn hide_app(app: &AppHandle) {
     let _ = app.hide();
 }
 
+/// The line a reader types to install uv, when the app could not do it for them.
+///
+/// A platform difference because it is a different installer per system, and a string
+/// rather than something this shell runs: installing a package manager by piping a script
+/// into a shell is a thing a person decides to do, not a thing a menu bar app does on
+/// their behalf.
+pub fn install_uv_command() -> &'static str {
+    "curl -LsSf https://astral.sh/uv/install.sh | sh"
+}
+
 pub fn describe() -> Vec<(String, String)> {
     let appkit = unsafe { objc2_app_kit::NSAppKitVersionNumber };
     vec![

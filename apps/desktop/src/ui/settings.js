@@ -1,39 +1,81 @@
-/* Settings: what is recorded and where, what is never recorded, and what is running.
+/* Settings: four tabs of controls, and the provenance of what they control.
  *
- * **This screen is read-only, and says so where a control is missing.** There is no
- * bridge command that writes a setting: `bridge.js` reads the store, asks the shell
- * about itself, and moves windows. So every row here reports what is in force and where
- * it is changed, which is the CLI or `config.toml`. A screen of switches that silently
- * did nothing would be worse than this, because the reader would believe them.
+ * ## What changed and why
  *
- * What it is for. Three of the four screens answer "what happened"; this one answers
- * "what does this thing know about me, and where does it keep it". That is why the
- * record's own promise is on it in full rather than only in the README, and why the fact
- * versions are here: they are the provenance of every figure the other screens draw.
+ * This screen used to be an information display. It reported the language, the appearance
+ * and the store, said in so many words that it could change none of them, and carried the
+ * record's whole promise as prose. The founder's reading of it: "it is an information
+ * display, not a settings screen; I do not need the what-is-recorded and never-recorded
+ * prose there; I need real settings, with top tabs, and the options the earlier app had."
  *
- * It keeps the page contract (`DESIGN.md`): handed everything, reaches for nothing,
- * returns one element, computes nothing. The one count it prints per row comes from
- * `store/settings.js`; everything else is a column of `app_status`, a field of
- * `shell_info` or a string.
+ * So the prose is gone, the controls are real, and the screen is four tabs:
+ *
+ * - **General**: the app's own four settings, each one a segmented control.
+ * - **Engine**: where `prudence` is, what version, the actions, the Install button, and
+ *   where the store it reads is kept.
+ * - **Model**: what `prudence config model` prints, and the one field of it this app may
+ *   set. The app never calls a model itself, and the tab says so.
+ * - **About**: what is running, on what, under what licence, and where to go next.
+ *
+ * A **Repositories** tab arrives with the next sheet. There is no stub for it here: a tab
+ * that opens on "not built yet" is worse than a tab that is not there.
+ *
+ * ## The page contract, and the one thing this screen keeps between renders
+ *
+ * It is handed everything, returns one element and computes no figure. The exception is
+ * `openTab`: which tab is open is navigation, not data, and a screen rebuilt because an
+ * ingest landed must not throw the reader back to General while they are half way through
+ * changing the appearance. The four panes are built together and shown by a class, so a
+ * tab change redraws nothing at all.
+ *
+ * ## Why the controls go through a port
+ *
+ * A screen may not call the bridge. `SETTINGS.port` is filled in by `ui/wiring.js`, the
+ * same way the engine block's is, which is also what lets the whole screen be driven
+ * against a fake shell in `test/settings.test.mjs`.
  */
 
-import { emptyState, panel } from "../design/components.js";
+import { panel } from "../design/components.js";
 import { el } from "../design/dom.js";
-import { recorded } from "../store/settings.js";
 import { engineSection } from "./engine-section.js";
-import { count, list, relative, sessions, stamp } from "../text/fmt.js";
-import { lang, plural, t } from "../text/strings.js";
+import { list, relative, stamp } from "../text/fmt.js";
+import { t } from "../text/strings.js";
 
 /**
- * Where the project is. Not a catalogue key, for the same reason `PRODUCT_NAME` is not
- * one: a URL is not translated. It is printed rather than linked because opening a link
- * needs the shell to hand it to the system browser and no bridge command does, and a
- * plain `<a href>` inside a Tauri webview navigates the app away from its own page.
+ * What the four tabs ask the shell.
+ *
+ * @typedef {{
+ *   read: () => Promise<any>,
+ *   language: (code: string) => Promise<any>,
+ *   appearance: (code: string) => Promise<any>,
+ *   openAtLogin: (on: boolean) => Promise<any>,
+ *   timedIngest: (minutes: number) => Promise<any>,
+ *   model: () => Promise<any>,
+ *   modelLanguage: (code: string) => Promise<any>,
+ *   link: (name: string) => Promise<any>,
+ * }} SettingsPort
+ *
+ * @type {{ port: SettingsPort | null }}
  */
-const PROJECT_URL = "https://github.com/averatec0773/prudence";
+export const SETTINGS = { port: null };
+
+/** The tabs, left to right. The key is not a display string. */
+export const TABS = /** @type {const} */ ([
+  { key: "general", label: "settings.tab.general" },
+  { key: "engine", label: "settings.tab.engine" },
+  { key: "model", label: "settings.tab.model" },
+  { key: "about", label: "settings.tab.about" },
+]);
+
+/** Which tab is open. See the note at the top of the file: navigation, not data. */
+let openTab = "general";
 
 /** The licence in the repository's own `LICENSE`, by its SPDX name. Not translated. */
 const LICENCE = "Apache-2.0";
+
+/** The founder's own account name. A handle is not translated, and it is not a catalogue
+ *  key for the same reason `PRODUCT_NAME` is not one. */
+const DEVELOPER = "averatec0773";
 
 /**
  * A language's name in its own language. Not catalogue keys: an autonym reads the same
@@ -43,8 +85,7 @@ const LICENCE = "Apache-2.0";
 const LANGUAGE_NAMES = { en: "English", "zh-Hans": "简体中文" };
 
 /** The variable `lib.rs` reads when a screenshot run forces a language. A variable name
- *  is not translated, and it is named here so the row can say where the language came
- *  from rather than only which one is in force. */
+ *  is not translated. */
 const FORCE_LANGUAGE = "PRUDENCE_FORCE_LANGUAGE";
 
 /** The `app_status` columns that carry a version, in the order the engine runs them. */
@@ -111,110 +152,165 @@ function pairs(rows) {
   return el("table", { class: "data settings-pairs" }, [body]);
 }
 
-/** A capture level in the reader's language, or the engine's own token for a level this
- *  build has not heard of. Ugly and readable, never blank: the same fallback the
- *  Observations screen uses for a behaviour it does not know. */
-function levelName(level) {
-  if (!level) return t("common.dash");
-  const key = level === "metadata-only" ? "settings.level.metadataOnly" : `settings.level.${level}`;
-  const found = t(key);
-  return found === key ? level : found;
-}
-
-/* --- the cards ---------------------------------------------------------------------- */
-
-/** What is recorded: one row per repository and level, and where it is changed. */
-function whatIsRecorded(data) {
-  const { rows } = recorded(data);
-  const status = data.status;
-
-  if (!rows.length) {
-    return panel({
-      title: t("settings.recorded"),
-      note: t("settings.recorded.note"),
-      body: emptyState(t("settings.recorded.empty.title"), t("settings.recorded.empty.detail")),
-      method: t("settings.recorded.method"),
-    });
+/**
+ * One setting: its name, a segmented control, and a line under it.
+ *
+ * **Every control on this screen is this one.** Four settings in four shapes is four
+ * things to learn; a segmented control says what the choices are without being opened,
+ * which is what a settings screen with six visible rows wants. It is also the control the
+ * window's own range picker already uses, so the app has one of them and not two.
+ *
+ * The control is set from the value that came back from the shell, never from what was
+ * asked for: `settings_open_at_login` in particular can be refused by the system, and a
+ * control that ticks itself on a refusal is a control that lies.
+ *
+ * @param {{ label: string, note?: string, choices: {value: any, label: string}[],
+ *           chosen: any, onChoose: (value: any) => void, foot?: Element|null }} options
+ */
+function setting({ label, note, choices, chosen, onChoose, foot }) {
+  const group = el("div", { class: "segmented", role: "radiogroup", "aria-label": label });
+  for (const choice of choices) {
+    const button = el("button", { type: "button", role: "radio", text: choice.label });
+    button.setAttribute("aria-checked", String(choice.value === chosen));
+    button.addEventListener("click", () => onChoose(choice.value));
+    group.appendChild(button);
   }
 
-  const table = el("table", { class: "data" }, [
-    el("thead", {}, [
-      el("tr", {}, [
-        el("th", { text: t("scope.project") }),
-        el("th", { text: t("settings.column.level") }),
-        el("th", { class: "n", text: t("settings.column.sessions") }),
-      ]),
+  const row = el("div", { class: "setting" }, [
+    el("div", { class: "setting-head" }, [
+      el("div", { class: "setting-label", text: label }),
+      group,
     ]),
   ]);
-  const body = el("tbody");
-  for (const row of rows) {
-    body.appendChild(
-      el("tr", {}, [
-        el("td", { text: row.project || t("common.dash") }),
-        el("td", { text: levelName(row.level) }),
-        el("td", { class: "n", text: count(row.sessions) }),
-      ])
-    );
-  }
-  table.appendChild(body);
-
-  // The session total is the engine's own column, so adding up the column above it is
-  // how a reader checks the two against each other.
-  //
-  // **The project count is the number of groups in this table**, not
-  // `app_status.projects`. That column is `(SELECT COUNT(*) FROM repository)`, and
-  // `repos.py` drops and rebuilds `repository` from `config.toml` on every ingest, so it
-  // counts what is *enabled* whether or not a session was ever recorded in it. Enable a
-  // fourth repository and the card read "150 sessions across 4 projects" above a
-  // three-row table adding to 150. It was 3 = 3 on the founder's store by coincidence,
-  // and the card's own note says this is "what was recorded rather than what is
-  // configured". Counting the groups the reader already produced is not the app owning a
-  // figure; taking a count of a different population and printing it here was.
-  const footer = el("div", { class: "notes" });
-  if (status) {
-    const projects = new Set(rows.map((row) => row.project)).size;
-    footer.appendChild(
-      el("div", {
-        text: t(
-          "settings.recorded.total",
-          sessions(Number(status.sessions) || 0),
-          plural("unit.projects", projects, count(projects))
-        ),
-      })
-    );
-  }
-  footer.appendChild(el("div", { text: t("settings.recorded.readOnly") }));
-
-  return panel({
-    title: t("settings.recorded"),
-    note: t("settings.recorded.note"),
-    body: el("div", {}, [table, footer]),
-    method: t("settings.recorded.method"),
-  });
+  if (note) row.appendChild(el("div", { class: "setting-note", text: note }));
+  if (foot) row.appendChild(foot);
+  return row;
 }
 
-/** The promise. No figures, and none of it conditional on the store: somebody deciding
- *  whether to enable a repository has to know what each level means before there is
- *  anything recorded at it. */
-function whatIsNeverRecorded() {
-  const promises = [
-    "settings.never.archive",
-    "settings.never.derived",
-    "settings.never.metadataOnly",
-    "settings.never.upload",
-    "settings.never.model",
-    "settings.never.employer",
+/* --- General ------------------------------------------------------------------------ */
+
+/** The three words every language control on this screen offers. The app's own and the
+ *  engine's are the same three, which is not a coincidence: they are the same question
+ *  asked of two programs. */
+function languageChoices() {
+  return [
+    { value: "system", label: t("settings.choice.system") },
+    { value: "en", label: LANGUAGE_NAMES.en },
+    { value: "zh-Hans", label: LANGUAGE_NAMES["zh-Hans"] },
   ];
-  return panel({
-    title: t("settings.never"),
-    note: t("settings.never.note"),
-    body: el(
-      "ul",
-      { class: "settings-promise" },
-      promises.map((key) => el("li", { text: t(key) }))
-    ),
-  });
 }
+
+/** Off, and the four intervals. The minutes are the shell's own list (`ui_state.rs`,
+ *  `INGEST_INTERVALS`), and a value outside it is refused there. */
+function intervalChoices() {
+  return [
+    { value: 0, label: t("settings.interval.off") },
+    { value: 15, label: t("settings.interval.15m") },
+    { value: 30, label: t("settings.interval.30m") },
+    { value: 60, label: t("settings.interval.1h") },
+    { value: 360, label: t("settings.interval.6h") },
+  ];
+}
+
+/**
+ * The app's own settings.
+ *
+ * Every control writes through the shell and then **redraws from the answer**, which is
+ * how a refused login item shows as refused. The shell also announces the change to both
+ * pages, so the panel follows a language chosen here without being relaunched.
+ */
+function general(state) {
+  const port = SETTINGS.port;
+  const body = el("div", { class: "setting-list" });
+
+  if (!port) {
+    // The page is open in a browser, which is a real thing to do while working on layout.
+    // It says so rather than drawing four controls that would do nothing.
+    body.appendChild(el("p", { class: "setting-note", text: t("settings.noShell") }));
+    return panel({ title: t("settings.tab.general"), note: t("settings.general.note"), body });
+  }
+
+  const now = state.info?.settings ?? {};
+
+  // Ask the shell, and let it say when the answer is in.
+  //
+  // **Not `state.redraw()`.** A redraw here would rebuild this screen from the `info` the
+  // page was booted with, which is exactly the thing that has just changed, so the control
+  // would snap back to the old value for as long as it took the event to arrive. The shell
+  // announces every setting change to both pages, `boot.js` asks for the whole of
+  // `shell_info` again and draws from that, and this screen comes back with the answer in
+  // it. The same event is what carries a language chosen here to the panel.
+  //
+  // A rejection is a defect in the bridge rather than a refusal: the shell answers `Ok`
+  // with what is actually in force even when the system says no. `ui/wiring.js` reports
+  // one on the shell's standard error, which is where a screen's failures have to go,
+  // because a screen may not call the bridge itself.
+  const after = (promise) => {
+    void promise;
+  };
+
+  body.appendChild(
+    setting({
+      label: t("settings.language"),
+      note: state.info?.language && now.language === "system"
+        ? t("settings.language.forced", FORCE_LANGUAGE)
+        : t("settings.language.note"),
+      choices: languageChoices(),
+      chosen: now.language ?? "system",
+      onChoose: (value) => after(port.language(value)),
+    })
+  );
+
+  body.appendChild(
+    setting({
+      label: t("settings.appearance"),
+      note: t("settings.appearance.note"),
+      choices: [
+        { value: "system", label: t("settings.choice.system") },
+        { value: "light", label: t("settings.appearance.light") },
+        { value: "dark", label: t("settings.appearance.dark") },
+      ],
+      chosen: now.appearance ?? "system",
+      onChoose: (value) => after(port.appearance(value)),
+    })
+  );
+
+  body.appendChild(
+    setting({
+      label: t("settings.openAtLogin"),
+      note: t("settings.openAtLogin.note"),
+      choices: [
+        { value: false, label: t("settings.choice.off") },
+        { value: true, label: t("settings.choice.on") },
+      ],
+      chosen: Boolean(now.openAtLogin),
+      onChoose: (value) => after(port.openAtLogin(value)),
+      // The system's own words for why it would not register the login item, under the
+      // app's sentence for it. English, like every other message from something that is
+      // not this app.
+      foot: now.loginError
+        ? el("div", { class: "notes fact-notes" }, [
+            el("div", { text: t("settings.openAtLogin.refused") }),
+            el("div", { text: String(now.loginError) }),
+          ])
+        : null,
+    })
+  );
+
+  body.appendChild(
+    setting({
+      label: t("settings.timedIngest"),
+      note: t("settings.timedIngest.note"),
+      choices: intervalChoices(),
+      chosen: Number(now.ingestEveryMinutes ?? 0),
+      onChoose: (value) => after(port.timedIngest(value)),
+    })
+  );
+
+  return panel({ title: t("settings.tab.general"), note: t("settings.general.note"), body });
+}
+
+/* --- Engine ------------------------------------------------------------------------- */
 
 /** Where the store is, when it was last written, and what produced what is in it. */
 function whereItIsKept(data, info) {
@@ -289,36 +385,114 @@ function whereItIsKept(data, info) {
   });
 }
 
-/** Both follow the system, and neither can be changed from here. */
-function languageAndAppearance(info) {
-  const inForce = lang();
-  const body = el("div", { class: "fact-list" }, [
-    fact(t("settings.language"), LANGUAGE_NAMES[inForce] ?? inForce, [
-      info?.language
-        ? t("settings.language.forced", FORCE_LANGUAGE)
-        : t("settings.language.fromSystem"),
-      t("settings.language.note"),
-      t("settings.language.systemSettings"),
-    ]),
-    fact(t("settings.appearance"), t("settings.appearance.system"), [
-      t("settings.appearance.note"),
-    ]),
+function engine(state) {
+  return el("div", { class: "tab-body" }, [
+    // The seam with the CLI wiring. That module owns where the executable is, its own
+    // version, the actions and the Install button, and owns its presentation with them,
+    // so it is placed bare.
+    engineSection(state),
+    whereItIsKept(state.data, state.info),
   ]);
-  return panel({
-    title: t("settings.languageAndAppearance"),
-    note: t("settings.languageAndAppearance.note"),
-    body,
-  });
 }
 
-/** Which pieces are running, and where the project is. */
-function about(data, info) {
+/* --- Model -------------------------------------------------------------------------- */
+
+/**
+ * What the engine would send to a model, and the one thing this app may change about it.
+ *
+ * Every row is a line `prudence config model` printed, read in `src-tauri/src/model.rs`.
+ * The key is a **variable name** and never a value, which is a property of the CLI's own
+ * output and is kept by adding nothing to it.
+ */
+function model(state) {
+  const port = SETTINGS.port;
+  const body = el("div", { class: "setting-list" });
+  const card = panel({
+    title: t("settings.tab.model"),
+    note: t("settings.model.note"),
+    body,
+    method: t("settings.model.method"),
+  });
+
+  if (!port) {
+    body.appendChild(el("p", { class: "setting-note", text: t("settings.noShell") }));
+    return el("div", { class: "tab-body" }, [card]);
+  }
+
+  // Asked for when the tab is drawn, and filled when the engine answers: it is a
+  // subprocess, and a blank area while it runs would say nothing about the one question
+  // this tab is for.
+  body.appendChild(el("p", { class: "setting-note", text: t("menu.engineChecking") }));
+  port
+    .model()
+    .then((settings) => fillModel(body, settings))
+    .catch(() => {
+      body.innerHTML = "";
+      body.appendChild(el("p", { class: "setting-note", text: t("settings.model.unread") }));
+    });
+
+  return el("div", { class: "tab-body" }, [card]);
+}
+
+function fillModel(body, settings) {
+  body.innerHTML = "";
+  const port = SETTINGS.port;
+  const rows = [
+    [t("settings.model.backend"), settings?.backend],
+    [t("settings.model.id"), settings?.modelId],
+    [t("settings.model.key"), settings?.keyVariable],
+    [t("settings.model.maxTokens"), settings?.maxTokens],
+    [t("settings.model.explain"), settings?.explain],
+  ].filter(([, value]) => value);
+
+  if (rows.length) {
+    body.appendChild(pairs(rows.map(([name, value]) => [name, String(value)])));
+  }
+
+  body.appendChild(
+    setting({
+      label: t("settings.model.language"),
+      note: t("settings.model.language.note"),
+      choices: languageChoices(),
+      chosen: settings?.languageKey ?? "system",
+      onChoose: (value) => {
+        if (!port) return;
+        port
+          .modelLanguage(value)
+          .then((next) => fillModel(body, next))
+          .catch(() => fillModel(body, settings));
+      },
+    })
+  );
+
+  if (settings?.configPath) {
+    body.appendChild(
+      fact(t("settings.model.configPath"), String(settings.configPath), [], { path: true })
+    );
+  }
+}
+
+/* --- About -------------------------------------------------------------------------- */
+
+/** A plain label that opens something in the system browser.
+ *
+ *  A `<a href>` inside a Tauri webview navigates the app away from its own page, so the
+ *  shell opens the link. The page asks **by name**: `LINKS` in `lib.rs` holds the
+ *  addresses, so nothing this page invents can be opened. */
+function linkButton(label, name) {
+  const button = el("button", { class: "btn plain", type: "button", text: label });
+  button.addEventListener("click", () => SETTINGS.port?.link(name));
+  return button;
+}
+
+function about(state) {
+  const { data, info } = state;
   const unread = t("settings.store.unread");
   const body = el("div", { class: "fact-list" }, [
     fact(t("settings.about.app"), info?.version ?? t("common.dash")),
     fact(t("settings.about.engine"), data.status?.engine_version ?? unread),
     fact(t("settings.about.licence"), LICENCE),
-    fact(t("settings.about.project"), PROJECT_URL, [], { path: true }),
+    fact(t("settings.about.developer"), DEVELOPER),
   ]);
 
   // The shell's own description of this machine, in its own words. Pairs rather than
@@ -334,29 +508,72 @@ function about(data, info) {
     );
   }
 
-  return panel({
-    title: t("settings.about"),
-    note: t("settings.about.note"),
-    body,
-    method: t("settings.about.method"),
-  });
+  // Three plain labels. "What is recorded" is the one thing left of the promise this
+  // screen used to carry in full: the README says it better and stays true when the
+  // engine changes, and a settings screen is not where a reader reads six paragraphs.
+  body.appendChild(
+    el("div", { class: "engine-actions" }, [
+      linkButton(t("settings.about.project"), "project"),
+      linkButton(t("settings.about.developerLink"), "developer"),
+      linkButton(t("settings.about.recorded"), "recorded"),
+    ])
+  );
+
+  return el("div", { class: "tab-body" }, [
+    panel({
+      title: t("settings.tab.about"),
+      note: t("settings.about.note"),
+      body,
+      method: t("settings.about.method"),
+    }),
+  ]);
 }
+
+/* --- the screen --------------------------------------------------------------------- */
+
+const PANES = { general, engine, model, about };
 
 /**
  * @param {import("./screens.js").ScreenState} state
  * @returns {Element}
  */
 export function settings(state) {
-  const { data, info } = state;
-  return el("div", { class: "screen-body" }, [
-    whatIsRecorded(data),
-    whatIsNeverRecorded(),
-    whereItIsKept(data, info),
-    // The seam with the CLI wiring. That module owns where the executable is, its own
-    // version and the four actions, and owns its presentation with them, so it is placed
-    // bare: between where the record is kept and the settings that are not about it.
-    engineSection(state),
-    languageAndAppearance(info),
-    about(data, info),
-  ]);
+  const screen = el("div", { class: "screen-body settings-screen" });
+
+  // The tab strip is control layer, so it takes the frost where the platform has one;
+  // everything under it is opaque. That is design rule 1, and `settings.css` is where the
+  // two halves are written.
+  const strip = el("div", { class: "tabs", role: "tablist", "aria-label": t("settings.title") });
+  const panes = el("div", { class: "tab-panes" });
+
+  const shown = PANES[openTab] ? openTab : "general";
+  const buttons = [];
+  const built = [];
+
+  for (const tab of TABS) {
+    const button = el("button", { class: "tab", type: "button", role: "tab", text: t(tab.label) });
+    button.setAttribute("aria-selected", String(tab.key === shown));
+    const pane = el("div", { class: "tab-pane", role: "tabpanel" }, [PANES[tab.key](state)]);
+    pane.hidden = tab.key !== shown;
+    // The four panes are built together and shown by a flag, so choosing a tab redraws
+    // nothing: a redraw would ask the shell for the model settings again and would lose
+    // whatever the engine block had already reported.
+    button.addEventListener("click", () => {
+      openTab = tab.key;
+      buttons.forEach((other, index) =>
+        other.setAttribute("aria-selected", String(TABS[index].key === openTab))
+      );
+      built.forEach((other, index) => {
+        other.hidden = TABS[index].key !== openTab;
+      });
+    });
+    buttons.push(button);
+    built.push(pane);
+    strip.appendChild(button);
+    panes.appendChild(pane);
+  }
+
+  screen.appendChild(strip);
+  screen.appendChild(panes);
+  return screen;
 }

@@ -17,17 +17,51 @@
 import { emptyBuckets, known } from "../design/purposes.js";
 import { daysBefore, localDay, sessionsBetween, startOfLocalDay } from "./payload.js";
 
-/** @typedef {"8w"|"90d"|"all"} RangeKey */
+/** @typedef {"1d"|"7d"|"30d"|"60d"|"90d"|"365d"|"all"} RangeKey */
+/** @typedef {"day"|"week"} Grain */
 
-/** The three the picker offers, and how far back each looks. `all` has no first day. */
+/**
+ * The seven ranges the picker offers: how far back each looks, and **what one bucket is**.
+ *
+ * ## The bucket rule
+ *
+ * A bucket is a local day up to sixty days, and an ISO week from ninety days out. It is
+ * written here, once, because a range and its grain are one decision and splitting them
+ * is how a chart ends up with a hundred and fifty slots.
+ *
+ * Sixty is where it changes because of the plot, not because of the data. The weekly
+ * charts draw into a box 760 units wide and print a label under every slot up to fourteen
+ * and every second up to twenty-eight (`design/charts.js`, `labelEvery`); sixty daily
+ * slots is about twelve units each, which is the narrowest bar that is still a bar.
+ * Ninety would be eight, and a year would be two. Past that the honest picture is weeks.
+ *
+ * **One day is one bucket, never an empty chart.** A range of a day is a real question,
+ * usually asked of the three cards above the charts, and the chart under them draws its
+ * single bar rather than saying there is not enough to draw.
+ *
+ * `all` has no first day: it starts at the earliest thing recorded.
+ */
 export const RANGES = /** @type {const} */ ([
-  { key: "8w", label: "range.eightWeeks", days: 56 },
-  { key: "90d", label: "range.ninetyDays", days: 90 },
-  { key: "all", label: "range.all", days: null },
+  { key: "1d", days: 1, grain: "day" },
+  { key: "7d", days: 7, grain: "day" },
+  { key: "30d", days: 30, grain: "day" },
+  { key: "60d", days: 60, grain: "day" },
+  { key: "90d", days: 90, grain: "week" },
+  { key: "365d", days: 365, grain: "week" },
+  { key: "all", days: null, grain: "week" },
 ]);
 
+/** The range the app opens on. A month of days: enough to see a shape, short enough that
+ *  every bar is a day the reader can place. */
+export const DEFAULT_RANGE = "30d";
+
 export function rangeOf(key) {
-  return RANGES.find((range) => range.key === key) ?? RANGES[0];
+  return RANGES.find((range) => range.key === key) ?? rangeOf(DEFAULT_RANGE);
+}
+
+/** Days or weeks, for this range. */
+export function grainOf(key) {
+  return /** @type {Grain} */ (rangeOf(key).grain);
 }
 
 /** The first local day a range includes, or null for "all". */
@@ -47,28 +81,71 @@ export function mondayOf(day) {
   return localDay(date);
 }
 
+/** Which bucket a local day belongs to: itself, or the Monday of its week. */
+export function bucketOf(day, grain) {
+  const local = String(day).slice(0, 10);
+  return grain === "week" ? mondayOf(local) : local;
+}
+
+/** The last local day a bucket covers, which is the bucket itself for a day. */
+export function lastDayOf(bucket, grain) {
+  if (grain !== "week") return bucket;
+  const date = startOfLocalDay(bucket);
+  date.setDate(date.getDate() + 6);
+  return localDay(date);
+}
+
 /**
- * Every ISO week in the range, oldest first, whether or not anything happened in it.
+ * Every bucket in the range, oldest first, whether or not anything happened in one.
  *
- * **This is the x axis of every weekly chart, and both Overview charts share it**, so a
- * week sits at the same place in each and the two can be read against one another. It is
- * an ordinal axis over a complete list, not a date scale: the slots are equal width.
+ * **This is the x axis of the tokens chart.** It is an ordinal axis over a complete list,
+ * not a date scale: the slots are equal width, because a day is a day and a week is a
+ * week.
  *
- * The completeness is the point. A week with no row used to produce no slot at all, so a
+ * The completeness is the point. A bucket with no row used to produce no slot at all, so a
  * line ran straight from one side of a four-week silence to the other and nobody could
- * see the silence. Here the week exists, the value is missing, and the chart draws the
+ * see the silence. Here the bucket exists, the value is missing, and the chart draws the
  * hole it actually is.
  *
- * For "all" the axis starts at the earliest week anything was recorded in, taken across
- * usage, outcomes and commits together so that the two charts still agree.
+ * For "all" the axis starts at the earliest day anything was recorded on, taken across
+ * usage, outcomes and commits together.
  */
-export function axisWeeks(data, { range = "8w", now = new Date() } = {}) {
+export function axis(data, { range = DEFAULT_RANGE, now = new Date() } = {}) {
+  const grain = grainOf(range);
+  const from = firstDay(range, now) ?? earliestRecordedDay(data);
+  if (!from) return [];
+  const step = grain === "week" ? 7 : 1;
+  const last = bucketOf(localDay(now), grain);
+  const out = [];
+  let cursor = bucketOf(from, grain);
+  // A guard, not a rule: a store with a nonsense future date should not spin here. The
+  // longest real axis is 365 days, which is not offered in day buckets, so 400 slots is
+  // well past anything the rule above can produce.
+  for (let i = 0; cursor <= last && i < 400; i += 1) {
+    out.push(cursor);
+    const next = startOfLocalDay(cursor);
+    next.setDate(next.getDate() + step);
+    cursor = localDay(next);
+  }
+  return out;
+}
+
+/**
+ * Every ISO week the range touches, whatever the range's own grain is.
+ *
+ * **The outcomes chart is weekly under every range**, because the engine measures
+ * outcomes weekly: `app_outcomes_by_week` has one row per project per week and there is
+ * no daily view to read. Re-bucketing a weekly row into a day would be the app inventing
+ * a figure, which is the one thing this layer may not do. The card's caption says so, so
+ * that a reader on a seven-day range is not left comparing a daily chart with a weekly one
+ * without being told.
+ */
+export function weekAxis(data, { range = DEFAULT_RANGE, now = new Date() } = {}) {
   const from = firstDay(range, now) ?? earliestRecordedDay(data);
   if (!from) return [];
   const last = mondayOf(localDay(now));
   const out = [];
   let cursor = mondayOf(from);
-  // A guard, not a rule: a store with a nonsense future date should not spin here.
   for (let i = 0; cursor <= last && i < 520; i += 1) {
     out.push(cursor);
     const next = startOfLocalDay(cursor);
@@ -110,9 +187,13 @@ function matchesProject(row, project) {
  * from `app_commits_by_day`, which is the view that exists precisely because summing
  * `app_session_list` double counts a commit credited to two sessions.
  */
-export function cards(data, { project = null, range = "8w", week = null, now = new Date() } = {}) {
-  const from = week ?? firstDay(range, now);
-  const to = week ? lastDayOfWeek(week) : localDay(now);
+export function cards(
+  data,
+  { project = null, range = DEFAULT_RANGE, bucket = null, now = new Date() } = {}
+) {
+  const grain = grainOf(range);
+  const from = bucket ?? firstDay(range, now);
+  const to = bucket ? lastDayOf(bucket, grain) : localDay(now);
 
   let minutes = 0;
   let measuredSessions = 0;
@@ -148,41 +229,35 @@ export function cards(data, { project = null, range = "8w", week = null, now = n
   };
 }
 
-function lastDayOfWeek(monday) {
-  const date = startOfLocalDay(monday);
-  date.setDate(date.getDate() + 6);
-  return localDay(date);
-}
-
 /**
- * Tokens by purpose, summed into the ISO week each local day falls in, over the whole
+ * Tokens by purpose, summed into the bucket each local day falls in, over the whole
  * range's axis.
  *
- * Every week in the range is here, in order. A week the store has no row for carries
+ * Every bucket in the range is here, in order. A bucket the store has no row for carries
  * `measured: false`, and the chart draws an **empty slot** rather than a zero-height bar:
  * nothing was recorded is not the same statement as nothing was spent, and the two must
  * not look alike.
  */
-export function weeks(data, { project = null, range = "8w", now = new Date() } = {}) {
-  const axis = axisWeeks(data, { range, now });
-  /** @type {Map<string, {week: string, byPurpose: Record<string, number>, total: number, measured: boolean}>} */
+export function buckets(data, { project = null, range = DEFAULT_RANGE, now = new Date() } = {}) {
+  const grain = grainOf(range);
+  const slots = axis(data, { range, now });
+  /** @type {Map<string, {bucket: string, byPurpose: Record<string, number>, total: number, measured: boolean}>} */
   const found = new Map(
-    axis.map((week) => [week, { week, byPurpose: emptyBuckets(), total: 0, measured: false }])
+    slots.map((key) => [key, { bucket: key, byPurpose: emptyBuckets(), total: 0, measured: false }])
   );
 
   for (const row of data.usage) {
     if (!matchesProject(row, project)) continue;
-    const week = mondayOf(String(row.day));
-    const bucket = found.get(week);
+    const slot = found.get(bucketOf(String(row.day), grain));
     // Outside the axis, which is the range's own test now that the axis defines it.
-    if (!bucket) continue;
+    if (!slot) continue;
     const tokens = Number(row.total_tokens) || 0;
-    bucket.byPurpose[known(String(row.purpose))] += tokens;
-    bucket.total += tokens;
-    bucket.measured = true;
+    slot.byPurpose[known(String(row.purpose))] += tokens;
+    slot.total += tokens;
+    slot.measured = true;
   }
 
-  return axis.map((week) => /** @type {any} */ (found.get(week)));
+  return slots.map((key) => /** @type {any} */ (found.get(key)));
 }
 
 /**
@@ -192,8 +267,8 @@ export function weeks(data, { project = null, range = "8w", now = new Date() } =
  * one row, which is the widest arithmetic allowed here. A week whose thirty-day mark
  * has not arrived has `measured_30d = 0`: that is a **hole**, and the run ends there.
  */
-export function outcomes(data, { project = null, range = "8w", now = new Date() } = {}) {
-  const axis = axisWeeks(data, { range, now });
+export function outcomes(data, { project = null, range = DEFAULT_RANGE, now = new Date() } = {}) {
+  const axis = weekAxis(data, { range, now });
   const onAxis = new Set(axis);
   /** @type {Map<string, Map<string, any>>} */
   const byProject = new Map();
@@ -274,7 +349,7 @@ export function runs(points, key) {
  * view has no row for a day nothing happened on, and a grey cell that means "nothing
  * measured" is honest where a zero-valued cell would not be.
  */
-export function heat(data, { project = null, range = "8w", now = new Date() } = {}) {
+export function heat(data, { project = null, range = DEFAULT_RANGE, now = new Date() } = {}) {
   const from = firstDay(range, now) ?? earliestDay(data, project);
   const to = localDay(now);
   if (!from) return { weeks: [], max: 0 };

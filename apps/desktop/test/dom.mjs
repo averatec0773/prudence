@@ -24,6 +24,7 @@ class Node_ {
     this.hidden = false;
     this.value = "";
     this.title = "";
+    this.id = "";
     this.own = "";
   }
 
@@ -59,11 +60,23 @@ class Node_ {
     this.children = [];
   }
 
-  /** The only bulk mutation the screens use, and only to clear. */
+  /**
+   * Clearing, and the one place markup is set wholesale.
+   *
+   * The screens only ever clear. `design/brand.js` sets the mark's paths as a string,
+   * because an SVG of eleven paths written through `createElementNS` would be forty lines
+   * of builder for artwork that never changes. The shim keeps that string **off**
+   * `textContent`: it is not text, and a test asking what a surface says must not be
+   * handed a path's `d` attribute.
+   */
   set innerHTML(value) {
-    if (value !== "") throw new Error("the shim only clears with innerHTML");
     this.children = [];
     this.own = "";
+    this.markup = String(value);
+  }
+
+  get innerHTML() {
+    return this.markup ?? "";
   }
 
   get classList() {
@@ -71,8 +84,26 @@ class Node_ {
       add: (name) => {
         this.className = `${this.className} ${name}`.trim();
       },
+      remove: (name) => {
+        this.className = this.className
+          .split(/\s+/)
+          .filter((one) => one && one !== name)
+          .join(" ");
+      },
       contains: (name) => this.className.split(/\s+/).includes(name),
     };
+  }
+
+  /* The two geometry questions the panel asks of itself while it measures its own height.
+     They answer zero, which is what a node in no document is: `Bridge.attached()` is
+     false under the test, so the measurement is never sent anywhere. They are here so the
+     panel can be rendered at all, which is what makes its buttons pressable. */
+  getBoundingClientRect() {
+    return { width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0 };
+  }
+
+  get offsetWidth() {
+    return 0;
   }
 
   /** Depth first, this node included. */
@@ -119,14 +150,31 @@ class Text_ {
 
 /** Install the shim on `globalThis`. Idempotent, so every test file may call it. */
 export function installDom() {
+  // The engine's activity strip is put on the page rather than inside a screen, because a
+  // run outlives the screen it was started on, so the wiring has a body to append to.
+  const body = new Node_("body", null);
   /** @type {any} */ (globalThis).document = {
     createElement: (tag) => new Node_(tag, null),
     createElementNS: (ns, tag) => new Node_(tag, ns),
     createTextNode: (value) => new Text_(value),
     documentElement: new Node_("html", null),
-    // The engine's activity strip is put on the page rather than inside a screen,
-    // because a run outlives the screen it was started on, so the wiring has a body to
-    // append to. Nothing else in the frontend touches it.
-    body: new Node_("body", null),
+    body,
+    // The panel writes its one status line by id, which is how a run started from a
+    // button reaches the line under it. Walked rather than registered, because the shim
+    // has no notion of a node being in a document.
+    getElementById: (id) => {
+      for (const node of body.walk()) {
+        if (node.id === id) return node;
+      }
+      return null;
+    },
+    // Both pages listen for Escape on the document. Nothing in a test presses one, and a
+    // missing method would stop the page from rendering at all.
+    addEventListener: () => {},
   };
+  // The panel listens for the window regaining focus, which is how it knows it was shown.
+  // Node has no `addEventListener` on the global object.
+  if (typeof (/** @type {any} */ (globalThis).addEventListener) !== "function") {
+    /** @type {any} */ (globalThis).addEventListener = () => {};
+  }
 }

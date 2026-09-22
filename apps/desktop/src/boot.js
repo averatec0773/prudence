@@ -13,11 +13,23 @@ import { readPayload } from "./store/payload.js";
 import { setLang, loadAll, t } from "./text/strings.js";
 import { el } from "./design/dom.js";
 
-/** Neither the appearance nor the language needs a relaunch: both tables are loaded and
- *  every string goes through one runtime. The Swift app needs one for the language and
- *  says so on its own settings screen. */
-function applyAppearance() {
-  const dark = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches;
+/**
+ * Light or dark on the page itself.
+ *
+ * Neither the appearance nor the language needs a relaunch: both string tables are loaded
+ * and every string goes through one runtime, and this is one attribute on the root.
+ *
+ * **Two halves make a dark window.** The shell pins its windows' own theme, which is what
+ * changes the titlebar, the scrollbars and the native material; this is what changes
+ * everything inside them. Setting only one leaves a light page in a dark frame. `system`
+ * is the media query, which is also what an unset setting means.
+ *
+ * @param {string} [setting] `system`, `light` or `dark`
+ */
+function applyAppearance(setting) {
+  const dark =
+    setting === "dark" ||
+    (setting !== "light" && globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches);
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
 }
 
@@ -81,10 +93,9 @@ async function draw(page, root, info) {
  * @param {{ render: (root: HTMLElement, context: any) => void, name: string }} page
  */
 export async function boot(page) {
+  // Before the shell has answered, so the page is not white for one frame on a dark
+  // machine. The setting arrives a moment later and is applied again.
   applyAppearance();
-  globalThis
-    .matchMedia?.("(prefers-color-scheme: dark)")
-    .addEventListener("change", applyAppearance);
 
   const root = /** @type {HTMLElement} */ (document.getElementById("root"));
 
@@ -101,6 +112,14 @@ export async function boot(page) {
     failure(root, "The shell did not answer", message(error));
     return;
   }
+
+  // The media query still matters, and only while the setting is `system`: a machine that
+  // switches to dark at sunset should take the page with it. A page pinned to light must
+  // not move, which is why the listener reads the setting rather than the query alone.
+  globalThis
+    .matchMedia?.("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => applyAppearance(info?.settings?.appearance));
+  applyAppearance(info?.settings?.appearance);
 
   try {
     await loadAll();
@@ -123,6 +142,27 @@ export async function boot(page) {
     draw(page, root, info).catch((error) => {
       Bridge.log(`${page.name} could not follow the store: ${message(error)}`);
     });
+  });
+
+  /* A setting changed, in this window or in the other one. Both pages listen, which is
+     what makes a language chosen in the window's General tab reach the panel: the panel
+     has no settings screen of its own and would otherwise stay in the old language until
+     it was relaunched.
+
+     The whole of `shell_info` is asked for again rather than only the settings, because
+     the drawn state is a function of `info` and holding two versions of it is how a page
+     ends up half in one language. */
+  Bridge.onSettingsChanged(() => {
+    Bridge.info()
+      .then((next) => {
+        info = next;
+        applyAppearance(next?.settings?.appearance);
+        setLang(chooseLanguage(next));
+        return draw(page, root, next);
+      })
+      .catch((error) => {
+        Bridge.log(`${page.name} could not follow a setting: ${message(error)}`);
+      });
   });
 
   globalThis.addEventListener("focus", dropFocus);

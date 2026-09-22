@@ -232,6 +232,23 @@ export function hourPhrase(value, language) {
   return tIn(langOf(language), "unit.hours", hours(value, language));
 }
 
+/**
+ * A range's own name on the picker: a day count in the reader's plural, or "All".
+ *
+ * Composed rather than listed as seven keys. Seven near-identical entries in each table is
+ * seven chances for one of them to be worded differently from the rest, and English needs
+ * the singular for one day where Chinese does not, which is exactly what a plural entry is
+ * for. The count is formatted in the reader's locale first, so a year reads `365 days` and
+ * not `365 days` beside a grouped figure somewhere else.
+ *
+ * @param {{ days: number|null }} range one row of `store/overview.js`'s `RANGES`
+ * @param {Language} [language]
+ */
+export function rangeName(range, language) {
+  if (range.days === null) return tIn(langOf(language), "range.all");
+  return plural("unit.rangeDays", range.days, count(range.days, language), language);
+}
+
 /** Join the way the language joins a list: `a, b, c` and `a，b，c`. */
 export function list(parts, language) {
   return parts.join(tIn(langOf(language), "common.listSeparator"));

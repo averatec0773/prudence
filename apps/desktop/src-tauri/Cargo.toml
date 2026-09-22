@@ -35,6 +35,8 @@ thiserror = "2"
 # figure. The debounce is ours (see `watcher.rs`): the policy is the interesting part and
 # a second crate would not know it.
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-opener = "2.5.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.8"

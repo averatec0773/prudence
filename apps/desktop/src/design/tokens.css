@@ -1129,6 +1129,7 @@ figcaption.sr {
    few percent, pressed darkens it and nothing moves. */
 :root[data-material="glass"] .btn,
 :root[data-material="glass"] .select,
+:root[data-material="glass"] .tabs,
 :root[data-material="glass"] .segmented {
   /* The button family: "flat and quiet". A lightening frost on a light surface reads as
      a white box held together by its border; the quiet fill reads as a control. The
@@ -1198,6 +1199,18 @@ figcaption.sr {
 }
 
 :root[data-material="glass"] .segmented button:hover[aria-checked="false"] {
+  background-color: var(--glass-control-hover);
+}
+
+/* The Settings screen's tab strip. Navigation, so it is control layer and takes the same
+   frost the segmented control takes; the open tab is the same pill, because a strip that
+   invented a second selected state would be a second visual language for one idea. */
+:root[data-material="glass"] .tab[aria-selected="true"] {
+  background-color: var(--glass-pill);
+  box-shadow: none;
+}
+
+:root[data-material="glass"] .tab:hover[aria-selected="false"] {
   background-color: var(--glass-control-hover);
 }
 
