@@ -1,6 +1,6 @@
 [package]
 name = "prudence-desktop"
-version = "0.0.1"
+version = "0.5.0"
 description = "Prudence desktop app"
 edition = "2021"
 rust-version = "1.82"
