@@ -158,7 +158,7 @@ DESKTOP_ONLY = {
     # silence.
     "review.rangeLine": {
         "en": "Period reviewed: %1$@ to %2$@. Outcomes are measured over a different window: the commits made between %3$@ and %4$@.",
-        "zh-Hans": "回顾的时段：%1$@ 至 %2$@。成果部分用的是另一个窗口：%3$@ 至 %4$@ 之间的提交。",
+        "zh-Hans": "回顾的时段：%1$@到%2$@。成果部分用的是另一个窗口：%3$@到%4$@之间的提交。",
     },
     "review.picker": {"en": "Earlier reviews", "zh-Hans": "更早的回顾"},
     # The button is drawn now and wired when the engine wiring lands. It says which, so
@@ -250,8 +250,8 @@ DESKTOP_ONLY = {
     # The paired bars in words, for a screen reader and for the caption. One key, because
     # the two joins and the full stops belong to the language, not to JavaScript.
     "observations.pairReading": {
-        "en": "%1$@: %2$@. %3$@: %4$@. %5$@.",
-        "zh-Hans": "%1$@：%2$@。%3$@：%4$@。%5$@。",
+        "en": "%1$@: %2$@. %3$@: %4$@.",
+        "zh-Hans": "%1$@：%2$@。%3$@：%4$@。",
     },
     # Which version of the engine's rules produced these rows, and which contract the app
     # read them under. Two rows that disagree across an upgrade should be explainable.
@@ -264,6 +264,28 @@ DESKTOP_ONLY = {
 # Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from
 # the Swift app that somebody has to carry back if that app is ever unfrozen.
 DESKTOP_OVERRIDES = {
+    # Six keys that put a literal space next to a placeholder the interface fills with a
+    # **Chinese-formatted date**. A space between Latin or digits and Chinese is correct
+    # and the catalogue is right to use it everywhere else; between two runs of Chinese it
+    # is not, and `Fmt.day` in Chinese returns "2026年9月7日". So "%1$@ 当周" renders
+    # "2026年9月7日 当周", which no Chinese writer would type. English is untouched: there
+    # the placeholder is Latin and the space is required.
+    #
+    # Seen in the Chinese screenshot of the Overview against a copy of the real store,
+    # 2026-09-21, and then swept for across the whole catalogue.
+    "overview.weekOf": {"en": "Week of %1$@", "zh-Hans": "%1$@当周"},
+    "overview.weekFilter": {
+        "en": "The cards above are the week of %1$@: %2$@ tokens.",
+        "zh-Hans": "上方的卡片只统计%1$@那一周：%2$@ tokens。",
+    },
+    "review.headline": {"en": "Review %1$@, %2$@ to %3$@", "zh-Hans": "回顾 %1$@，%2$@到%3$@"},
+    "review.headline.project": {
+        "en": "Review %1$@, %2$@ to %3$@, %4$@",
+        "zh-Hans": "回顾 %1$@，%2$@到%3$@，%4$@",
+    },
+    "range.since": {"en": "Since %1$@", "zh-Hans": "自%1$@起"},
+    # And an ASCII hyphen between a number and a Chinese date, which wants a Chinese comma.
+    "review.option": {"en": "Review %1$@ - %2$@", "zh-Hans": "回顾 %1$@，%2$@"},
     # The catalog says "%1$@ 个会话" - "%1$@ sessions". The number is a count of **lines**
     # in both places it is used (`measured_30d` and `lines` are both over `line_fate`), so
     # the Chinese claimed a unit the figure does not have, on the one caption whose job is

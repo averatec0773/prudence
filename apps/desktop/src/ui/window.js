@@ -53,26 +53,17 @@ function show(section, { remember = true } = {}) {
   nodes.sub.textContent = subtitleFor(next);
   // A screen that does not read the pickers must not show them: a control that changes
   // nothing is worse than no control. The route table says which do.
-  nodes.scope.hidden = !screenFor(next).scope;
+  // Rebuilt on every change of screen, not only on a redraw: which pickers exist is a
+  // property of the screen, so moving between screens has to re-ask. Without this the
+  // range picker stayed on screens that declare they do not read it.
+  fillScope();
+  nodes.scope.hidden = screenFor(next).scope.length === 0;
   nodes.screen.classList.remove("is-probe");
   nodes.screen.innerHTML = "";
 
   // Every screen is drawn the same way: the route table names the function, and the
   // function is handed everything it needs. Nothing here knows what any screen contains.
-  nodes.screen.appendChild(
-    screenFor(next).render({
-      data: state.data,
-      info: state.info,
-      project: state.project,
-      range: state.range,
-      week: state.week,
-      onWeek: (week) => {
-        state.week = week;
-        redraw();
-      },
-      redraw,
-    })
-  );
+  nodes.screen.appendChild(screenFor(next).render(screenState()));
 
   nodes.screen.scrollTop = state.scroll[next] ?? 0;
   if (remember) Bridge.setSection(next);
@@ -81,23 +72,33 @@ function show(section, { remember = true } = {}) {
 /** Redraw the current screen in place, keeping the scroll position. */
 function redraw() {
   const where = nodes.screen.scrollTop;
-  // The pickers carry the state that was just changed. Without this the range buttons
-  // kept whatever `aria-checked` they were built with at start-up.
-  fillScope();
+  // `show` rebuilds the pickers, which is what carries the state just changed: without
+  // that the range buttons kept whatever `aria-checked` they were built with at start-up.
   show(state.section, { remember: false });
   nodes.screen.scrollTop = where;
 }
 
-function subtitleFor(section) {
-  if (section !== "overview") return "Placeholder. The screens arrive in batches 6a to 8.";
-  const scope = state.project ?? t("scope.allProjects");
-  const range = RANGES.find((one) => one.key === state.range) ?? RANGES[0];
-  return t("scope.subtitle", scope, t(range.label));
+/** Everything a screen is handed. One place builds it, so the route table's `render` and
+ *  `subtitle` cannot be given different views of the same moment. */
+function screenState() {
+  return {
+    data: state.data,
+    info: state.info,
+    project: state.project,
+    range: state.range,
+    week: state.week,
+    onWeek: (week) => {
+      state.week = week;
+      redraw();
+    },
+    redraw,
+  };
 }
 
-function notYet(what) {
-  nodes.note.textContent = `${what}: arrives with the engine wiring, in batch 7.`;
-  nodes.note.hidden = false;
+/** The screen's own line, or nothing. Not the screen's name: the heading already says it. */
+function subtitleFor(section) {
+  const screen = screenFor(section);
+  return screen.subtitle ? screen.subtitle(screenState()) : "";
 }
 
 function sidebar() {
@@ -162,20 +163,20 @@ function contentHead() {
 
   nodes.scope = el("div", { class: "scope" });
 
-  const review = el("button", { class: "btn", type: "button", text: t("menu.reviewNow") });
-  review.addEventListener("click", () => notYet(t("menu.reviewNow")));
-
+  // No Review now button here. The Review screen owns one, wired to its own seam, and
+  // two buttons with one label that do different things is worse than one in one place.
   return el("div", { class: "content-head" }, [
     titles,
-    el("div", { class: "toolbar" }, [nodes.scope, review]),
+    el("div", { class: "toolbar" }, [nodes.scope]),
   ]);
 }
 
 /** The pickers are rebuilt whenever the data behind them changes. */
 function fillScope() {
+  const wanted = screenFor(state.section).scope;
   nodes.scope.innerHTML = "";
-  nodes.scope.appendChild(projectPicker());
-  nodes.scope.appendChild(rangePicker());
+  if (wanted.includes("project")) nodes.scope.appendChild(projectPicker());
+  if (wanted.includes("range")) nodes.scope.appendChild(rangePicker());
 }
 
 function titlebar() {
@@ -210,7 +211,9 @@ function keyboard() {
     }
     if (event.key.toLowerCase() === "r") {
       event.preventDefault();
-      notYet(t("menu.reviewNow"));
+      // The action lives on the Review screen, so the shortcut goes there rather than
+      // keeping a second copy of it here.
+      show("review");
     }
   });
 }
@@ -249,10 +252,9 @@ export const page = {
     state.data = data;
     state.info = info;
     nodes.screen = el("div", { class: "screen" });
-    nodes.note = el("div", { class: "note", text: "" });
-    nodes.note.hidden = true;
-
-    const content = el("div", { class: "content" }, [contentHead(), nodes.screen, nodes.note]);
+    // No shell-level note any more. It existed for `notYet`, and each screen now owns
+    // whatever it has to say about an action it cannot perform yet.
+    const content = el("div", { class: "content" }, [contentHead(), nodes.screen]);
     const split = el("div", { class: "split" }, [sidebar(), content]);
 
     container.innerHTML = "";

@@ -28,6 +28,22 @@ use crate::{panel, window, MAIN};
 /// the fold are the ones a batch is usually judged on. The offset is handed to the page
 /// in `shell_info` rather than evaluated into it, because an eval races the page's first
 /// draw and a value the page reads cannot.
+/// The screen a shot is of.
+///
+/// Without this a script could only photograph whatever screen the machine last left the
+/// window on, and the only way to reach another was to write the app's own `ui.json`
+/// behind its back. This says it out loud instead, and like everything else here it is
+/// compiled out of a release build.
+pub fn section() -> Option<String> {
+    let wanted = std::env::var("PRUDENCE_SECTION").ok()?;
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        None
+    } else {
+        Some(wanted.to_string())
+    }
+}
+
 pub fn scroll_to() -> Option<u32> {
     std::env::var("PRUDENCE_SCROLL").ok()?.parse().ok()
 }

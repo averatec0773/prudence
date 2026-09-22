@@ -85,7 +85,8 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
         platform: platform::describe(),
         supported_contract: store::supported_contract(),
         language: forced_language(),
-        section: shell.memory.read().usable_section().map(str::to_string),
+        section: scripted_section()
+            .or_else(|| shell.memory.read().usable_section().map(str::to_string)),
         harness: cfg!(feature = "harness"),
         scroll: scripted_scroll(),
     }
@@ -121,6 +122,17 @@ fn window_open(app: AppHandle) {
 #[tauri::command]
 fn window_close(app: AppHandle) {
     window::close(&app);
+}
+
+/// The screen a screenshot run asked for, and nothing in a release build.
+#[cfg(feature = "harness")]
+fn scripted_section() -> Option<String> {
+    harness::section()
+}
+
+#[cfg(not(feature = "harness"))]
+fn scripted_section() -> Option<String> {
+    None
 }
 
 /// The window's current section, so the next launch opens on it.

@@ -20,6 +20,7 @@
 
 import { miniStack } from "../design/charts.js";
 import { el } from "../design/dom.js";
+import { emptyState, panel, statCard } from "../design/components.js";
 import { PURPOSES } from "../design/purposes.js";
 import {
   bodyOf,
@@ -45,6 +46,9 @@ import {
 import { observationSentence } from "../text/sentences.js";
 import { t } from "../text/strings.js";
 
+/** The engine's key for an observation computed over every project rather than one. */
+const POOLED = "*";
+
 /**
  * What the Review now button does.
  *
@@ -59,51 +63,6 @@ import { t } from "../text/strings.js";
  */
 export const REVIEW_NOW = { run: null };
 
-/** The engine's key for an observation computed over every project rather than one. */
-const POOLED = "*";
-
-/* --- the pieces this screen is built from ------------------------------------------
- *
- * `panel`, `statCard` and `emptyState` are the Overview's, copied rather than imported
- * because a screen may not import another screen. They want to live in a shared
- * `design/components.js`; that is a shared-file change and is in this batch's report
- * rather than in this file.
- */
-
-/** A figure with its caption above and its qualification below. */
-function statCard(caption, value, detail) {
-  return el("div", { class: "card stat" }, [
-    el("div", { class: "label", text: caption }),
-    el("div", { class: "value", text: value }),
-    el("div", { class: "foot", text: detail ?? "" }),
-  ]);
-}
-
-/**
- * A card: a title, one sentence of plain method for a reader, the body, and the
- * engine's own notes folded away behind a disclosure.
- *
- * The split is principle 3 read properly. The method has to be stated, but a review's
- * own notes name views, thresholds and fact versions, which states it to whoever wrote
- * the query. The sentence above says what is counted and over what; the disclosure says
- * where to go and check.
- */
-function panel(title, note, body, method) {
-  const card = el("div", { class: "card panel" }, [
-    el("div", { class: "panel-head" }, [el("h2", { text: title })]),
-    el("p", { class: "panel-note", text: note }),
-    body,
-  ]);
-  if (method) card.appendChild(method);
-  return card;
-}
-
-function emptyState(title, detail) {
-  return el("div", { class: "empty" }, [
-    el("div", { class: "empty-title", text: title }),
-    el("div", { class: "empty-detail", text: detail }),
-  ]);
-}
 
 /** A section that found nothing says so in the engine's own sentence, and no more. */
 function storedEmpty(text) {
@@ -271,7 +230,7 @@ function didCard(section) {
       ? [...(section.notes ?? []), t("review.coverageHelp")]
       : (section.notes ?? [])
   );
-  if (section.empty) return panel(title, note, storedEmpty(section.empty), method);
+  if (section.empty) return panel({ title, note, body: storedEmpty(section.empty), method });
 
   const body = el("div", { class: "stack" });
 
@@ -311,7 +270,7 @@ function didCard(section) {
     );
   }
   body.appendChild(storedTable(section, { swatches: true }));
-  return panel(title, note, body, method);
+  return panel({ title, note, body, method });
 }
 
 /** What became of earlier work: one bar per share, over the lines it was measured on. */
@@ -319,7 +278,7 @@ function becameCard(section) {
   const title = t("review.section.became");
   const note = t("review.became.note");
   if (section.empty) {
-    return panel(title, note, storedEmpty(section.empty), methodNotes(section.notes ?? []));
+    return panel({ title, note, body: storedEmpty(section.empty), method: methodNotes(section.notes ?? []) });
   }
 
   const rows = shareRows(section);
@@ -337,7 +296,7 @@ function becameCard(section) {
       ])
     );
   }
-  return panel(title, note, body, methodNotes(section.notes ?? [], storedTable(section)));
+  return panel({ title, note, body, method: methodNotes(section.notes ?? [], storedTable(section)) });
 }
 
 /** Each figure of the outcome section, with the value the engine printed for it. */
@@ -359,7 +318,7 @@ function observationsCard(section, names) {
   const title = t("section.observations");
   const note = t("review.observations.note");
   const method = methodNotes(section.notes ?? []);
-  if (section.empty) return panel(title, note, storedEmpty(section.empty), method);
+  if (section.empty) return panel({ title, note, body: storedEmpty(section.empty), method });
 
   const body = el("div", { class: "stack" });
   for (const pair of observationPairs(section)) {
@@ -373,7 +332,7 @@ function observationsCard(section, names) {
   stored.appendChild(storedTable(section));
   body.appendChild(stored);
 
-  return panel(title, note, body, method);
+  return panel({ title, note, body, method });
 }
 
 function observationBlock(pair, names) {
@@ -428,7 +387,7 @@ function comparedCard(section) {
   const title = t("review.section.compared");
   const note = t("review.compared.note");
   if (section.empty) {
-    return panel(title, note, storedEmpty(section.empty), methodNotes(section.notes ?? []));
+    return panel({ title, note, body: storedEmpty(section.empty), method: methodNotes(section.notes ?? []) });
   }
 
   const grid = el("div", { class: "compare-grid" });
@@ -443,7 +402,7 @@ function comparedCard(section) {
     if (pair) card.appendChild(pair);
     grid.appendChild(card);
   }
-  return panel(title, note, grid, methodNotes(section.notes ?? [], storedTable(section)));
+  return panel({ title, note, body: grid, method: methodNotes(section.notes ?? [], storedTable(section)) });
 }
 
 /**
@@ -478,18 +437,18 @@ function suggestionsCard(section) {
   const title = t("review.section.suggestions");
   const note = t("review.suggestions.note");
   const method = methodNotes(section.notes ?? []);
-  if (section.empty) return panel(title, note, storedEmpty(section.empty), method);
-  return panel(title, note, storedTable(section), method);
+  if (section.empty) return panel({ title, note, body: storedEmpty(section.empty), method });
+  return panel({ title, note, body: storedTable(section), method });
 }
 
 /** A section this build has no layout for: its stored table, and a line saying so. */
 function unknownCard(section) {
-  return panel(
-    section.title ?? section.key,
-    t("review.unknownSection"),
-    section.empty ? storedEmpty(section.empty) : storedTable(section),
-    methodNotes(section.notes ?? [])
-  );
+  return panel({
+    title: section.title ?? section.key,
+    note: t("review.unknownSection"),
+    body: section.empty ? storedEmpty(section.empty) : storedTable(section),
+    method: methodNotes(section.notes ?? []),
+  });
 }
 
 /** What a model made of the figures, and everything needed to judge it. */

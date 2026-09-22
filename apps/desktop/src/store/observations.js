@@ -8,9 +8,15 @@
  * The one piece of arithmetic is `gap`, the distance between the two medians, and it is
  * here **only to order the list**. A sort order is a statement about the page, not about
  * the world, so it is allowed; a "lift", an "effect size" or anything else derived from
- * the two medians would not be. Nothing is printed from `gap` either: the screen prints
- * its own gap over the two shares **as they appear on the bars**, so that a reader who
- * subtracts the two cells in front of them gets the number the app shows.
+ * the two medians would not be.
+ *
+ * **It is never shown.** The distance between the medians is a quantity the engine owns:
+ * `store/observations.py` has `MIN_GAP = 0.10` and takes it on the unrounded values as
+ * the floor an observation must clear to exist. A second one printed from the two rounded
+ * shares would be a second definition of one number, and they disagree (with 0.9051
+ * against 0.8050 the engine has 10.01 points, the rounded shares give 11). Both medians
+ * are on the card and the engine's own sentence states them; if the distance itself
+ * should be on screen, the engine exposes it as a column.
  */
 
 /** The repository key of a row pooled over every project. */

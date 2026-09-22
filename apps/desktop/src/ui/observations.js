@@ -22,11 +22,12 @@
  *   the fact and inferred mix) and behind a disclosure as view and column names.
  */
 
+import { emptyState } from "../design/components.js";
 import { el, svgEl } from "../design/dom.js";
 import { scoped, shareOf } from "../store/observations.js";
 import { count, decimal, percent, purpose, sessions } from "../text/fmt.js";
 import { observationCaveat, observationSentence } from "../text/sentences.js";
-import { plural, t } from "../text/strings.js";
+import { t } from "../text/strings.js";
 
 /** The prefix the engine gives a purpose label used as a behaviour fact. */
 const PURPOSE_PREFIX = "purpose:";
@@ -115,35 +116,6 @@ export function niceMaxShare(value) {
   return 1;
 }
 
-/**
- * A share in whole points, **as the bar prints it**.
- *
- * Read back out of `percent` on purpose. The gap under the pair has to be the one a
- * reader gets by subtracting the two cells in front of them, and the engine's rounding
- * rule (half to even, to match `f"{x:.0f}%"`) lives in `text/fmt.js`. Rounding again
- * here would put a second copy of that rule in a second file, and the two would
- * eventually disagree on an exact half.
- *
- * @param {number} share
- */
-function printedPoints(share) {
-  return Number.parseInt(percent(share), 10);
-}
-
-/**
- * The distance between the two sides, in whole points, over the values as printed.
- *
- * @param {number} withValue
- * @param {number} withoutValue
- * @returns {number|null} null when either side cannot be printed as a share
- */
-export function gapPoints(withValue, withoutValue) {
-  const first = printedPoints(withValue);
-  const second = printedPoints(withoutValue);
-  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
-  return Math.abs(first - second);
-}
-
 /** One bar: the full track, and the share of it this side fills. */
 function track(fraction, fill) {
   const marks = [
@@ -210,22 +182,21 @@ function pairedBars(options) {
     );
   }
 
-  const gap = gapPoints(options.withValue, options.withoutValue);
-  const gapText = gap === null ? t("common.dash") : plural("observation.gapPoints", gap, count(gap));
-  figure.appendChild(
-    el("div", { class: "paired-row paired-gap" }, [
-      el("span", { class: "paired-label" }),
-      el("span", { text: gapText }),
-    ])
-  );
+  // No gap is printed here, and that is deliberate. The distance between the two medians
+  // is a quantity the **engine** owns: `store/observations.py` has `MIN_GAP = 0.10` and
+  // takes `abs(with_value - without_value)` on the unrounded values, which is the floor an
+  // observation must clear to exist at all. Printing a second one computed from the two
+  // rounded shares would be a second definition of one number, and the two disagree: with
+  // 0.9051 against 0.8050 the engine has 10.01 points and the rounded shares give 11. The
+  // two medians are both on screen, and the engine's own sentence states them.
+  // It is still used to order the list, where it is never shown; see `store/observations.js`.
 
   const caption = t(
     "observations.pairReading",
     sides[0].label,
     readings[0],
     sides[1].label,
-    readings[1],
-    gapText
+    readings[1]
   );
   figure.setAttribute("role", "img");
   figure.setAttribute("aria-label", caption);
@@ -316,13 +287,6 @@ function card(group) {
   }
   node.appendChild(how);
   return node;
-}
-
-function emptyState(title, detail) {
-  return el("div", { class: "empty" }, [
-    el("div", { class: "empty-title", text: title }),
-    el("div", { class: "empty-detail", text: detail }),
-  ]);
 }
 
 /** What an observation is, and which rules produced the ones on this page. */

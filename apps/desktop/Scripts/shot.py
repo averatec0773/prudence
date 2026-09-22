@@ -162,6 +162,12 @@ def main() -> int:
     parser.add_argument("--store", required=True, help="a COPY of a store, never the real one")
     parser.add_argument("--wait", type=float, default=7.0)
     parser.add_argument("--scroll", type=int, default=0, help="scroll the screen first")
+    parser.add_argument(
+        "--section",
+        choices=["overview", "review", "observations", "settings"],
+        help="the screen to photograph. Without it the window opens where it was left, "
+        "which is not reproducible.",
+    )
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")
     parser.add_argument(
@@ -225,6 +231,8 @@ def main() -> int:
         env.update(TARGETS[args.window]["env"])
     if args.scroll:
         env["PRUDENCE_SCROLL"] = str(args.scroll)
+    if args.section:
+        env["PRUDENCE_SECTION"] = args.section
 
     log = out / f"{args.name}.log"
     started = []

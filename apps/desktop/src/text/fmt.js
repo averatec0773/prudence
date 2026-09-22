@@ -11,7 +11,7 @@
  * dropped it, which is most of why none of these had a test.
  */
 
-import { LANGUAGES, plural, t, tIn, lang as currentLang } from "./strings.js";
+import { LANGUAGES, plural, tIn, lang as currentLang } from "./strings.js";
 import { PURPOSES, known } from "../design/purposes.js";
 
 /** @typedef {import("./strings.js").Language} Language */

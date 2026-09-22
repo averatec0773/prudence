@@ -110,7 +110,7 @@ globalThis.document = /** @type {any} */ ({
   documentElement: { setAttribute() {} },
 });
 
-const { observations, gapPoints, niceMaxShare, shortLabel, thresholdLine } = await import(
+const { observations, niceMaxShare, shortLabel, thresholdLine } = await import(
   "../src/ui/observations.js"
 );
 
@@ -329,12 +329,21 @@ test("the axis top is a quarter, a half, three quarters or the whole", () => {
   assert.equal(niceMaxShare(0.8), 1);
 });
 
-test("the gap is the one a reader gets by subtracting the two printed cells", () => {
-  // 93.55% prints as 94 and 83.54% as 84, so the gap under them must be 10 and not the
-  // 10.02 that the two held values are apart.
-  assert.equal(gapPoints(0.9355469071063403, 0.8353909465020576), 10);
-  assert.equal(gapPoints(0.5, 0.5), 0);
-  assert.equal(gapPoints(Number.NaN, 0.5), null);
+/* The distance between the two medians is a quantity the **engine** owns:
+   `store/observations.py` has `MIN_GAP = 0.10` and takes it on the unrounded values as
+   the floor an observation must clear to exist at all. A second one printed from the two
+   rounded shares is a second definition of one number, and they disagree: with 0.9051
+   against 0.8050 the engine has 10.01 points and the rounded shares give 11. Both
+   medians are on the card, and the engine's own sentence states them. */
+test("no card prints a distance between the two medians", () => {
+  const screen = screenFor([row(), row({ outcome: "rework", observation_id: 2 })]);
+  for (const word of ["point", "个百分点"]) {
+    assert.equal(screen.textContent.includes(word), false, `a card prints a gap: ${word}`);
+  }
+  // Nor in the accessible caption, which is where it lived last.
+  for (const figure of screen.tagged("figure")) {
+    assert.equal((figure.getAttribute("aria-label") ?? "").includes("point"), false);
+  }
 });
 
 test("colour is the outcome's identity and is never keyed to direction", () => {
@@ -369,7 +378,7 @@ test("the figure carries its own numbers in words, for a reader with no pointer"
   const caption = figure.getAttribute("aria-label");
   assert.equal(
     caption,
-    "compacted context: 73% of 16 sessions. did not: 93% of 33 sessions. gap 20 points."
+    "compacted context: 73% of 16 sessions. did not: 93% of 33 sessions."
   );
   assert.equal(figure.tagged("figcaption")[0].textContent, caption);
 });

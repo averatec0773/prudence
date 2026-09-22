@@ -6,6 +6,7 @@
 
 import { heatStrip, linesWithGaps, niceMax, stackedBars } from "../design/charts.js";
 import { el } from "../design/dom.js";
+import { emptyState, panel, statCard } from "../design/components.js";
 import { PURPOSES } from "../design/purposes.js";
 import {
   cards as readCards,
@@ -29,40 +30,7 @@ import {
 } from "../text/fmt.js";
 import { plural, t } from "../text/strings.js";
 
-/** A figure with its caption above and its qualification below. */
-function statCard(caption, value, detail) {
-  return el("div", { class: "card stat" }, [
-    el("div", { class: "label", text: caption }),
-    el("div", { class: "value", text: value }),
-    el("div", { class: "foot", text: detail ?? "" }),
-  ]);
-}
 
-/**
- * A chart card: a title, one sentence of plain method for a reader, the chart, and the
- * view and column names folded away behind a disclosure.
- *
- * The split is principle 3 read properly. The method has to be stated, but stating it as
- * `alive_30d / measured_30d ... from app_outcomes_by_week` states it to whoever wrote the
- * query. The sentence says what is counted and over what; the disclosure says where to go
- * and check.
- */
-function panel(title, note, body, extra, method) {
-  const head = el("div", { class: "panel-head" }, [el("h2", { text: title })]);
-  if (extra) head.appendChild(extra);
-  const card = el("div", { class: "card panel" }, [
-    head,
-    el("p", { class: "panel-note", text: note }),
-    body,
-  ]);
-  if (method) {
-    const how = el("details", { class: "method" });
-    how.appendChild(el("summary", { text: t("chart.method") }));
-    how.appendChild(el("p", { text: method }));
-    card.appendChild(how);
-  }
-  return card;
-}
 
 /** Swatch and label per purpose, in the fixed order, wrapping. */
 function purposeLegend(present) {
@@ -111,13 +79,6 @@ function weekTable(weeks) {
 /** "3 measured weeks", through the catalogue's plural entry. */
 function measuredWeeksPhrase(howMany) {
   return plural("unit.measuredWeeks", howMany, count(howMany));
-}
-
-function emptyState(title, detail) {
-  return el("div", { class: "empty" }, [
-    el("div", { class: "empty-title", text: title }),
-    el("div", { class: "empty-detail", text: detail }),
-  ]);
 }
 
 /**
@@ -179,13 +140,13 @@ export function overview(state) {
 
   if (!weeks.some((week) => week.measured)) {
     screen.appendChild(
-      panel(
-        t("overview.tokensByPurpose"),
-        t("overview.tokensByPurpose.note2"),
-        emptyState(t("overview.noTokens.title"), t("overview.noTokens.detail")),
-        null,
-        t("overview.tokensByPurpose.method")
-      )
+      panel({
+        title: t("overview.tokensByPurpose"),
+        note: t("overview.tokensByPurpose.note2"),
+        body: emptyState(t("overview.noTokens.title"), t("overview.noTokens.detail")),
+        extra: null,
+        method: t("overview.tokensByPurpose.method"),
+      })
     );
   } else {
     const present = new Set(PURPOSES.filter((key) => weeks.some((w) => w.byPurpose[key] > 0)));
@@ -222,13 +183,13 @@ export function overview(state) {
     });
 
     screen.appendChild(
-      panel(
-        t("overview.tokensByPurpose"),
-        t("overview.tokensByPurpose.note2"),
-        el("div", {}, [chart, hover, purposeLegend(present), weekTable(weeks)]),
-        null,
-        t("overview.tokensByPurpose.method")
-      )
+      panel({
+        title: t("overview.tokensByPurpose"),
+        note: t("overview.tokensByPurpose.note2"),
+        body: el("div", {}, [chart, hover, purposeLegend(present), weekTable(weeks)]),
+        extra: null,
+        method: t("overview.tokensByPurpose.method"),
+      })
     );
   }
 
@@ -254,31 +215,31 @@ export function overview(state) {
 
   if (!series.length || measuredWeeks.size === 0) {
     screen.appendChild(
-      panel(
-        t("overview.whatBecame"),
-        t("overview.whatBecame.note2"),
-        emptyState(t("overview.noOutcomes.title"), t("overview.noOutcomes.detail")),
-        null,
-        t("overview.whatBecame.method")
-      )
+      panel({
+        title: t("overview.whatBecame"),
+        note: t("overview.whatBecame.note2"),
+        body: emptyState(t("overview.noOutcomes.title"), t("overview.noOutcomes.detail")),
+        extra: null,
+        method: t("overview.whatBecame.method"),
+      })
     );
   } else if (measuredWeeks.size < 2) {
     // One dot in six hundred points of empty card is not a chart. Say it in words, and
     // keep the table, which is where the one measurement can actually be read.
     screen.appendChild(
-      panel(
-        t("overview.whatBecame"),
-        t("overview.whatBecame.note2"),
-        el("div", {}, [
+      panel({
+        title: t("overview.whatBecame"),
+        note: t("overview.whatBecame.note2"),
+        body: el("div", {}, [
           emptyState(
             t("overview.tooFewWeeks.title"),
             t("overview.tooFewWeeks.detail", measuredWeeksPhrase(measuredWeeks.size))
           ),
           outcomeTable(series),
         ]),
-        null,
-        t("overview.whatBecame.method")
-      )
+        extra: null,
+        method: t("overview.whatBecame.method"),
+      })
     );
   } else {
     const alive = linesWithGaps({
@@ -324,10 +285,10 @@ export function overview(state) {
     }
 
     screen.appendChild(
-      panel(
-        t("overview.whatBecame"),
-        t("overview.whatBecame.note2"),
-        el("div", {}, [
+      panel({
+        title: t("overview.whatBecame"),
+        note: t("overview.whatBecame.note2"),
+        body: el("div", {}, [
           el("h3", { class: "chart-name", text: t("overview.stillAlive") }),
           alive,
           el("h3", { class: "chart-name", text: t("overview.reworkedLater") }),
@@ -335,9 +296,9 @@ export function overview(state) {
           legend,
           outcomeTable(series),
         ]),
-        null,
-        t("overview.whatBecame.method")
-      )
+        extra: null,
+        method: t("overview.whatBecame.method"),
+      })
     );
   }
 
@@ -346,23 +307,23 @@ export function overview(state) {
   const strip = readHeat(data, { project, range });
   if (!strip.weeks.length || strip.max <= 0) {
     screen.appendChild(
-      panel(
-        t("overview.whereTime"),
-        t("overview.whereTime.note2"),
-        emptyState(t("overview.noHours.title"), t("overview.noHours.detail")),
-        null,
-        t("overview.whereTime.method")
-      )
+      panel({
+        title: t("overview.whereTime"),
+        note: t("overview.whereTime.note2"),
+        body: emptyState(t("overview.noHours.title"), t("overview.noHours.detail")),
+        extra: null,
+        method: t("overview.whereTime.method"),
+      })
     );
   } else {
     const measured = strip.weeks
       .flatMap((column) => column.days)
       .filter((cell) => cell.hours !== null && cell.hours > 0);
     screen.appendChild(
-      panel(
-        t("overview.whereTime"),
-        t("overview.whereTime.note2"),
-        heatStrip({
+      panel({
+        title: t("overview.whereTime"),
+        note: t("overview.whereTime.note2"),
+        body: heatStrip({
           weeks: strip.weeks,
           max: strip.max,
           // With the unit: the figcaption is the only place a screenshot reader can get
@@ -377,9 +338,8 @@ export function overview(state) {
             measured.map((cell) => t("overview.dayHours", formatDay(cell.day), hourPhrase(cell.hours)))
           ),
         }),
-        null,
-        t("overview.whereTime.method")
-      )
+        method: t("overview.whereTime.method"),
+      })
     );
   }
 
