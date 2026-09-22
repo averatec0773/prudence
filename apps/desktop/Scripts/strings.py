@@ -111,6 +111,61 @@ DESKTOP_ONLY = {
         "en": "%1$@ %2$@ %3$@ of %4$@ lines",
         "zh-Hans": "%1$@ %2$@ %3$@，基于 %4$@ 行",
     },
+    # The Observations screen. The catalog's `observations.empty.pooled.*` is written for
+    # the Swift window, which showed only the pooled rows under "All projects" and could
+    # therefore tell the reader to pick a project. This screen shows every row there is,
+    # so an empty list means the engine found nothing anywhere, and the detail has to say
+    # which floors were not cleared rather than send the reader to a picker that would
+    # show the same nothing.
+    # Not `menu.noObservation`: the panel shows one row and says "No observation yet" in
+    # the singular, which is a different statement from a whole screen finding none. The
+    # Chinese has no plural to carry that difference, so it carries it with 任何.
+    "observations.empty.all.title": {"en": "No observations yet", "zh-Hans": "还没有任何观察"},
+    "observations.empty.all.detail": {
+        "en": "An observation needs at least five sessions on each side of one threshold, and at least ten points between the two medians. No behaviour in this store clears both floors yet. Nothing is wrong with your store.",
+        "zh-Hans": "一条观察需要在某个阈值的两边各至少有五个会话，并且两个中位数之间至少相差十个百分点。这个库里还没有哪种行为同时越过这两道门槛。你的库没有问题。",
+    },
+    # The range picker sits above this screen and changes nothing on it: an observation is
+    # computed over every session in the store, and there is no date window anywhere in
+    # `store/observations.py`. Until the route table can ask for the project picker
+    # without the range one, the screen says so, rather than let "8 weeks" above a figure
+    # imply the figure is about eight weeks.
+    "observations.allSessions": {
+        "en": "Every row here is computed over every session on record, so the range above does not change what this screen shows.",
+        "zh-Hans": "这里的每一行都是基于全部有记录的会话算出来的，所以上方的范围选择不会改变这个页面显示的内容。",
+    },
+    # The sort rule, said out loud, with what it is not. A list ordered by size reads as a
+    # ranking unless something says otherwise, and this product has no score in it.
+    "observations.sortedByGap": {
+        "en": "The behaviour whose two medians are furthest apart comes first. That is how the list is arranged, not a ranking of what matters.",
+        "zh-Hans": "两个中位数相差最大的行为排在最前面。这只是列表的排列方式，不是重要性的排名。",
+    },
+    # Principle 3, the half that goes behind the disclosure: the view and the columns, for
+    # a reader who wants to go and check. The card's own caption states the method in
+    # words; this states where to go and look.
+    "observations.method": {
+        "en": "Both figures on a card are medians the engine took, one per side of the split, read from the app_observation view: with_value over with_n sessions and without_value over without_n sessions, with coverage, fact_commits and inferred_commits from the same row. The app prints them and derives nothing from them.",
+        "zh-Hans": "卡片上的两个数字都是引擎取的中位数，分界的两边各一个，来自 app_observation 视图：with_value 基于 with_n 个会话，without_value 基于 without_n 个会话；coverage、fact_commits 和 inferred_commits 取自同一行。应用只把它们印出来，不在它们之上再算任何东西。",
+    },
+    # The interface words the threshold itself at contract 3 (threshold_op and
+    # threshold_value), so the engine's own English clause is kept where a reader can
+    # check the rewording against it. On an older store it is the only thing there is.
+    "observations.method.threshold": {
+        "en": "The engine's own words for this split: %1$@.",
+        "zh-Hans": "引擎自己对这个分界的表述：%1$@。",
+    },
+    # The paired bars in words, for a screen reader and for the caption. One key, because
+    # the two joins and the full stops belong to the language, not to JavaScript.
+    "observations.pairReading": {
+        "en": "%1$@: %2$@. %3$@: %4$@. %5$@.",
+        "zh-Hans": "%1$@：%2$@。%3$@：%4$@。%5$@。",
+    },
+    # Which version of the engine's rules produced these rows, and which contract the app
+    # read them under. Two rows that disagree across an upgrade should be explainable.
+    "observations.version": {
+        "en": "observation fact version %1$@, app contract %2$@",
+        "zh-Hans": "观察事实版本 %1$@，应用契约 %2$@",
+    },
 }
 
 # Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from
@@ -121,6 +176,14 @@ DESKTOP_OVERRIDES = {
     # the Chinese claimed a unit the figure does not have, on the one caption whose job is
     # to make a share checkable. English was unit-free and is now explicit too.
     "chart.sampleSize": {"en": "n=%1$@ lines", "zh-Hans": "n=%1$@ 行"},
+    # The catalog says "%1$@ 做了，%2$@ 个没做". The first placeholder is filled with a
+    # session phrase ("16 个会话"), so the space in front of 做了 puts a gap in the middle
+    # of a Chinese clause: "16 个会话 做了". Chinese does not space its words, and the
+    # space only looks deliberate because the English template has one.
+    "observation.sessionsDidDidNot": {
+        "en": "%1$@ did, %2$@ did not",
+        "zh-Hans": "%1$@做了，%2$@ 个没做",
+    },
 }
 
 
