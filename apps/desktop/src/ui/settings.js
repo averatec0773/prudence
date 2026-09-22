@@ -39,7 +39,7 @@ import { el } from "../design/dom.js";
 import { engineSection } from "./engine-section.js";
 import {
   count,
-  day,
+  fromDay,
   list,
   relative,
   sessions as sessionPhrase,
@@ -171,7 +171,11 @@ function pairs(rows) {
  * `disabled` is for a control whose answer is still on its way: a second click before the
  * first one has landed is how a control ends up disagreeing with what it controls.
  *
- * @param {{ label: string, choices: {value: any, label: string}[], chosen: any,
+ * A choice may carry a `title`: the Repositories table shows "Meta" where the General tab
+ * would have room for "Metadata only", and a label shortened to fit a column still has to
+ * say what it means to a pointer and to a screen reader.
+ *
+ * @param {{ label: string, choices: {value: any, label: string, title?: string}[], chosen: any,
  *           onChoose: (value: any) => void, disabled?: boolean }} options
  * @returns {HTMLElement}
  */
@@ -180,11 +184,35 @@ function segmented({ label, choices, chosen, onChoose, disabled }) {
   for (const choice of choices) {
     const button = el("button", { type: "button", role: "radio", text: choice.label });
     button.setAttribute("aria-checked", String(choice.value === chosen));
+    if (choice.title) {
+      button.setAttribute("title", choice.title);
+      button.setAttribute("aria-label", choice.title);
+    }
     if (disabled) /** @type {any} */ (button).disabled = true;
     button.addEventListener("click", () => onChoose(choice.value));
     group.appendChild(button);
   }
   return group;
+}
+
+/**
+ * A box that is ticked or not, with its name only to a screen reader.
+ *
+ * The Repositories table's own control, and the only one in the app: a column header of
+ * "Select" over a column of boxes would be a word the reader does not need, and the row
+ * the box belongs to is what says what is being selected.
+ *
+ * @param {{ label: string, checked: boolean, onChange: (checked: boolean) => void,
+ *           disabled?: boolean }} options
+ */
+function tick({ label, checked, onChange, disabled }) {
+  const box = el("input", { class: "tick", type: "checkbox", "aria-label": label });
+  /** @type {any} */ (box).checked = checked;
+  if (disabled) /** @type {any} */ (box).disabled = true;
+  // The state at build time, inverted: the row is redrawn on every change, so what the
+  // box holds after the event is not what the next draw reads from.
+  box.addEventListener("change", () => onChange(!checked));
+  return box;
 }
 
 /**
@@ -230,10 +258,15 @@ function languageChoices() {
 }
 
 /** Off, and the four intervals. The minutes are the shell's own list (`ui_state.rs`,
- *  `INGEST_INTERVALS`), and a value outside it is refused there. */
+ *  `INGEST_INTERVALS`), and a value outside it is refused there.
+ *
+ *  Off is `settings.choice.off`, the same word the other three settings use. It asked for
+ *  `settings.interval.off` before, which is in neither table, so the control drew the key
+ *  itself: found on 2026-09-22 in a screenshot of the General tab, not by a test, because
+ *  nothing asserts that a key a screen asks for exists. */
 function intervalChoices() {
   return [
-    { value: 0, label: t("settings.interval.off") },
+    { value: 0, label: t("settings.choice.off") },
     { value: 15, label: t("settings.interval.15m") },
     { value: 30, label: t("settings.interval.30m") },
     { value: 60, label: t("settings.interval.1h") },
@@ -514,11 +547,21 @@ function fillModel(body, settings) {
 
 /** Off, and the engine's two levels. The words that reach the command line are checked
  *  again in `src-tauri/src/repositories.rs`, so nothing this file sends can be an
- *  argument on its own. */
+ *  argument on its own.
+ *
+ *  The labels are the **short** ones, and the reason is the column: three segments in a
+ *  hundred and sixty points have room for a word each, and "Metadata only" against
+ *  "仅元数据" is what wrapped a segment onto two lines in the founder's screenshot. The
+ *  full name is on the segment's `title`, and the block's own note spells both levels out
+ *  in a sentence. */
 function levelChoices() {
   return [
     { value: "off", label: t("settings.choice.off") },
-    { value: "metadata-only", label: t("settings.repositories.level.metadataOnly") },
+    {
+      value: "metadata-only",
+      label: t("settings.repositories.level.metadataOnly.short"),
+      title: t("settings.repositories.level.metadataOnly"),
+    },
     { value: "full", label: t("settings.repositories.level.full") },
   ];
 }
@@ -528,57 +571,171 @@ function levelOf(row) {
   return row.enabled && row.level ? String(row.level) : "off";
 }
 
+/**
+ * Which agents' sessions this repository holds.
+ *
+ * Recording is per repository and covers **every** AI coding agent that worked in it; a
+ * session carries its own source. The scan does not print that list yet, so this answers
+ * with the one source Prudence reads today. It is one function rather than a constant at
+ * the call site so that the engine's future field drops in without a change to the page:
+ * `repositories.rs` already decodes `sources`, and the day it is written the rows show it.
+ *
+ * @param {any} row one row of the engine's scan
+ * @returns {string[]} source keys, never empty
+ */
+export function sourcesOf(row) {
+  const said = Array.isArray(row?.sources) ? row.sources.filter(Boolean).map(String) : [];
+  return said.length ? said : ["claude-code"];
+}
+
+/**
+ * An agent's name, as it writes it.
+ *
+ * Not catalogue keys, for the reason `LANGUAGE_NAMES` is not one: a product's name is the
+ * same in both languages, and a key whose two values are identical is what
+ * `strings.test.mjs` refuses. A key Prudence has not learned yet is drawn as the engine
+ * wrote it rather than hidden.
+ */
+const SOURCE_NAMES = { "claude-code": "Claude Code" };
+
+function sourceNames(row) {
+  return list(sourcesOf(row).map((key) => SOURCE_NAMES[key] ?? key));
+}
+
 /** The last path component, which is what a person calls the project. */
 function basename(path) {
   const parts = String(path).split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : String(path);
 }
 
-/** A date the scan carries, as the reader's language writes one. The scan's timestamps
- *  are the engine's own; only the day is shown, because a repository's first session was
- *  a day and not a moment. A repository with no sessions has neither date. */
+/** How many path components under the name are enough to tell two checkouts apart. Two,
+ *  measured rather than guessed: three read `…/CODING/github/b…` in the founder's own
+ *  layout, which spends the column on the part every row shares and cuts the part that
+ *  identifies the row. */
+const PATH_PARTS = 2;
+
+/**
+ * The end of a path, which is the part that identifies it.
+ *
+ * The project column is the only one the table does not give a width to, so it is the one
+ * that gets what the other six leave: about a hundred and forty points. A path cut by CSS
+ * from the left reads `/Users/averatec…`, which is the part every path on the machine has
+ * in common and says nothing; the last three components are what two checkouts of one
+ * repository differ in. The whole path is on the element's `title` either way.
+ */
+function shortPath(path) {
+  const parts = String(path).split("/").filter(Boolean);
+  if (parts.length <= PATH_PARTS) return String(path);
+  return `…/${parts.slice(-PATH_PARTS).join("/")}`;
+}
+
+/**
+ * A day the scan carries, as `2026-05-14` in both languages.
+ *
+ * Numeric and fixed width, not the reader's own order. `2026年5月14日` is eleven
+ * characters that break anywhere, which is what put two dates on two lines each in the
+ * founder's screenshot, and a column of days that are being compared against each other
+ * reads better aligned than idiomatic. The engine writes its timestamps in this order
+ * already, so the day is its own first ten characters, checked through `fromDay` so that
+ * something that is not a day is a dash rather than ten characters of anything.
+ *
+ * **This belongs in `text/fmt.js`**, beside `day` and `shortDay`, and goes there once the
+ * batch that owns that file has landed.
+ */
 function scanDay(value) {
   if (value === null || value === undefined || value === "") return t("common.dash");
-  return day(String(value).slice(0, 10));
+  const date = fromDay(String(value).slice(0, 10));
+  if (!date) return t("common.dash");
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /**
  * One block of the list: a heading, its note, and a row per repository.
  *
+ * **The columns are declared, not discovered.** The table was automatic before, which
+ * means the browser sized every column from its contents: in Chinese the header
+ * "发现的会话" and the date "2026年5月14日" both break between any two characters, so the
+ * layout gave the count and the dates the narrowest width it could find a break at and
+ * wrapped all three. The `<colgroup>` below plus `table-layout: fixed` in `settings.css`
+ * is the fix: every column but the project's has a width, and every cell that carries a
+ * figure, a day or a control is `nowrap`. Only the path may lose characters, to an
+ * ellipsis, with the whole of it on the element's `title`.
+ *
  * @param {{ title: string, note: string, rows: any[], change: (row: any, level: string) => void,
- *           busy: boolean }} block
+ *           busy: boolean, picked: Set<string>, pick: (key: string, on: boolean) => void,
+ *           pickAll: (keys: string[], on: boolean) => void }} block
  */
-function repositoryTable({ title, note, rows, change, busy }) {
+function repositoryTable({ title, note, rows, change, busy, picked, pick, pickAll }) {
+  const keys = rows.map((row) => String(row.repoKey));
+  const all = keys.length > 0 && keys.every((key) => picked.has(key));
+
+  const columns = el("colgroup", {}, [
+    el("col", { class: "c-pick" }),
+    el("col", { class: "c-name" }),
+    el("col", { class: "c-sessions" }),
+    el("col", { class: "c-sources" }),
+    el("col", { class: "c-when" }),
+    el("col", { class: "c-when" }),
+    el("col", { class: "c-level" }),
+  ]);
+
   const head = el("thead", {}, [
     el("tr", {}, [
+      el("th", { class: "repo-pick" }, [
+        tick({
+          label: t("settings.repositories.selectAll"),
+          checked: all,
+          onChange: (on) => pickAll(keys, on),
+          disabled: busy,
+        }),
+      ]),
       el("th", { text: t("scope.project") }),
-      el("th", { class: "n", text: t("settings.repositories.column.sessions") }),
-      el("th", { text: t("settings.repositories.column.first") }),
-      el("th", { text: t("settings.repositories.column.last") }),
-      el("th", { text: t("settings.repositories.column.level") }),
+      el("th", { class: "n nowrap", text: t("settings.repositories.column.sessions") }),
+      el("th", { class: "nowrap", text: t("settings.repositories.column.sources") }),
+      el("th", { class: "nowrap", text: t("settings.repositories.column.first") }),
+      el("th", { class: "nowrap", text: t("settings.repositories.column.last") }),
+      el("th", { class: "nowrap repo-level", text: t("settings.repositories.column.level") }),
     ]),
   ]);
 
   const body = el("tbody");
   for (const row of rows) {
-    const name = el("div", { class: "repo-name", text: basename(row.path) });
+    const shortName = basename(row.path);
+    const name = el("div", { class: "repo-name", text: shortName, title: String(row.path) });
     // The full path under the name, as the sentence that says which one this is: two
-    // checkouts of the same repository have the same last component.
-    const where = el("div", { class: "repo-path", text: String(row.path) });
-    const cell = el("td", {}, [name, where]);
+    // checkouts of the same repository have the same last component. It is the one value
+    // on the row allowed to lose characters, because it is the one value with a hundred
+    // of them; the whole of it is on the `title` and it is still selectable.
+    const where = el("div", {
+      class: "repo-path",
+      text: shortPath(row.path),
+      title: String(row.path),
+    });
+    const cell = el("td", { class: "repo-what" }, [name, where]);
     // A repository that is on record and no longer on disk is still on record, and a
     // reader looking for it has to be told which of the two states it is in.
     if (!row.exists) {
       cell.appendChild(el("div", { class: "repo-gone", text: t("settings.repositories.gone") }));
     }
 
+    const sources = sourceNames(row);
     body.appendChild(
       el("tr", {}, [
+        el("td", { class: "repo-pick" }, [
+          tick({
+            label: t("settings.repositories.select", shortName),
+            checked: picked.has(String(row.repoKey)),
+            onChange: (on) => pick(String(row.repoKey), on),
+            disabled: busy,
+          }),
+        ]),
         cell,
-        el("td", { class: "n", text: count(Number(row.sessions ?? 0)) }),
-        el("td", { text: scanDay(row.firstAt) }),
-        el("td", { text: scanDay(row.lastAt) }),
-        el("td", {}, [
+        el("td", { class: "n nowrap", text: count(Number(row.sessions ?? 0)) }),
+        el("td", { class: "nowrap repo-sources", text: sources, title: sources }),
+        el("td", { class: "nowrap repo-when", text: scanDay(row.firstAt) }),
+        el("td", { class: "nowrap repo-when", text: scanDay(row.lastAt) }),
+        el("td", { class: "nowrap repo-level" }, [
           segmented({
             label: t("settings.repositories.column.level"),
             choices: levelChoices(),
@@ -593,8 +750,67 @@ function repositoryTable({ title, note, rows, change, busy }) {
 
   return el("div", { class: "fact-block" }, [
     subhead(title, note),
-    el("table", { class: "data repo-table" }, [head, body]),
+    el("table", { class: "data repo-table" }, [columns, head, body]),
   ]);
+}
+
+/**
+ * What to do with the rows that are ticked.
+ *
+ * At the foot of the card and only while something is selected: it is a control, so it
+ * takes the frost where the platform has one, and it says how many rows it is about
+ * before it offers to change them. While a batch runs it counts, because the engine is
+ * being run once per repository and a bar that said nothing would be a bar that looks
+ * stuck on a list of twenty.
+ *
+ * @param {{ chosen: number, busy: boolean, progress: {done: number, total: number}|null,
+ *           failure: {name: string, message: string}|null,
+ *           onLevel: (level: string) => void }} options
+ */
+function batchBar({ chosen, busy, progress, failure, onLevel }) {
+  const bar = el("div", { class: "repo-actions" });
+  const line = el("div", { class: "repo-actions-line" }, [
+    el("div", {
+      class: "repo-actions-count",
+      text: progress
+        ? t(
+            "settings.repositories.batch.running",
+            count(progress.done + 1),
+            count(progress.total)
+          )
+        : t("settings.repositories.batch.selected", count(chosen)),
+    }),
+  ]);
+
+  const set = el("div", { class: "repo-actions-set" }, [
+    el("span", { class: "repo-actions-label", text: t("settings.repositories.batch.label") }),
+  ]);
+  for (const choice of levelChoices()) {
+    const button = el("button", {
+      class: "btn",
+      type: "button",
+      text: choice.label,
+      title: choice.title ?? choice.label,
+    });
+    if (busy) /** @type {any} */ (button).disabled = true;
+    button.addEventListener("click", () => onLevel(String(choice.value)));
+    set.appendChild(button);
+  }
+  line.appendChild(set);
+  bar.appendChild(line);
+
+  // The engine's own words for what it refused, under the app's sentence for what that
+  // left behind. English on a Chinese interface, like every other message from something
+  // that is not this app.
+  if (failure) {
+    bar.appendChild(
+      el("div", { class: "notes fact-notes" }, [
+        el("div", { text: t("settings.repositories.batch.failed", failure.name) }),
+        el("div", { text: failure.message }),
+      ])
+    );
+  }
+  return bar;
 }
 
 /**
@@ -606,10 +822,11 @@ function repositoryTable({ title, note, rows, change, busy }) {
  *
  * @param {HTMLElement} body
  * @param {any[]} rows the engine's own scan
- * @param {(row: any, level: string) => void} change
- * @param {boolean} busy whether a change is in flight, which no second click may start
+ * @param {{ change: (row: any, level: string) => void, busy: boolean, picked: Set<string>,
+ *           pick: (key: string, on: boolean) => void,
+ *           pickAll: (keys: string[], on: boolean) => void }} how
  */
-function fillRepositories(body, rows, change, busy) {
+function fillRepositories(body, rows, how) {
   body.innerHTML = "";
   const found = Array.isArray(rows) ? rows : [];
   // The group of sessions that belong to no repository arrives with no path. There is
@@ -629,8 +846,7 @@ function fillRepositories(body, rows, change, busy) {
         title: t("settings.repositories.recorded"),
         note: t("settings.repositories.recorded.note"),
         rows: recorded,
-        change,
-        busy,
+        ...how,
       })
     );
   }
@@ -640,8 +856,7 @@ function fillRepositories(body, rows, change, busy) {
         title: t("settings.repositories.found"),
         note: t("settings.repositories.found.note"),
         rows: rest,
-        change,
-        busy,
+        ...how,
       })
     );
   }
@@ -675,30 +890,81 @@ function repositories() {
     return el("div", { class: "tab-body" }, [card]);
   }
 
-  // The scan in hand, and whether a change is in flight. Both live in this render's own
-  // closure rather than in the module: which tab is open is navigation and is kept between
-  // renders, and neither of these is.
+  // The scan in hand, what is ticked, and whether a change is in flight. All of it lives
+  // in this render's own closure rather than in the module: which tab is open is
+  // navigation and is kept between renders, and none of this is.
   let scan = /** @type {any[]} */ ([]);
   let busy = false;
+  /** @type {Set<string>} */
+  const picked = new Set();
+  /** @type {{done: number, total: number}|null} */
+  let progress = null;
+  /** @type {{name: string, message: string}|null} */
+  let failure = null;
+
+  // One node, kept between draws and emptied each time: it is at the foot of the card,
+  // under the list and the method, and a node appended per draw would stack up.
+  const actions = el("div", { class: "repo-actions-slot" });
+  card.appendChild(actions);
 
   const failed = () => {
     body.innerHTML = "";
     body.appendChild(el("p", { class: "setting-note", text: t("settings.repositories.unread") }));
+    actions.innerHTML = "";
+  };
+
+  const draw = () => {
+    fillRepositories(body, scan, { change, busy, picked, pick, pickAll });
+    actions.innerHTML = "";
+    if (picked.size || progress || failure) {
+      actions.appendChild(
+        batchBar({
+          chosen: picked.size,
+          busy,
+          progress,
+          failure,
+          onLevel: (level) => void runBatch(level),
+        })
+      );
+    }
   };
 
   const show = (rows) => {
     scan = Array.isArray(rows) ? rows : [];
-    fillRepositories(body, scan, change, busy);
+    // A row the scan no longer carries cannot be acted on, so it is not counted either.
+    const live = new Set(scan.map((row) => String(row.repoKey)));
+    for (const key of [...picked]) if (!live.has(key)) picked.delete(key);
+    draw();
   };
+
+  function pick(key, on) {
+    if (busy) return;
+    if (on) picked.add(key);
+    else picked.delete(key);
+    failure = null;
+    draw();
+  }
+
+  function pickAll(keys, on) {
+    if (busy) return;
+    for (const key of keys) {
+      if (on) picked.add(key);
+      else picked.delete(key);
+    }
+    failure = null;
+    draw();
+  }
 
   /** Ask the engine to change one repository, and redraw from **its** answer. */
   function change(row, level) {
     if (busy || !SETTINGS.port) return;
     busy = true;
+    // A refusal the reader has moved on from is not a refusal about this change.
+    failure = null;
     // The scan already in hand, drawn again with every control dead: the engine is being
     // asked, and a control that answers a second click before the first one has landed is
     // a control that can be left disagreeing with the config.
-    show(scan);
+    draw();
     SETTINGS.port.repositoryLevel(String(row.repoKey), String(level))
       .then((next) => {
         busy = false;
@@ -708,6 +974,57 @@ function repositories() {
         busy = false;
         failed();
       });
+  }
+
+  /**
+   * The same command, once per ticked repository, in the order the list is in.
+   *
+   * Sequential and not in parallel: `prudence init --enable` writes `config.toml`, and two
+   * of them at once is two processes writing one file. The engine is then asked for the
+   * whole list **once**, and the rows are drawn from that answer: what was clicked is not
+   * evidence of anything, and a repository the engine silently left alone would otherwise
+   * show as changed.
+   *
+   * A refusal stops the run where it is. The repositories before it are already changed
+   * and stay changed, which is what the sentence under the bar says, and the re-scan is
+   * what makes that visible rather than claimed.
+   */
+  async function runBatch(level) {
+    if (busy || !SETTINGS.port) return;
+    const keys = scan
+      .filter((row) => row.path && picked.has(String(row.repoKey)))
+      .map((row) => String(row.repoKey));
+    if (!keys.length) return;
+
+    busy = true;
+    failure = null;
+
+    for (const [index, key] of keys.entries()) {
+      // Counted before the call rather than after it, so the line names the repository
+      // being changed while it is being changed.
+      progress = { done: index, total: keys.length };
+      draw();
+      try {
+        await SETTINGS.port.repositoryLevel(key, String(level));
+      } catch (error) {
+        const row = scan.find((one) => String(one.repoKey) === key);
+        failure = {
+          name: row ? basename(row.path) : key,
+          message: String(/** @type {any} */ (error)?.message ?? error),
+        };
+        break;
+      }
+    }
+
+    progress = null;
+    try {
+      const next = await SETTINGS.port.repositories();
+      busy = false;
+      show(next);
+    } catch {
+      busy = false;
+      failed();
+    }
   }
 
   // Asked for when the tab is drawn, and filled when the engine answers: it is a

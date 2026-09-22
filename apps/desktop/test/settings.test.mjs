@@ -32,7 +32,9 @@ const FIXTURE = join(app, "fixtures/store.db");
 import * as Str from "../src/text/strings.js";
 // `any`, deliberately, as in the other screen tests: the tree this returns is the shim's
 // and asking it for `find` is the whole point of the shim.
-const { SETTINGS, TABS, settings } = /** @type {any} */ (await import("../src/ui/settings.js"));
+const { SETTINGS, TABS, settings, sourcesOf } = /** @type {any} */ (
+  await import("../src/ui/settings.js")
+);
 const { ENGINE } = /** @type {any} */ (await import("../src/ui/engine-section.js"));
 
 for (const language of Str.LANGUAGES) {
@@ -81,8 +83,13 @@ const INFO = {
 };
 
 /** Let every queued promise callback run. The Model tab draws first and fills when the
- *  engine answers, so there is always one turn between the two. */
+ *  engine answers, so there is always one turn between the two. A batch is a chain of
+ *  already-resolved promises, so one turn drains the whole of it. */
 const settled = () => new Promise(setImmediate);
+
+/** What the engine says when it will not enable a repository, in its own words. English
+ *  on a Chinese interface, like every other message from something that is not this app. */
+const REFUSAL = "prudence init: no repository called root:2c3f8baf in the scan";
 
 /**
  * A shell that answers whatever the test says, and records what it was asked.
@@ -157,6 +164,9 @@ function fakePort(overrides = {}) {
     modelLanguage: [],
     links: [],
     levels: [],
+    // How many times the whole list was read. A batch runs one command per repository and
+    // then asks **once**, which is a thing to assert rather than to hope for.
+    scans: 0,
   };
   let now = { ...INFO.settings, ...(overrides.settings ?? {}) };
   let scan = overrides.scan ?? SCAN.map((row) => ({ ...row }));
@@ -192,12 +202,20 @@ function fakePort(overrides = {}) {
       asked.modelLanguage.push(code);
       return Promise.resolve({ ...MODEL, languageKey: code });
     },
-    repositories: () => Promise.resolve(scan),
+    repositories: () => {
+      asked.scans += 1;
+      return Promise.resolve(scan);
+    },
     // The engine's answer, not the click's: the fake moves the row itself and hands the
     // whole scan back, which is what the real command does.
     repositoryLevel: (key, level) => {
       asked.levels.push([key, level]);
       if (overrides.levelRefuses) return Promise.reject(new Error("failed"));
+      // `refuseCall: 2` refuses the second command of a batch and no other, which is the
+      // only way to ask what a run does when the engine stops half way through one.
+      if (overrides.refuseCall && asked.levels.length === overrides.refuseCall) {
+        return Promise.reject(new Error(REFUSAL));
+      }
       scan = scan.map((row) =>
         row.repoKey === key
           ? { ...row, enabled: level !== "off", level: level === "off" ? null : level }
@@ -340,6 +358,18 @@ test("every control on General writes through the shell", () => {
   assert.deepEqual(asked.appearance, ["dark"]);
   assert.deepEqual(asked.login, [true]);
   assert.deepEqual(asked.interval, [30]);
+});
+
+/* A key a screen asks for and no table carries is drawn as itself: the timed ingest's Off
+   read `settings.interval.off` on the General tab until 2026-09-22. Nothing asserted it,
+   because `strings.test.mjs` compares the two tables with each other and not with the
+   screens, so the guard is here: no label on this screen may look like a key. */
+test("no control on General is labelled with a catalogue key", () => {
+  fakePort();
+  const screen = open(screenFor(), "general");
+  for (const label of controls(screen).map((node) => node.textContent)) {
+    assert.equal(/^[a-z]+(\.[A-Za-z0-9]+)+$/.test(label), false, `${label} is a key, not a word`);
+  }
 });
 
 test("the four settings offer exactly the choices the shell will accept", () => {
@@ -502,6 +532,30 @@ async function repositoriesTab(overrides = {}) {
   return { screen, asked };
 }
 
+/** One row, found again from the tree each time: every press redraws the list, so a node
+ *  held across a press is a node that is no longer on the screen. */
+function rowFor(screen, text) {
+  return screen.tree.findAll("tr").find((node) => node.textContent.includes(text));
+}
+
+/** Tick the box on each of these rows, one press at a time, as a reader would. */
+function choose(screen, names) {
+  for (const name of names) rowFor(screen, name).find(".tick").fire("change");
+}
+
+/** The bar at the foot of the card, or nothing when no row is ticked. */
+function bar(screen) {
+  return screen.tree.find(".repo-actions");
+}
+
+function pressInBar(screen, label) {
+  const button = bar(screen)
+    .findAll("button")
+    .find((node) => node.textContent === label);
+  assert.ok(button, `the action bar offers no ${label}`);
+  button.fire("click");
+}
+
 test("the tab says recording is opt-in, and tells the two lists apart", async () => {
   const { screen } = await repositoriesTab();
   const text = visible(screen);
@@ -518,13 +572,12 @@ test("the tab says recording is opt-in, and tells the two lists apart", async ()
 
 test("every figure on a row is the engine's own", async () => {
   const { screen } = await repositoriesTab();
-  const row = screen.tree
-    .findAll("tr")
-    .find((node) => node.textContent.includes("/Users/someone/code/beatos"));
+  const row = rowFor(screen, "beatos");
   assert.ok(row, "the row is not on the tab");
   const text = row.textContent;
   assert.ok(text.includes("beatos"), "the name is missing");
-  assert.ok(text.includes("/Users/someone/code/beatos"), "the path is missing");
+  // The path is drawn from its end and carried whole on the title: see the layout tests.
+  assert.equal(row.find(".repo-path").getAttribute("title"), "/Users/someone/code/beatos");
   assert.ok(text.includes("65"), "the session count is missing");
   // The engine's dates, as the reader's language writes a day.
   assert.ok(text.includes("2026"), `the dates are missing: ${text}`);
@@ -569,7 +622,7 @@ test("changing a level asks the shell with the engine's own key, and redraws fro
     .find((node) => node.textContent.includes("offeros"));
   const button = row
     .findAll("button")
-    .find((node) => node.textContent === Str.t("settings.repositories.level.metadataOnly"));
+    .find((node) => node.textContent === Str.t("settings.repositories.level.metadataOnly.short"));
   assert.ok(button, "the row offers no metadata-only");
   button.fire("click");
   await settled();
@@ -586,7 +639,7 @@ test("changing a level asks the shell with the engine's own key, and redraws fro
     .findAll("button")
     .filter((node) => node.getAttribute("aria-checked") === "true")
     .map((node) => node.textContent);
-  assert.deepEqual(ticked, [Str.t("settings.repositories.level.metadataOnly")]);
+  assert.deepEqual(ticked, [Str.t("settings.repositories.level.metadataOnly.short")]);
 });
 
 test("every level the tab offers is one the shell will take", async () => {
@@ -595,7 +648,7 @@ test("every level the tab offers is one the shell will take", async () => {
   const labels = row.findAll("button").map((node) => node.textContent);
   assert.deepEqual(labels, [
     Str.t("settings.choice.off"),
-    Str.t("settings.repositories.level.metadataOnly"),
+    Str.t("settings.repositories.level.metadataOnly.short"),
     Str.t("settings.repositories.level.full"),
   ]);
   for (const label of labels) {
@@ -632,6 +685,284 @@ test("a change the engine refuses leaves the tab saying so rather than showing t
   await settled();
   assert.deepEqual(asked.levels, [["root:2c3f8baf", "full"]]);
   assert.ok(visible(screen).includes(Str.t("settings.repositories.unread")));
+});
+
+/* --- the row's own layout ----------------------------------------------------------------
+ *
+ * The founder's screenshot of this tab in Chinese: the "Sessions found" header on two
+ * lines with its number against the next column, both dates on two lines, and the segment
+ * labels wrapped out of their own track. The cause was an automatic table, and the fix is
+ * a declared one.
+ *
+ * **A DOM test cannot measure a pixel.** What it can do is guard the rule: that the
+ * columns are declared, that the class which stops a cell wrapping is on every cell that
+ * must not wrap, that the labels are short in both languages, and that a day is ten
+ * characters rather than eleven that break anywhere.
+ */
+
+test("the columns are declared, and nothing on a row but the path may wrap", async () => {
+  const { screen } = await repositoriesTab();
+  const table = screen.tree.find(".repo-table");
+  assert.deepEqual(
+    table.findAll("col").map((node) => node.className),
+    ["c-pick", "c-name", "c-sessions", "c-sources", "c-when", "c-when", "c-level"],
+    "the table is sizing its own columns again"
+  );
+
+  const cells = rowFor(screen, "beatos").findAll("td");
+  assert.equal(cells.length, 7);
+  assert.deepEqual(
+    cells.map((cell) => cell.className.split(/\s+/).includes("nowrap")),
+    [false, false, true, true, true, true, true],
+    "a figure, a day, a source or the control is allowed to wrap"
+  );
+
+  // The path is the one value that may lose characters, and it loses them from the front:
+  // every path on the machine starts `/Users/someone`, and the end is what tells two
+  // checkouts of one repository apart. All of it is on the title either way.
+  const where = rowFor(screen, "beatos").find(".repo-path");
+  assert.equal(where.textContent, "…/code/beatos");
+  assert.equal(where.getAttribute("title"), "/Users/someone/code/beatos");
+
+  // A path with nothing to drop is drawn whole.
+  const { screen: shallow } = await repositoriesTab({
+    scan: [{ ...SCAN[0], path: "/code/beatos" }],
+  });
+  const short = rowFor(shallow, "beatos").find(".repo-path");
+  assert.equal(short.textContent, "/code/beatos");
+});
+
+test("every header and every segment label is short in both languages", async () => {
+  const { screen } = await repositoriesTab();
+  assert.deepEqual(
+    screen.tree
+      .find(".repo-table")
+      .findAll("th")
+      .map((node) => node.textContent),
+    [
+      "", // the select-all box, whose name is on its aria-label and not over the column
+      Str.t("scope.project"),
+      Str.t("settings.repositories.column.sessions"),
+      Str.t("settings.repositories.column.sources"),
+      Str.t("settings.repositories.column.first"),
+      Str.t("settings.repositories.column.last"),
+      Str.t("settings.repositories.column.level"),
+    ]
+  );
+
+  for (const language of Str.LANGUAGES) {
+    for (const key of [
+      "settings.repositories.column.sessions",
+      "settings.repositories.column.sources",
+      "settings.repositories.column.first",
+      "settings.repositories.column.last",
+      "settings.repositories.column.level",
+    ]) {
+      const header = Str.tIn(language, key);
+      assert.ok(header.length <= 10, `${key} in ${language} is a header of ${header.length}`);
+    }
+    for (const key of [
+      "settings.choice.off",
+      "settings.repositories.level.metadataOnly.short",
+      "settings.repositories.level.full",
+    ]) {
+      const label = Str.tIn(language, key);
+      assert.ok(label.length <= 6, `${key} in ${language} is a segment of ${label.length}`);
+    }
+  }
+
+  // Shortened to fit a column, and still saying what it means to a pointer and a reader.
+  const short = rowFor(screen, "beatos")
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("settings.repositories.level.metadataOnly.short"));
+  assert.equal(short.getAttribute("title"), Str.t("settings.repositories.level.metadataOnly"));
+  assert.equal(short.getAttribute("aria-label"), Str.t("settings.repositories.level.metadataOnly"));
+});
+
+test("a day is the same ten characters in both languages", async () => {
+  const { screen } = await repositoriesTab();
+  const cells = rowFor(screen, "beatos").findAll("td");
+  assert.equal(cells[4].textContent, "2026-05-14");
+  assert.equal(cells[5].textContent, "2026-08-06");
+
+  Str.setLang("zh-Hans");
+  try {
+    const { screen: chinese } = await repositoriesTab();
+    const inChinese = rowFor(chinese, "beatos").findAll("td");
+    assert.equal(inChinese[4].textContent, "2026-05-14", "the Chinese day is not the compact one");
+  } finally {
+    Str.setLang("en");
+  }
+
+  // A row with no history has no day, and says so rather than printing a broken one.
+  const { screen: without } = await repositoriesTab({
+    scan: SCAN.map((row) => ({ ...row, firstAt: null, lastAt: "" })),
+  });
+  const empty = rowFor(without, "beatos").findAll("td");
+  assert.equal(empty[4].textContent, Str.t("common.dash"));
+  assert.equal(empty[5].textContent, Str.t("common.dash"));
+});
+
+/* --- the sources column --------------------------------------------------------------
+ *
+ * Recording is per repository and covers every agent that worked in it. The scan does not
+ * print the list yet, so the column draws the one source Prudence reads, through the one
+ * function that will read the engine's field the day it exists.
+ */
+
+test("a repository names the agents whose sessions it holds", async () => {
+  assert.deepEqual(sourcesOf({}), ["claude-code"], "a row with no field has no source");
+  assert.deepEqual(sourcesOf({ sources: [] }), ["claude-code"]);
+  assert.deepEqual(sourcesOf({ sources: ["claude-code", "codex"] }), ["claude-code", "codex"]);
+
+  const { screen } = await repositoriesTab();
+  assert.equal(rowFor(screen, "beatos").findAll("td")[3].textContent, "Claude Code");
+
+  // The engine's own field, the day it is written, with no change to this page.
+  const { screen: later } = await repositoriesTab({
+    scan: SCAN.map((row) =>
+      String(row.path).includes("beatos") ? { ...row, sources: ["claude-code", "codex"] } : { ...row }
+    ),
+  });
+  const said = rowFor(later, "beatos").findAll("td")[3].textContent;
+  assert.ok(said.includes("Claude Code") && said.includes("codex"), said);
+});
+
+/* --- many at once ------------------------------------------------------------------------
+ *
+ * The founder's fourth reading of the screenshot: with several repositories there is no
+ * way to act on many at once. So: a box per row, a select-all per group, and a bar that
+ * runs the same per-repository command the row's own control runs.
+ */
+
+test("nothing is offered until a row is ticked, and then the count is the app's own", async () => {
+  const { screen } = await repositoriesTab();
+  assert.equal(bar(screen), null, "the bar is on the screen with nothing selected");
+
+  choose(screen, ["beatos", "offeros"]);
+  assert.ok(bar(screen), "two rows are ticked and there is nothing to do with them");
+  assert.ok(
+    bar(screen).textContent.includes(Str.t("settings.repositories.batch.selected", "2")),
+    bar(screen).textContent
+  );
+
+  // Untick both and it goes away again.
+  choose(screen, ["beatos", "offeros"]);
+  assert.equal(bar(screen), null, "the bar stayed after the last row was unticked");
+});
+
+test("select-all takes the group it is in and not the other one", async () => {
+  const { screen } = await repositoriesTab();
+  const blocks = screen.tree.findAll(".repo-table");
+  // The head's own box, which is the first tick in the block.
+  blocks[1].find(".tick").fire("change");
+  assert.ok(
+    bar(screen).textContent.includes(Str.t("settings.repositories.batch.selected", "2")),
+    "the found-not-recorded group has two rows and select-all did not take both"
+  );
+  assert.ok(rowFor(screen, "offeros").find(".tick").checked);
+  assert.equal(rowFor(screen, "beatos").find(".tick").checked, false, "the other group was taken");
+});
+
+test("a batch runs the command once per repository, in order, and re-reads the list once", async () => {
+  const { screen, asked } = await repositoriesTab();
+  const before = asked.scans;
+  choose(screen, ["beatos", "averatec-career", "offeros"]);
+  pressInBar(screen, Str.t("settings.repositories.level.metadataOnly.short"));
+  await settled();
+
+  assert.deepEqual(asked.levels, [
+    ["root:df32e8a9", "metadata-only"],
+    ["root:742d2192", "metadata-only"],
+    ["root:2c3f8baf", "metadata-only"],
+  ]);
+  assert.equal(asked.scans - before, 1, "the list was read once per command");
+
+  // Drawn from the engine's answer: all three are in the recorded block at that level.
+  const recorded = screen.tree.findAll(".repo-table")[0];
+  for (const name of ["beatos", "averatec-career", "offeros"]) {
+    assert.ok(recorded.textContent.includes(name), `${name} is not in the recorded block`);
+  }
+  const ticked = rowFor(screen, "offeros")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(ticked, [Str.t("settings.repositories.level.metadataOnly.short")]);
+});
+
+test("a batch says which one it is on while it runs", async () => {
+  const { screen, asked } = await repositoriesTab();
+  choose(screen, ["beatos", "averatec-career", "offeros"]);
+
+  // A command that does not answer yet, which is the only way to look at a run mid-way.
+  const real = SETTINGS.port.repositoryLevel;
+  let release = null;
+  SETTINGS.port.repositoryLevel = (key, level) => {
+    asked.levels.push([key, level]);
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  };
+
+  pressInBar(screen, Str.t("settings.repositories.level.full"));
+  await settled();
+  assert.ok(
+    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "1", "3")),
+    bar(screen).textContent
+  );
+  // And nothing may be pressed twice while it runs.
+  assert.ok(rowFor(screen, "beatos").findAll("button").every((node) => node.disabled));
+
+  release();
+  await settled();
+  assert.ok(
+    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "2", "3")),
+    bar(screen).textContent
+  );
+
+  SETTINGS.port.repositoryLevel = real;
+  release();
+  await settled();
+  assert.equal(
+    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "3", "3")),
+    false,
+    "the run finished and the counter is still on the screen"
+  );
+});
+
+test("a refusal stops the batch where it is, in the engine's own words", async () => {
+  const { screen, asked } = await repositoriesTab({ refuseCall: 2 });
+  const before = asked.scans;
+  choose(screen, ["beatos", "averatec-career", "offeros"]);
+  pressInBar(screen, Str.t("settings.repositories.level.full"));
+  await settled();
+
+  // Two commands, not three: the third was never sent.
+  assert.deepEqual(asked.levels, [
+    ["root:df32e8a9", "full"],
+    ["root:742d2192", "full"],
+  ]);
+  assert.equal(asked.scans - before, 1, "the list was not re-read after the refusal");
+
+  const said = bar(screen).textContent;
+  assert.ok(
+    said.includes(Str.t("settings.repositories.batch.failed", "averatec-career")),
+    `the sentence does not say which repository failed: ${said}`
+  );
+  assert.ok(said.includes(REFUSAL), `the engine's own words are missing: ${said}`);
+
+  // The one that changed before the refusal stays changed, which is what the sentence
+  // promises, and it is the engine's answer that says so.
+  const ticked = rowFor(screen, "beatos")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(ticked, [Str.t("settings.repositories.level.full")]);
+  // And the one after it did not move.
+  assert.ok(
+    screen.tree.findAll(".repo-table")[1].textContent.includes("offeros"),
+    "a repository the batch never reached was drawn as changed"
+  );
 });
 
 /* --- About ----------------------------------------------------------------------------- */

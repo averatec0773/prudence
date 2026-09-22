@@ -555,6 +555,56 @@ is not checked, so a token could be declared there.
 - **Removed when:** the test takes a list of stylesheets rather than one. Batch 5, which
   is the next batch to touch `window.css`.
 
+### The Sources column draws a constant
+
+`ui/settings.js`, `sourcesOf`. Recording is per repository and covers every AI coding
+agent that worked in it, so the repository is where the list of agents belongs. The
+engine's `init --scan --json` does not print one yet, so the column answers with the one
+source Prudence reads today.
+
+- **Assumes:** every session found in a repository was written by Claude Code, which is
+  true of every session on the founder's machine and of the only hook the plugin installs.
+- **When it breaks:** a repository whose history came from a second agent is still labelled
+  Claude Code, which is a claim the app cannot check.
+- **Removed when:** the scan prints `sources`. `repositories.rs` already decodes the field
+  and `sourcesOf` already prefers it, so that day is an engine change and nothing else.
+
+### An agent's display name is a constant, not a catalogue key
+
+`ui/settings.js`, `SOURCE_NAMES`. "Claude Code" is the same in both languages, and
+`test/strings.test.mjs` refuses a key whose two values are identical, for the same reason
+`LANGUAGE_NAMES` is a constant here.
+
+- **Assumes:** no agent Prudence reads renames itself per language.
+- **When it breaks:** a key the app has not learned is drawn as the engine wrote it, which
+  is a lower-case identifier on a screen of names.
+- **Removed when:** a source needs a name that differs between the two languages, which is
+  the point at which it is a translation and belongs in the tables.
+
+### A compact day is composed in `ui/settings.js`
+
+`scanDay`. The Repositories rows want `2026-05-14` in both languages, and `text/fmt.js`
+has `day` (the reader's own order) and `shortDay` (no year) and nothing in between.
+
+- **Assumes:** no second screen wants a compact day before this moves.
+- **When it breaks:** a second screen writes its own and the app has two of them, which is
+  exactly what the page contract says must not happen.
+- **Removed when:** the batch that owns `text/fmt.js` lands; it moves there beside `day`,
+  and `test/fmt.test.mjs` takes the case that is in `test/settings.test.mjs` today.
+
+### A batch is one run of the engine per repository
+
+`ui/settings.js`, `runBatch`. `prudence init --enable` takes one repository, so setting
+twelve of them is twelve subprocesses, sequentially because they all write `config.toml`.
+
+- **Assumes:** a run is fast enough that a counter is enough of a report, which held for
+  three at a time on the founder's machine.
+- **When it breaks:** a selection of twenty is twenty process launches, and a refusal
+  half way through leaves the list half changed. That is why the bar counts, why the
+  sentence says what stayed changed, and why the list is re-read from the engine rather
+  than from the clicks.
+- **Removed when:** `prudence init --enable` takes more than one repository.
+
 ## Working on the founder's machine
 
 Two rules that exist because each was broken once.
@@ -614,7 +664,8 @@ Grown by each batch. Batch 1 adds the window shell only.
 | A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
 | `shareBars` | Shares, as horizontal bars on one axis: what each row is, how far it reaches, and the figure printed beside it. Drawn by the Review screen and the Observations screen, which had one each until this sheet | `src/design/charts.js` |
 | `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel and on the activity strip | `src/design/components.js` |
-| The repositories list | Which repositories the engine found and which of them it records, split into the two, with a capture control per row. Content, so it is opaque | `src/ui/settings.js`, `ui/settings.css` |
+| The repositories list | Which repositories the engine found and which of them it records, split into the two, with a level control per row. Content, so it is opaque. **Every column is declared**: `table-layout: fixed` and a `<colgroup>`, because an automatic table sized from its contents wrapped the count, both days and the segment labels at Chinese widths. The path is the only value allowed an ellipsis | `src/ui/settings.js`, `ui/settings.css` |
+| The batch bar | What to do with the ticked rows: how many they are, the three levels, and what the engine refused. At the foot of the card, sticky, and only while something is ticked. **Control layer**, so it takes the frost while the list above it stays opaque | same file |
 
 **The engine block is placed, not owned, by a screen.** The Settings screen puts it where
 it goes and the block says what is in it, so the two can be written at the same time. It

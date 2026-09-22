@@ -58,6 +58,15 @@ pub struct Repository {
     /// still on record and still has sessions, and the tab says so.
     #[serde(default)]
     pub exists: bool,
+    /// Which AI coding agents wrote the sessions found in this repository.
+    ///
+    /// The engine does not print this field yet, so today it decodes empty and the page
+    /// draws the one source Prudence reads. It is declared here rather than left out so
+    /// that the day the scan carries it, it reaches the page without a change on either
+    /// side: recording is per repository and covers every agent that worked in it, so the
+    /// repository is where the list of agents belongs.
+    #[serde(default)]
+    pub sources: Vec<String>,
 }
 
 /// `prudence init --scan --json`, decoded.
@@ -127,6 +136,23 @@ mod tests {
         assert_eq!(found[2].path, None);
         assert_eq!(found[2].sessions, 115);
         assert!(!found[2].exists);
+    }
+
+    /// Today's engine prints no `sources`, and the scan still decodes: the field is empty
+    /// and the page draws its own constant. An engine that grows the field is decoded
+    /// here too, which is the whole reason it is declared before it exists.
+    #[test]
+    fn a_scan_without_sources_decodes_and_one_with_them_keeps_them() {
+        let found = parse(PRINTED).expect("the scan decodes");
+        assert!(found[0].sources.is_empty());
+
+        let later = parse(
+            r#"[{"path": "/Users/someone/code/beatos", "repo_key": "root:df32e8a9",
+                 "sessions": 65, "enabled": true, "level": "full", "exists": true,
+                 "sources": ["claude-code", "codex"]}]"#,
+        )
+        .expect("a scan that carries sources decodes");
+        assert_eq!(later[0].sources, vec!["claude-code", "codex"]);
     }
 
     #[test]
