@@ -371,16 +371,16 @@ DESKTOP_ONLY = {
     },
     "settings.recorded.total": {"en": "%1$@ across %2$@.", "zh-Hans": "共 %1$@，来自 %2$@。"},
     "settings.recorded.readOnly": {
-        "en": "This screen reads the store and changes nothing. A repository is enabled, and its level set, with `prudence enable <repository> --level full|metadata-only`; `prudence forget` removes what was already recorded, and `prudence status` prints where the configuration file is.",
-        "zh-Hans": "这个页面只读取存储，不改动任何设置。启用一个仓库并设定它的级别要用 `prudence enable <repository> --level full|metadata-only`；`prudence forget` 会删掉已经记录下来的内容，`prudence status` 会打印配置文件的位置。",
+        "en": "This screen reads the store and changes nothing. A repository is enabled, and its level set, with `prudence init --enable <repository> --level full|metadata-only`; `prudence forget --project <repository>` removes what was already recorded, and `prudence status` prints where the configuration file is.",
+        "zh-Hans": "这个页面只读取存储，不改动任何设置。启用一个仓库并设定它的级别要用 `prudence init --enable <repository> --level full|metadata-only`；`prudence forget --project <repository>` 会删掉已经记录下来的内容，`prudence status` 会打印配置文件的位置。",
     },
     "settings.recorded.empty.title": {
         "en": "Nothing is recorded yet",
         "zh-Hans": "还没有记录任何东西",
     },
     "settings.recorded.empty.detail": {
-        "en": "No session is on record. Nothing is recorded until a repository is enabled: `prudence init` walks you through it, and `prudence enable <repository> --level full` enables one directly.",
-        "zh-Hans": "存储里还没有任何会话。在启用一个仓库之前不会记录任何东西：`prudence init` 会带你走一遍，`prudence enable <repository> --level full` 直接启用一个。",
+        "en": "No session is on record. Nothing is recorded until a repository is enabled: `prudence init` walks you through it, and `prudence init --enable <repository> --level full` enables one directly.",
+        "zh-Hans": "存储里还没有任何会话。在启用一个仓库之前不会记录任何东西：`prudence init` 会带你走一遍，`prudence init --enable <repository> --level full` 直接启用一个。",
     },
     "settings.column.level": {"en": "Capture level", "zh-Hans": "记录级别"},
     "settings.column.sessions": {"en": "Sessions recorded", "zh-Hans": "已记录的会话"},
@@ -397,28 +397,45 @@ DESKTOP_ONLY = {
         "en": "What the record holds and what it never holds, at any capture level.",
         "zh-Hans": "记录里有什么、以及在任何记录级别下都不会有什么。",
     },
+    # **Three of these sentences were false.** A review checked them against the engine
+    # rather than against the README they came from, which is how they were caught. They
+    # are a promise about the reader's own data, on the one screen somebody comes to in
+    # order to find out what is kept about them, so each now says what the code does, and
+    # "what is derived" is kept apart from "what is kept".
+    #
+    # 1. The archive is not filtered by capture level at all. `archive.collect_targets`
+    #    (`store/archive.py`) takes every file of every **enabled** repository and never
+    #    looks at the level, so a metadata-only repository's transcripts are archived
+    #    whole. "Shape and counts only" is true of the derived tables and false of the
+    #    record.
+    # 2. At `full` capture the derived tables hold the command text, the edited file paths
+    #    and the working directory. `derived.py`'s own docstring says metadata-only stores
+    #    none of those **additionally**, which says plainly that full capture stores them.
+    # 3. `review --explain` is not the only thing that reaches a model. `prudence explain`
+    #    makes the same call, `prudence ask` calls one **by default** (`--no-model` is the
+    #    opt-out), and `ask --with-content` is, in `cli/ask.py`'s own words, "the only way
+    #    transcript text reaches a model".
     "settings.never.archive": {
-        "en": "Your sessions' own files are archived unchanged, in a local store only your account can read.",
-        "zh-Hans": "你的会话文件会原样归档在本地存储里，只有你自己的账户能读。",
+        "en": "Your sessions' own files are archived unchanged, in a local store only your account can read. That happens at every capture level: the level decides what is derived from them, not what is kept.",
+        "zh-Hans": "你的会话文件会原样归档在本地存储里，只有你自己的账户能读。任何记录级别下都是这样：级别决定从这些文件里派生出什么，而不是决定保留什么。",
     },
     "settings.never.derived": {
-        "en": "The tables every figure in this app is computed from hold counts, classes and keyed line hashes. They never hold message text, at any capture level.",
-        "zh-Hans": "这个 App 里的每个数字都算自派生表，那些表里只有计数、分类和加密的行哈希，任何记录级别下都不会有消息正文。",
+        "en": "The tables every figure in this app is computed from never hold message text, at any capture level. At full capture they do hold the commands that were run, the paths of the files that were edited, and the working directory.",
+        "zh-Hans": "这个 App 里的每个数字都算自派生表；任何记录级别下，这些表里都不会有消息正文。但在 full 级别下，它们确实保存了执行过的命令、被修改文件的路径，以及工作目录。",
     },
     "settings.never.metadataOnly": {
-        "en": "A repository at metadata-only keeps no file paths, no working directory, no command text and no line hashes: shape and counts only.",
-        "zh-Hans": "级别为 metadata-only 的仓库不保留文件路径、工作目录、命令文本和行哈希，只有形状和计数。",
+        "en": "A repository at metadata-only derives less: no file paths, no working directory, no command text and no line hashes, so those tables hold shape and counts only. Its transcripts are still archived in full.",
+        "zh-Hans": "级别为 metadata-only 的仓库派生得更少：不保留文件路径、工作目录、命令文本和行哈希，所以那些表里只有形状和计数。但它的会话原文仍然会被完整归档。",
     },
     "settings.never.upload": {
-        "en": "Nothing is uploaded anywhere, and an observation compares you only with yourself.",
-        "zh-Hans": "没有任何内容会被上传，观察只拿你和你自己比较。",
+        "en": "This app uploads nothing. It reads the store and runs the engine on your own machine, and an observation compares you only with yourself.",
+        "zh-Hans": "这个 App 不上传任何内容。它只读取本机的存储、在本机运行引擎，观察也只拿你和你自己比较。",
     },
-    # The one exception, said out loud. `reviews/explain.py` sends a compressed form of a
-    # stored review and its numbers inventory, never any text, and only when asked for.
-    # A screen that printed "nothing is uploaded" and stopped there would be wrong.
+    # What does leave the machine, completely. A screen that printed "nothing is uploaded"
+    # and stopped there would be wrong, and so was one that named a single command.
     "settings.never.model": {
-        "en": "The one exception is `prudence review --explain`, which you have to ask for: it sends a review's own figures to the model named in your configuration, and no session text.",
-        "zh-Hans": "唯一的例外是需要你主动要求的 `prudence review --explain`：它会把一次回顾自己的数字发给你配置里指定的模型，不会发送任何会话文本。",
+        "en": "Three commands can send something to the model named in your configuration, and each has to be asked for: `prudence review --explain` and `prudence explain` send a review's own figures and no session text; `prudence ask` sends the evidence it retrieved, and with `--with-content` it also sends short excerpts of your transcripts. Pressing a button in this app never calls a model.",
+        "zh-Hans": "有三个命令会把内容发给你配置里指定的模型，每一个都需要你主动要求：`prudence review --explain` 和 `prudence explain` 发送的是一次回顾自己的数字，不含任何会话文本；`prudence ask` 发送的是它检索到的证据，加上 `--with-content` 时还会发送你会话原文的简短摘录。在这个 App 里点按钮永远不会调用模型。",
     },
     "settings.never.employer": {
         "en": "If you enable Prudence on a work repository, check your employer's policy first.",
