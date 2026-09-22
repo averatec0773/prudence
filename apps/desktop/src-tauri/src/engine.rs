@@ -973,30 +973,36 @@ impl Drop for DialogGuard {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     /// A filesystem that is a list of paths, so the whole order can be asserted on a
     /// machine that has no `prudence` anywhere.
     struct Fake(Vec<String>);
 
+    #[cfg(unix)]
     impl FileProbe for Fake {
         fn is_executable(&self, path: &Path) -> bool {
             self.0.iter().any(|have| Path::new(have) == path)
         }
     }
 
+    #[cfg(unix)]
     struct NoShell;
 
+    #[cfg(unix)]
     impl LoginShell for NoShell {
         fn locate(&self, _timeout: Duration) -> Option<PathBuf> {
             None
         }
     }
 
+    #[cfg(unix)]
     /// A shell that answers once, and counts how many times it was asked.
     struct CountingShell {
         answer: Option<PathBuf>,
         asked: Arc<Mutex<u32>>,
     }
 
+    #[cfg(unix)]
     impl LoginShell for CountingShell {
         fn locate(&self, _timeout: Duration) -> Option<PathBuf> {
             *self.asked.lock().unwrap() += 1;
@@ -1004,6 +1010,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn locator(present: &[&str], environment: &[(&str, &str)]) -> Locator {
         Locator::new(
             Box::new(Fake(present.iter().map(|p| p.to_string()).collect())),
@@ -1016,6 +1023,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_search_path_is_uvs_order_then_homebrew() {
         let found = locator(
@@ -1045,6 +1053,7 @@ mod tests {
         assert_eq!(separate.first(), Some(&PathBuf::from("/elsewhere/bin")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_empty_variable_is_not_a_directory() {
         // An exported-but-empty `UV_TOOL_BIN_DIR` would otherwise probe `/prudence`.
@@ -1055,6 +1064,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_directory_variable_expands_a_leading_tilde() {
         let found = locator(&[], &[("UV_TOOL_BIN_DIR", "~/tools/bin")]).search_path();
@@ -1064,11 +1074,13 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn nothing_anywhere_is_nothing_found() {
         assert_eq!(locator(&[], &[]).locate_without_shell(None), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_home_local_bin_is_where_uv_tool_install_puts_it() {
         let found = locator(&["/Users/someone/.local/bin/prudence"], &[])
@@ -1087,6 +1099,7 @@ mod tests {
     }
 
     /// The order, not just the membership: a machine with both answers with uv's.
+    #[cfg(unix)]
     #[test]
     fn uvs_directory_wins_over_homebrew() {
         let found = locator(
@@ -1098,6 +1111,7 @@ mod tests {
         assert_eq!(found.path, PathBuf::from("/uv/bin/prudence"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn homebrew_on_apple_silicon_comes_before_the_intel_prefix() {
         let found = locator(
@@ -1109,6 +1123,7 @@ mod tests {
         assert_eq!(found.path, PathBuf::from("/opt/homebrew/bin/prudence"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_chosen_path_wins_over_every_directory() {
         let found = locator(&["/elsewhere/prudence", "/opt/homebrew/bin/prudence"], &[])
@@ -1118,6 +1133,7 @@ mod tests {
         assert_eq!(found.source, Source::Settings);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_chosen_path_expands_a_leading_tilde() {
         let found = locator(&["/Users/someone/tools/prudence"], &[])
@@ -1128,6 +1144,7 @@ mod tests {
 
     /// Verified before it is trusted: a remembered path that is no longer executable is
     /// not returned, and the search carries on rather than reporting nothing.
+    #[cfg(unix)]
     #[test]
     fn a_chosen_path_that_is_gone_falls_back_to_the_search() {
         let found = locator(&["/opt/homebrew/bin/prudence"], &[])
@@ -1136,6 +1153,7 @@ mod tests {
         assert_eq!(found.path, PathBuf::from("/opt/homebrew/bin/prudence"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_blank_chosen_path_is_no_choice_at_all() {
         let found = locator(&["/opt/homebrew/bin/prudence"], &[])
@@ -1149,6 +1167,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_login_shell_is_the_last_resort_and_its_answer_is_probed() {
         let asked = Arc::new(Mutex::new(0));
@@ -1173,6 +1192,7 @@ mod tests {
 
     /// A shell that names a path which is not executable is not an answer, and asking it
     /// again would not change that.
+    #[cfg(unix)]
     #[test]
     fn a_shell_answer_that_is_not_executable_is_not_found() {
         let asked = Arc::new(Mutex::new(0));
@@ -1190,6 +1210,7 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), 1, "a nil answer is cached too");
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_shell_is_not_asked_when_a_directory_already_answered() {
         let asked = Arc::new(Mutex::new(0));
@@ -1206,6 +1227,7 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_shells_answer_is_the_first_absolute_line() {
         assert_eq!(
@@ -1418,6 +1440,7 @@ mod tests {
 
     /* --- the tilde, shared with store.rs -------------------------------------------- */
 
+    #[cfg(unix)]
     #[test]
     fn only_a_leading_tilde_is_a_home_directory() {
         let home = Path::new("/Users/someone");
@@ -1438,6 +1461,7 @@ mod tests {
 
     /* --- the spawn path, against an engine a test owns ------------------------------ */
 
+    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("prudence-engine-{}-{name}", std::process::id()));
@@ -1445,6 +1469,7 @@ mod tests {
         dir
     }
 
+    #[cfg(unix)]
     /// A `prudence` that is a shell script.
     ///
     /// The spawn path, the environment and the JSON decoding are exercised without the
@@ -1468,6 +1493,7 @@ mod tests {
     /// forever, and `Command::output()` buffers to EOF with no limit, so choosing it grew
     /// the app until the system killed it. The cap keeps what is useful and the deadline
     /// ends the probe.
+    #[cfg(unix)]
     #[test]
     fn a_child_that_never_stops_printing_is_capped_and_then_killed() {
         let executable = fake_engine(
@@ -1491,6 +1517,7 @@ mod tests {
     }
 
     /// Output past the cap is dropped, and the child still finishes on its own.
+    #[cfg(unix)]
     #[test]
     fn output_past_the_cap_is_dropped_rather_than_kept() {
         // Five megabytes against a four megabyte cap.
@@ -1512,6 +1539,7 @@ mod tests {
     /// `locate` gates on the exec bit alone. A remembered path that is executable and is
     /// not the engine was spawned on a click, because only `status` ever asked
     /// `--version` and the Review screen's button does not call `status`.
+    #[cfg(unix)]
     #[test]
     fn a_remembered_file_that_is_not_the_engine_is_refused_before_it_is_run() {
         // It answers `--version` with a version, and it is not the engine: the check is
@@ -1597,6 +1625,7 @@ mod tests {
         assert_ne!(group, ours, "the child shares this process's group");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_run_reaches_the_engine_with_its_arguments_and_the_store_it_was_pointed_at() {
         let executable = fake_engine(
@@ -1627,6 +1656,7 @@ mod tests {
 
     /// A non-zero exit whose stdout is still JSON is an answer, not an error: the reason
     /// the caller wants is in that body.
+    #[cfg(unix)]
     #[test]
     fn a_json_body_is_an_answer_even_on_a_non_zero_exit() {
         let executable = fake_engine(
@@ -1643,6 +1673,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_failure_carries_the_engines_own_words_from_its_standard_error() {
         let executable = fake_engine("angry", "echo 'No repository is enabled.' >&2; exit 2");
@@ -1659,6 +1690,7 @@ mod tests {
     }
 
     /// Found means verified: the picker and the search both go through this.
+    #[cfg(unix)]
     #[test]
     fn a_file_that_cannot_say_what_version_it_is_is_not_the_engine() {
         let engine = fake_engine("real", "echo 'prudence, version 0.4.0'");

@@ -27,20 +27,26 @@ installDom();
 /* Every command the engine registers, read from its source rather than listed here.
  *
  * Two assertions used to check that the screen quoted "prudence enable" and both passed
- * while that command did not exist: enabling is `prudence init --enable`. A test that
- * asks whether a screen mentions a command name cannot tell a real one from an invented
- * one, so this asks the engine. The screen's whole justification is "no control here,
- * here is the command instead", which is worth nothing if the command is wrong.
+ * while that command did not exist: enabling is `prudence init --enable`. A test that asks
+ * whether a screen mentions a command name cannot tell a real one from an invented one,
+ * so this asks the engine.
+ *
+ * Read on first use rather than at module load, because `app` is defined below this.
  */
-const ENGINE_COMMANDS = (() => {
-  const source = readFileSync(
-    "/Users/averatec/CODING/github/prudence/src/prudence/cli/__init__.py",
-    "utf8"
-  );
-  return new Set([...source.matchAll(/add_command\((\w+)/g)].map((m) => m[1]));
-})();
+let engineCommands = null;
 
-/** Every `prudence <word>` the screen quotes, with its first word checked. */
+function engineRegisters(command) {
+  if (engineCommands === null) {
+    // Relative to this repository, not to one machine: the first version hardcoded an
+    // absolute path under my home directory, which exists nowhere else.
+    const source = readFileSync(join(app, "../../src/prudence/cli/__init__.py"), "utf8");
+    engineCommands = new Set([...source.matchAll(/add_command\((\w+)/g)].map((m) => m[1]));
+    assert.ok(engineCommands.size > 5, "the engine's command registry could not be read");
+  }
+  return engineCommands.has(command);
+}
+
+/** Every `prudence <word>` the screen quotes. */
 function quotedCommands(text) {
   return [...text.matchAll(/`prudence ([a-z-]+)/g)].map((m) => m[1]);
 }
@@ -246,7 +252,7 @@ test("the screen draws no control and says where a setting is changed instead", 
   assert.ok(quoted.length > 0, "the screen names no command at all");
   for (const command of quoted) {
     assert.ok(
-      ENGINE_COMMANDS.has(command),
+      engineRegisters(command),
       `the screen tells the reader to run \`prudence ${command}\`, which the engine does not register`
     );
   }
@@ -360,7 +366,7 @@ test("the whole screen draws in Chinese with no English prose left in it", () =>
   // translated, and a reader has to be able to type them.
   assert.ok(text.includes("prudence init --enable"), "the command was translated");
   for (const command of quotedCommands(text)) {
-    assert.ok(ENGINE_COMMANDS.has(command), `the Chinese quotes a command that does not exist: ${command}`);
+    assert.ok(engineRegisters(command), `the Chinese quotes a command that does not exist: ${command}`);
   }
   assert.ok(text.includes("PRUDENCE_DATA_DIR"), "the variable was translated");
   assert.ok(text.includes(INFO.database), "the path was translated");
