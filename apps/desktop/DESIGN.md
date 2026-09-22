@@ -110,9 +110,10 @@ This is load bearing, not tidiness. If the webview under this frontend ever has 
 the shell and that one file are rewritten and everything else moves unchanged. That is the
 way out if Tauri fails on a later macOS, and it stays open only while the rule holds.
 
-The surface is nine commands: read the store, ask the shell about itself, log a line,
+The surface is thirteen commands: read the store, ask the shell about itself, log a line,
 fit the panel to its content, hide the panel, open and close the window, remember the
-section, quit. `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts
+section, quit, and the four the engine needs (where it is, run an action, choose the
+executable, forget the choice). `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts
 that the names and the **argument names** match, because renaming a Rust parameter breaks
 the page at runtime with no error on either side.
 
@@ -321,6 +322,49 @@ unit is chosen from a table of fixed second counts.
 - **Removed when:** something needs a correct long-range relative time, at which point
   the unit is chosen with `Intl.DateTimeFormat`'s calendar arithmetic instead.
 
+### The login-shell probe is killed after ten seconds
+
+`engine.rs`, `SHELL_TIMEOUT`. The last step of finding `prudence` is
+`zsh -ilc 'command -v prudence'`, because an app launched from Finder inherits
+`launchd`'s environment and never reads `.zshrc`. A shell start-up is arbitrary code: an
+rc file that waits on a network share would hang the answer for as long as the share
+takes, so the child is killed at the deadline and the answer becomes "not found".
+
+- **Assumes:** a login shell that is going to answer answers within ten seconds.
+- **When it breaks:** a machine whose shell start-up is slower than that reports "engine
+  not found" although the engine is installed. The way out is on screen: the Choose
+  button sets the path directly and the search never has to run again. The shell log
+  carries the line that says the probe was killed.
+- **Removed when:** something cheaper than a shell can be asked. There is nothing today:
+  the PATH that has `prudence` on it exists only inside that shell.
+
+### A run has no deadline at all
+
+`engine.rs`, `Engine::run`. An ingest over a large archive takes minutes and a review
+takes seconds, and any number chosen as a limit would be a guess that fails on the
+founder's 830 MB store or on somebody's laptop. So the app waits for the process to exit,
+which is the actual event.
+
+- **Assumes:** `prudence` always exits.
+- **When it breaks:** the strip reads "Ingesting..." for as long as the app is open and
+  both actions stay refused, because the shell holds the one-run-at-a-time flag. Nothing
+  is lost and nothing is wrong with the store; a relaunch clears it.
+- **Removed when:** the run can be cancelled from the strip, which is the honest fix and
+  is a design question (what a half-finished ingest leaves behind) rather than a timeout.
+
+### The engine's own error text is English on a Chinese interface
+
+`engine.rs` sends a *word* for each kind of failure, which the page turns into a sentence
+in the reader's language, and under it the engine's own message as it came. That message
+is English, because the CLI is. `store.rs` already does the same with its errors and
+`boot.js` prints them as they come.
+
+- **Assumes:** a reader would rather have the engine's exact words than a paraphrase.
+- **When it breaks:** a Chinese reader sees one English line under a Chinese one.
+- **Removed when:** the engine can be asked for a localised message, which is an engine
+  decision. Translating it here would make the app and the CLI say different things about
+  the same failure, which is worse.
+
 ### `window.css` is not covered by the no-tokens test
 
 `test/tokens.test.mjs` asserts that `app.css` declares no custom property; `window.css`
@@ -383,6 +427,19 @@ Grown by each batch. Batch 1 adds the window shell only.
 | The window shell | The system's titlebar overlaid, a sidebar with four entries, the heading and the screen's controls on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
 | `miniStack` | One row of a stacked bar: the composition of a whole, in a single line | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
+| The engine block | Where `prudence` is, its version against the store's, the two actions, the picker | `src/ui/engine-section.js`, `ui/engine-section.css` |
+| The activity strip | One report at the foot of the window: what a run is doing, and how it ended | same file |
+
+**The engine block is placed, not owned, by a screen.** The Settings screen puts it where
+it goes and the block says what is in it, so the two can be written at the same time. It
+is also the one thing under `src/ui/` that talks to `bridge.js`: it is not a screen, and a
+screen may not, which is why `ui/review.js` exports a `REVIEW_NOW` seam and the wiring in
+`window.html` fills it in rather than the screen calling the shell itself.
+
+**The strip is on the page, not in a screen.** A run outlives the screen it was started
+on: the Review screen is rebuilt whenever the store changes, and the store changing is
+exactly what a successful run causes. So it is appended to the body once, by the same
+wiring, and it is the only place a run reports whichever button began it.
 
 **There is one chart.** The mockups' module had seven builders and 598 lines; six drew
 screens that do not exist yet and none had been read to a product standard. They are not
@@ -408,5 +465,5 @@ is what every screenshot run uses.
 |---|---|
 | Cmd-1 / 2 / 3 / 4 | Overview, Review, Observations, Settings |
 | Cmd-, | Settings |
-| Cmd-R | Review now (batch 7; it says so until then) |
+| Cmd-R | Goes to the Review screen. Its button now runs the engine; the shortcut still only navigates |
 | Esc | Closes the panel |
