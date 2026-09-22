@@ -154,21 +154,34 @@ impl Memory {
         }
     }
 
-    pub fn save(&self) {
+    /// Write what is remembered, and say whether it was written.
+    ///
+    /// It used to end in `let _ = std::fs::write(...)`, so a failed write was invisible.
+    /// That is fine for the window's geometry, where a lost frame is a default frame next
+    /// launch, and not fine for the engine path: `engine_choose` tells the page the file
+    /// was taken and the user finds it forgotten with nobody told why. The decision of
+    /// whether to care belongs at the call site, so this reports and the callers that do
+    /// not care say so where a reader can see them.
+    ///
+    /// Not atomic: a crash part-way through loses the whole file rather than corrupting
+    /// one field. Registered in `DESIGN.md` under the window's memory.
+    pub fn save(&self) -> Result<(), String> {
         if !self.enabled {
-            return;
+            return Ok(());
         }
         let Some(path) = &self.path else {
-            return;
+            return Ok(());
         };
         let state = self.state.lock().unwrap().clone();
-        let Ok(text) = serde_json::to_string_pretty(&state) else {
-            return;
-        };
+        let text = serde_json::to_string_pretty(&state)
+            .map_err(|error| format!("what the window remembers could not be written: {error}"))?;
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!("the configuration directory could not be made: {error}")
+            })?;
         }
-        let _ = std::fs::write(path, text);
+        std::fs::write(path, text)
+            .map_err(|error| format!("{} could not be written: {error}", path.display()))
     }
 }
 

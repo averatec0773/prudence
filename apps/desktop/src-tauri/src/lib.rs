@@ -33,6 +33,21 @@ use ui_state::Memory;
 
 /// The two windows. The frontend never names either; `panel.rs` and `window.rs` do.
 pub const PANEL: &str = "panel";
+// Why every command below that waits is `spawn_blocking` and not `command(async)`.
+//
+// `#[tauri::command(async)]` over a synchronous body spawns a tokio task on the shared
+// multi-thread runtime. It is **not** `spawn_blocking`, so a body that blocks occupies a
+// worker for as long as it blocks: an ingest for minutes, a `--version` for up to twenty
+// seconds, the picker for as long as it is open. `store_read` draws from the same pool,
+// so on a machine with few cores an ingest plus one redraw can exhaust it and the page's
+// read never resolves. The window looks frozen and nothing is wrong and nothing is
+// logged, which is the worst shape a bug can have.
+//
+// A borrowed `State` cannot cross into another thread, so each of these copies what the
+// work needs first. That copy is the reason the pattern looks repetitive rather than
+// factored: the alternative is a helper that takes a closure over `Shell`, which would
+// have to hold the lock across the blocking call.
+
 pub const MAIN: &str = "main";
 /// The screenshot backdrop. Built only by the harness; see `harness.rs`.
 #[cfg(feature = "harness")]
@@ -73,9 +88,24 @@ pub struct ShellInfo {
 /// main thread, and this one issues seven selects. They take about 60 ms on the founder's
 /// 815 MB store today, which is fine, and the failure mode if that ever changes is a
 /// frozen window rather than a slow one.
-#[tauri::command(async)]
-fn store_read(shell: State<'_, Shell>) -> Result<Value, String> {
-    store::read(&shell.database).map_err(|error| error.to_string())
+/// Run something that waits, on the pool meant for waiting, and say so if it cannot run.
+///
+/// The error is not a user-visible sentence: a task that fails to schedule means the
+/// runtime is going away, which the page can only report as an unexpected failure.
+async fn scheduled<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("the shell could not schedule the work: {error}"))
+}
+
+#[tauri::command]
+async fn store_read(shell: State<'_, Shell>) -> Result<Value, String> {
+    let database = shell.database.clone();
+    scheduled(move || store::read(&database).map_err(|error| error.to_string())).await?
 }
 
 #[tauri::command]
@@ -164,9 +194,10 @@ fn section_set(shell: State<'_, Shell>, section: String) {
 /// why a shell is needed at all. Not cached here, so that a user who has just installed
 /// the engine or just chosen a path gets the new answer without a relaunch; the one thing
 /// that is cached is the login-shell probe, inside the locator.
-#[tauri::command(async)]
-fn engine_status(shell: State<'_, Shell>) -> engine::EngineStatus {
-    engine::shared().status(shell.memory.read().usable_engine())
+#[tauri::command]
+async fn engine_status(shell: State<'_, Shell>) -> Result<engine::EngineStatus, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || engine::shared().status(remembered.as_deref())).await
 }
 
 /// Run `prudence ingest` or `prudence review`, and answer with what the engine said.
@@ -174,8 +205,8 @@ fn engine_status(shell: State<'_, Shell>) -> engine::EngineStatus {
 /// The page waits on this promise, which is how it knows a run is still going. Nothing is
 /// plumbed into the screens: `watcher.rs` already refreshes every page when the store
 /// changes, so a successful run's new figures arrive on their own.
-#[tauri::command(async)]
-fn engine_run(
+#[tauri::command]
+async fn engine_run(
     shell: State<'_, Shell>,
     action: String,
     force: bool,
@@ -185,7 +216,8 @@ fn engine_run(
         // anything else is a defect in the bridge rather than something to translate.
         return Err(format!("no such engine action: {action}"));
     };
-    Ok(engine::shared().run(shell.memory.read().usable_engine(), action, force))
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || engine::shared().run(remembered.as_deref(), action, force)).await
 }
 
 /// The user picks the executable, and it is verified before it is trusted.
@@ -193,24 +225,35 @@ fn engine_run(
 /// Opened from the shell rather than from the page, because everything that makes the
 /// choice safe is on this side: whether the file is executable, whether it answers
 /// `--version`, and where the answer is remembered.
-#[tauri::command(async)]
-fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> engine::Choice {
-    // A picker takes the focus, and the panel dismisses itself when it loses focus. The
-    // guard is held for as long as the dialog is up and clears itself on every path out,
-    // cancellation included.
-    let _dialog = engine::DialogGuard::open();
-    let Some(chosen) = engine::pick_file(&app) else {
-        return engine::Choice::cancelled();
+#[tauri::command]
+async fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> Result<engine::Choice, String> {
+    // The picker and the verification both wait, so both happen on the blocking pool.
+    // What comes back is an answer, and the remembering happens here, where the state is.
+    let picked = scheduled(move || {
+        // A picker takes the focus, and the panel dismisses itself when it loses focus.
+        // The guard is held for as long as the dialog is up and clears itself on every
+        // path out, cancellation included.
+        let _dialog = engine::DialogGuard::open();
+        let chosen = engine::pick_file(&app)?;
+        let verdict = engine::shared().verify(&chosen);
+        Some((chosen, verdict))
+    })
+    .await?;
+
+    let Some((chosen, verdict)) = picked else {
+        return Ok(engine::Choice::cancelled());
     };
-    match engine::shared().verify(&chosen) {
+    match verdict {
         Ok(version) => {
             shell.memory.set_engine(Some(&chosen.display().to_string()));
             // Written now rather than at quit: a path the user just chose and then lost
-            // to a crash is a path they have to find again.
-            shell.memory.save();
-            engine::Choice::accepted(chosen, version)
+            // to a crash is a path they have to find again. The result is propagated
+            // rather than dropped: the page is told the path was taken, so a silent
+            // failure here means it is forgotten at the next launch with nobody told why.
+            shell.memory.save()?;
+            Ok(engine::Choice::accepted(chosen, version))
         }
-        Err(error) => engine::Choice::rejected(chosen, &error),
+        Err(error) => Ok(engine::Choice::rejected(chosen, &error)),
     }
 }
 
@@ -218,7 +261,9 @@ fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> engine::Choice {
 #[tauri::command]
 fn engine_forget(shell: State<'_, Shell>) {
     shell.memory.set_engine(None);
-    shell.memory.save();
+    // Forgetting is idempotent: if the write fails the path is still forgotten for this
+    // launch, and the next `Choose` writes again.
+    let _ = shell.memory.save();
 }
 
 /// The page's own report of what it ended up drawing, on the shell's standard error.
@@ -232,7 +277,8 @@ fn page_log(app: AppHandle, line: String) {
 
 #[tauri::command]
 fn app_quit(app: AppHandle) {
-    app.state::<Shell>().memory.save();
+    // A lost frame is a default frame at the next launch.
+    let _ = app.state::<Shell>().memory.save();
     app.exit(0);
 }
 
@@ -366,7 +412,8 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        app.state::<Shell>().memory.save();
+                        // A lost frame is a default frame at the next launch.
+                        let _ = app.state::<Shell>().memory.save();
                         app.exit(0)
                     }
                     "show" => panel::show(app),
@@ -432,7 +479,8 @@ pub fn run() {
             // three places that used to save, so the window's position and section were
             // lost on the most ordinary way of quitting.
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                app.state::<Shell>().memory.save();
+                // A lost frame is a default frame at the next launch.
+                let _ = app.state::<Shell>().memory.save();
             }
         });
 }

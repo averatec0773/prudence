@@ -38,7 +38,8 @@ pub fn close(app: &AppHandle) {
     remember_frame(&window, app);
     let _ = window.hide();
     platform::set_dock_visible(app, false);
-    app.state::<Shell>().memory.save();
+    // A lost frame is a default frame at the next launch.
+    let _ = app.state::<Shell>().memory.save();
 }
 
 /// Called on every move and resize. It only updates memory; the file is written when the

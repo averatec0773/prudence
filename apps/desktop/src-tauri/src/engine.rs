@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -427,10 +427,56 @@ pub struct Answer {
 /// own. Production passes nothing, because inheriting is exactly how `PRUDENCE_DATA_DIR`
 /// reaches the engine. A test passes the copy of the store it is allowed to write to, so
 /// that nothing a test spawns can reach the real one.
+/// How much of a child's output is kept. Enough for any answer the engine gives and for
+/// a stack trace; bounded because the reader is not always the engine.
+///
+/// `Command::output()` reads to EOF with no limit, and the picker can point this module at
+/// any executable: `/usr/bin/yes --version` ignores the argument and prints forever, which
+/// grew the app until the system killed it.
+const OUTPUT_CAP: usize = 4 * 1024 * 1024;
+
+/// How long a `--version` may take. It is not a run: it is one interpreter start-up, and
+/// it is reachable from the picker with a file that might block forever. A real run has no
+/// deadline on purpose, and that compromise is registered; its justification is that an
+/// ingest takes minutes, which is not true of a version probe.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Read a pipe, keeping at most [`OUTPUT_CAP`] bytes.
+///
+/// Reading continues past the cap without keeping anything: closing the pipe early would
+/// hand the child a broken pipe, and a child killed by SIGPIPE part-way through writing is
+/// the interruption this module exists to avoid.
+fn capped<R: Read>(mut source: R) -> String {
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        match source.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                if buffer.len() < OUTPUT_CAP {
+                    let room = OUTPUT_CAP - buffer.len();
+                    buffer.extend_from_slice(&chunk[..read.min(room)]);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&buffer).to_string()
+}
+
 pub fn run(
     executable: &Path,
     arguments: &[&str],
     environment: &[(&str, &str)],
+) -> Result<Answer, EngineError> {
+    run_bounded(executable, arguments, environment, None)
+}
+
+/// [`run`], with an optional deadline.
+pub fn run_bounded(
+    executable: &Path,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+    deadline: Option<Duration>,
 ) -> Result<Answer, EngineError> {
     let mut command = Command::new(executable);
     command
@@ -460,16 +506,47 @@ pub fn run(
         command.process_group(0);
     }
 
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|error| EngineError::Launch(error.to_string()))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let json = serde_json::from_str::<Value>(&stdout).ok();
-    let status = output.status.code().unwrap_or(-1);
+    // Both pipes drained on their own threads, so a child that fills stderr cannot wedge
+    // the reader, and each is capped.
+    let out_pipe = child.stdout.take();
+    let err_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || out_pipe.map(capped).unwrap_or_default());
+    let err_reader = std::thread::spawn(move || err_pipe.map(capped).unwrap_or_default());
 
-    if !output.status.success() && json.is_none() {
+    let exit = match deadline {
+        None => child
+            .wait()
+            .map_err(|error| EngineError::Launch(error.to_string()))?,
+        Some(limit) => {
+            let started = Instant::now();
+            loop {
+                match child.try_wait() {
+                    Err(error) => return Err(EngineError::Launch(error.to_string())),
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {}
+                }
+                if started.elapsed() >= limit {
+                    // Killed rather than left behind: this is the probe, not a run, and a
+                    // file that will not answer `--version` is not the engine.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(EngineError::NoVersion(String::new()));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+
+    let stdout = out_reader.join().unwrap_or_default();
+    let stderr = err_reader.join().unwrap_or_default();
+    let json = serde_json::from_str::<Value>(&stdout).ok();
+    let status = exit.code().unwrap_or(-1);
+
+    if !exit.success() && json.is_none() {
         return Err(EngineError::Failed {
             status,
             message: if stderr.trim().is_empty() {
@@ -597,8 +674,8 @@ impl RunOutcome {
 /// because the command only prints that body after the row exists.
 pub fn describe_review(json: Option<&Value>) -> RunOutcome {
     let mut outcome = RunOutcome::of(Action::Review);
+    // Not `ok`: no output is no evidence that a review was written. See `Engine::run`.
     let Some(json) = json else {
-        outcome.ok = true;
         return outcome;
     };
     if json.get("ready").and_then(Value::as_bool) == Some(false) {
@@ -622,6 +699,11 @@ pub fn describe_review(json: Option<&Value>) -> RunOutcome {
 /// "Ingest finished: N sessions" line could not fire and it always said the shorter one.
 pub fn describe_ingest(json: Option<&Value>) -> RunOutcome {
     let mut outcome = RunOutcome::of(Action::Ingest);
+    // Only with an answer to read. `Engine::run` refuses before reaching here, and this
+    // says the same thing so that the function cannot be read as claiming otherwise.
+    if json.is_none() {
+        return outcome;
+    }
     outcome.ok = true;
     outcome.sessions = json
         .and_then(|json| json.get("parsed"))
@@ -729,6 +811,30 @@ impl Engine {
         let Some(found) = self.locator.locate(remembered, SHELL_TIMEOUT) else {
             return RunOutcome::failed(action, &EngineError::NotFound);
         };
+
+        // **Verified here, not only in `status`.** `locate` gates on the exec bit alone,
+        // and this module claims "found means verified" a few lines from the top. That was
+        // true of what the screen *displayed* and not of what the shell *executed*: the
+        // Review screen's button calls `run` without ever consulting `status`, so a
+        // remembered path that had since become something else was handed an `ingest` on
+        // a click.
+        //
+        // Be exact about what this buys, because a first version of the test below
+        // asserted more than it delivers: **identifying an executable means running it**,
+        // so an unidentified file is still spawned once, with `--version`. What it can no
+        // longer be handed is an action. It never writes the store, never runs for
+        // minutes, and is never detached from the app. Narrowing the blast radius is the
+        // whole of it; the picker exists so the user can name an executable, and nothing
+        // here can make naming one free.
+        if let Err(error) = version_of(&found.path) {
+            eprintln!(
+                "[engine] refusing to run {}: {}",
+                found.path.display(),
+                error.detail()
+            );
+            return RunOutcome::failed(action, &error);
+        }
+
         let arguments = action.arguments(force);
         eprintln!("[engine] {} {}", found.path.display(), arguments.join(" "));
         match run(&found.path, &arguments, &[]) {
@@ -736,6 +842,27 @@ impl Engine {
                 eprintln!("[engine] {} exit {}", action.name(), answer.status);
                 if !answer.stderr.trim().is_empty() {
                     eprintln!("[engine] stderr: {}", clipped(&answer.stderr));
+                }
+                // **No answer is not success.** Both `describe_*` reported success
+                // without looking at the exit status, and `describe_review` reported it
+                // from *absent* output, on the argument that `review` prints its body
+                // only after the row exists. That is a fact about the real engine, and it
+                // was applied to whatever binary actually ran: anything exiting 0 with
+                // nothing on stdout produced "Review written" on no evidence at all.
+                if answer.json.is_none() {
+                    return RunOutcome::failed(
+                        action,
+                        &EngineError::Failed {
+                            status: answer.status,
+                            message: if !answer.stderr.trim().is_empty() {
+                                answer.stderr.clone()
+                            } else if !answer.stdout.trim().is_empty() {
+                                answer.stdout.clone()
+                            } else {
+                                String::from("the engine printed no answer")
+                            },
+                        },
+                    );
                 }
                 match action {
                     Action::Ingest => describe_ingest(answer.json.as_ref()),
@@ -751,7 +878,7 @@ impl Engine {
 }
 
 fn version_of(executable: &Path) -> Result<String, EngineError> {
-    let answer = run(executable, &["--version"], &[])?;
+    let answer = run_bounded(executable, &["--version"], &[], Some(VERSION_TIMEOUT))?;
     parse_version(&answer.stdout).ok_or(EngineError::NoVersion(answer.stdout))
 }
 
@@ -1156,13 +1283,33 @@ mod tests {
         assert_eq!(outcome.error_kind, None, "declining is not an error");
     }
 
-    /// `review` prints its body only after the row exists, so output this build cannot
-    /// place is still a review that was written.
+    /// No answer is not a review.
+    ///
+    /// This used to assert the opposite, on the argument that `review` prints its body
+    /// only after the row exists, so output this build could not place still meant a row.
+    /// That is a fact about the real engine and it was being applied to whatever binary
+    /// actually ran: anything exiting 0 with nothing on stdout reported "Review written"
+    /// on no evidence. `Engine::run` refuses before reaching here, and this says the same
+    /// thing so the function cannot be read as claiming otherwise.
     #[test]
-    fn a_review_answer_this_build_cannot_place_still_counts_as_written() {
+    fn no_answer_is_not_a_review_that_was_written() {
         let outcome = describe_review(None);
-        assert!(outcome.ok);
+        assert!(
+            !outcome.ok,
+            "a review was claimed with nothing to show for it"
+        );
         assert_eq!(outcome.review_id, None);
+    }
+
+    /// The same rule for an ingest, which claimed success unconditionally.
+    #[test]
+    fn no_answer_is_not_an_ingest_that_ran() {
+        let outcome = describe_ingest(None);
+        assert!(
+            !outcome.ok,
+            "an ingest was claimed with nothing to show for it"
+        );
+        assert_eq!(outcome.sessions, None);
     }
 
     /// `parsed.sessions`, nested, which is where `ingest --json` actually carries it.
@@ -1313,6 +1460,141 @@ mod tests {
                 .expect("executable");
         }
         path
+    }
+
+    /// A file that answers `--version` forever does not grow the process without bound.
+    ///
+    /// The picker takes any file. `/usr/bin/yes --version` ignores the argument and prints
+    /// forever, and `Command::output()` buffers to EOF with no limit, so choosing it grew
+    /// the app until the system killed it. The cap keeps what is useful and the deadline
+    /// ends the probe.
+    #[test]
+    fn a_child_that_never_stops_printing_is_capped_and_then_killed() {
+        let executable = fake_engine(
+            "endless",
+            r#"while :; do printf 'x%.0s' $(seq 1 1000); done"#,
+        );
+        let started = Instant::now();
+        let answer = run_bounded(
+            &executable,
+            &["--version"],
+            &[],
+            Some(Duration::from_secs(2)),
+        );
+
+        assert!(answer.is_err(), "an endless child was treated as an answer");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the probe ran for {:?}, so the deadline did not end it",
+            started.elapsed()
+        );
+    }
+
+    /// Output past the cap is dropped, and the child still finishes on its own.
+    #[test]
+    fn output_past_the_cap_is_dropped_rather_than_kept() {
+        // Five megabytes against a four megabyte cap.
+        let executable = fake_engine(
+            "loud",
+            r#"i=0; while [ $i -lt 5 ]; do dd if=/dev/zero bs=1048576 count=1 2>/dev/null | tr '\0' 'x'; i=$((i+1)); done"#,
+        );
+        let answer = run(&executable, &["--version"], &[]).expect("the child finished");
+        assert!(
+            answer.stdout.len() <= OUTPUT_CAP,
+            "kept {} bytes against a cap of {OUTPUT_CAP}",
+            answer.stdout.len()
+        );
+        assert!(answer.stdout.len() > 1024, "nothing was kept at all");
+    }
+
+    /// The run path verifies, not only the status path.
+    ///
+    /// `locate` gates on the exec bit alone. A remembered path that is executable and is
+    /// not the engine was spawned on a click, because only `status` ever asked
+    /// `--version` and the Review screen's button does not call `status`.
+    #[test]
+    fn a_remembered_file_that_is_not_the_engine_is_refused_before_it_is_run() {
+        // It answers `--version` with a version, and it is not the engine: the check is
+        // that the answer names `prudence`, which this does not. The script records every
+        // argument list it is called with, because the point is not that it is never run
+        // (asking `--version` runs it) but that it is never handed an action.
+        let log = scratch("imposter").join("argv.log");
+        let executable = fake_engine(
+            "imposter",
+            &format!(
+                r#"printf '%s\n' "$*" >> "{}"; printf 'Python 3.12.1'; exit 0"#,
+                log.display()
+            ),
+        );
+        let _ = std::fs::remove_file(&log);
+        let engine = Engine {
+            locator: Locator::new(
+                Box::new(RealFiles),
+                Box::new(NoShell),
+                HashMap::new(),
+                scratch("imposter"),
+            ),
+            running: AtomicBool::new(false),
+        };
+
+        let outcome = engine.run(
+            Some(&executable.display().to_string()),
+            Action::Ingest,
+            false,
+        );
+
+        assert!(
+            !outcome.ok,
+            "a file that is not the engine was run and reported success"
+        );
+        assert_eq!(
+            outcome.error_kind.as_deref(),
+            Some("noVersion"),
+            "the refusal did not say why: {outcome:?}"
+        );
+
+        // Spawned for `--version`, which is unavoidable, and never for the action.
+        let called = std::fs::read_to_string(&log).unwrap_or_default();
+        let calls: Vec<&str> = called.lines().map(str::trim).collect();
+        assert_eq!(
+            calls,
+            vec!["--version"],
+            "the imposter was handed an action"
+        );
+    }
+
+    /// The child is in its own process group, which is what stops the app from aborting an
+    /// ingest when it quits. That defect left the founder's store copy with two `app_*`
+    /// objects out of nine, and it had no test.
+    #[cfg(unix)]
+    #[test]
+    fn the_child_runs_in_its_own_process_group() {
+        let executable = fake_engine(
+            "pgid",
+            r#"printf '{"pgid":"%s","own":"%s"}' "$(ps -o pgid= -p $$ | tr -d ' ')" "$$""#,
+        );
+        let answer = run(&executable, &["ingest"], &[]).expect("the child ran");
+        let json = answer
+            .json
+            .clone()
+            .expect("the child printed its own group");
+        let group = json
+            .get("pgid")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let own = json
+            .get("own")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        assert_eq!(
+            group, own,
+            "the child is not the leader of its own group: {answer:?}"
+        );
+        let ours = std::process::id().to_string();
+        assert_ne!(group, ours, "the child shares this process's group");
     }
 
     #[test]

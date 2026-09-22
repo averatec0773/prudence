@@ -225,21 +225,30 @@ function keyboard() {
  *
  * The engine block draws itself twice: a waiting state, then the answer with its buttons,
  * once the shell has asked the executable for its version. A press fired at first draw
- * finds nothing, which is what happened. This polls for the button itself, which is the
- * actual condition, and gives up with a line in the log rather than silently.
+ * finds nothing. This waits for the button itself, which is the actual condition, and
+ * gives up with a line in the log rather than silently.
+ *
+ * **Not `requestAnimationFrame`.** The first version polled frames, and against a window
+ * that was not frontmost it never fired at all and logged nothing either: WebKit throttles
+ * animation frames for an occluded window and can stop delivering them altogether. A
+ * screenshot or a scripted run is exactly the case where the window may not be in front,
+ * so the deadline is wall-clock and the poll is a timer.
  *
  * Harness only: `info.press` is `None` in a release build.
  */
-function pressWhenItExists(label, attempt = 0) {
+const PRESS_DEADLINE = 30_000;
+
+function pressWhenItExists(label, startedAt = Date.now()) {
+  const waited = Date.now() - startedAt;
   if (Stress.press(label)) {
-    Bridge.log(`[harness] press ${JSON.stringify(label)}: pressed after ${attempt} frames`);
+    Bridge.log(`[harness] press ${JSON.stringify(label)}: pressed after ${waited} ms`);
     return;
   }
-  if (attempt >= 600) {
-    Bridge.log(`[harness] press ${JSON.stringify(label)}: no such button after ${attempt} frames`);
+  if (waited >= PRESS_DEADLINE) {
+    Bridge.log(`[harness] press ${JSON.stringify(label)}: no such button after ${waited} ms`);
     return;
   }
-  requestAnimationFrame(() => pressWhenItExists(label, attempt + 1));
+  setTimeout(() => pressWhenItExists(label, startedAt), 50);
 }
 
 export const Stress = {
