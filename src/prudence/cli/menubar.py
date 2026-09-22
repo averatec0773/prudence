@@ -11,13 +11,13 @@ from __future__ import annotations
 import click
 
 REPLACED = (
-    "The Python menu-bar prototype was replaced by the native Prudence app "
-    "(apps/mac in the repository; a signed build is published with each release). "
-    "See apps/mac/README.md."
+    "The Python menu-bar prototype was replaced by the Prudence desktop app "
+    "(apps/desktop in the repository; a DMG is published with each release). "
+    "See apps/desktop/README.md."
 )
 
 
 @click.command()
 def menubar() -> None:
-    """Say where the menu bar went: the native app in apps/mac."""
+    """Say where the menu bar went: the desktop app in apps/desktop."""
     click.echo(REPLACED)

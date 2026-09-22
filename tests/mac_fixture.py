@@ -1,24 +1,24 @@
-"""Builds the fixture store the Swift tests read. Not collected by the normal run.
+"""Builds the fixture store the desktop app's tests read. Not collected by the normal run.
 
-The Mac app's tests decode real `app_*` rows rather than SQL retyped in Swift, which means
-they need a store the engine itself wrote. This file makes one out of the same synthetic
-machine `conftest.py` gives every other test, adds a few rows the small scenario cannot
-produce on its own (observations need five sessions a side, a review needs a range), and
-vacuums the result into the Swift test bundle at well under a megabyte.
+The app's tests (Rust and JavaScript) decode real `app_*` rows rather than SQL retyped in
+another language, which means they need a store the engine itself wrote. This file makes
+one out of the same synthetic machine `conftest.py` gives every other test, adds a few
+rows the small scenario cannot produce on its own (observations need five sessions a
+side, a review needs a range), and vacuums the result into `apps/desktop/fixtures/` at
+well under a megabyte.
 
 The name has no `test_` prefix on purpose, so `pytest` does not collect it with the suite.
 It is skipped unless `MAC_FIXTURE_TARGET` names where the store should land.
 
 **Regenerating the fixture.** Run this from the repository root whenever
 `store/app_views.APP_VIEWS` or `meta.APP_CONTRACT_VERSION` changes, and commit the `.db`
-it writes with the Swift change that reads the new columns:
+it writes with the app change that reads the new columns:
 
-    MAC_FIXTURE_TARGET=apps/mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db \\
+    MAC_FIXTURE_TARGET=apps/desktop/fixtures/store.db \\
         uv run pytest tests/mac_fixture.py -q
 
-**What is in it, and why.** Four tests in `WindowTests.swift` are written with an
-`.enabled(if:)` that switches them off when the fixture cannot show the thing they are
-about, and each of those shapes is deliberate here rather than incidental:
+**What is in it, and why.** The app's tests are written against these shapes, and each of
+them is deliberate here rather than incidental:
 
 - **two projects** (`alpha` and `beta`, each with sessions, usage, a commit and an
   observation), so that choosing one in the picker can drop the other's rows;
@@ -209,7 +209,7 @@ def test_make_fixture(lab: Workspace) -> None:
         connection.commit()
 
         # The fixture is only worth having if it is what the app will read. Contract and
-        # column lists first, then the shapes the four switched-off Swift tests need.
+        # column lists first, then the shapes the app's tests need.
         assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "3"
         for name, columns in app_views.APP_VIEWS.items():
             assert app_views.columns(connection, name) == columns, name
@@ -265,7 +265,7 @@ def test_make_fixture(lab: Workspace) -> None:
         assert _count(connection, "SELECT COUNT(*) FROM app_commits_by_day") >= 1
         assert _count(connection, "SELECT SUM(edits) FROM app_session_list") >= 1
         # One commit, two sessions: the per-day count and the per-session sum disagree,
-        # and a test in Swift can only see that if they do.
+        # and a test in the app can only see that if they do.
         per_day = _count(connection, "SELECT SUM(commits) FROM app_commits_by_day")
         per_session = _count(
             connection, "SELECT SUM(commits_fact + commits_inferred) FROM app_session_list"
@@ -291,7 +291,7 @@ def test_make_fixture(lab: Workspace) -> None:
     print(f"\n{target} is {size / 1024:.0f} KB")
 
 
-# The three questions the Swift tests ask of the fixture before they agree to run, asked
+# The three questions the app's tests ask of the fixture before they agree to run, asked
 # here too, so a regeneration that lost one of them fails at the source rather than
 # silently switching a test off again.
 WEEKS_OF_USAGE = """

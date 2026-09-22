@@ -19,7 +19,7 @@ import { observationCaveat, observationSentence } from "../src/text/sentences.js
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, "..");
-const FIXTURE = join(app, "../mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db");
+const FIXTURE = join(app, "fixtures/store.db");
 
 for (const language of Str.LANGUAGES) {
   Str.load(

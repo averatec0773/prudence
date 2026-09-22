@@ -24,7 +24,7 @@ import { forScope, gap, groupsOf, isPooled, projectOf, scoped } from "../src/sto
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, "..");
-const FIXTURE = join(app, "../mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db");
+const FIXTURE = join(app, "fixtures/store.db");
 
 for (const language of Str.LANGUAGES) {
   Str.load(

@@ -24,8 +24,8 @@ arrive on their own.
 No updater and no signing yet. What each batch proved and what it did not is in
 `docs/reports/desktop/` (local files, not in git).
 
-The Swift app in `apps/mac/` is frozen at `v0.4.0` as the comparison and the way back.
-Do not change it.
+The Swift app that preceded this one (v0.3.0 and v0.4.0) is kept on the `mac` branch and
+is not built or changed.
 
 ## Build and run
 
@@ -59,7 +59,6 @@ answers to the root `pyproject.toml`'s ruff settings**, not to anything under
 cd apps/desktop
 pnpm test
 pnpm check
-python3 Scripts/strings.py --check         # the JSON still matches the String Catalog
 cd src-tauri
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -194,5 +193,5 @@ end up in the page, which is what closes the door on Windows.
 [DESIGN.md](DESIGN.md), written along the way rather than at the end. It carries the four
 rules, the material decision per surface, the bridge rule, the no-build-step reason, the
 component list and the two process rules for working on the founder's machine.
-`apps/mac/DESIGN.md` remains the fuller description of the tokens and the seven chart
-shapes until the batches that bring their code move them across.
+The Swift app's `DESIGN.md` on the `mac` branch is the earlier, fuller description of the
+tokens and the seven chart shapes, where this file is still shorter.

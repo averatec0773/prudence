@@ -53,7 +53,7 @@ function quotedCommands(text) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, "..");
-const FIXTURE = join(app, "../mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db");
+const FIXTURE = join(app, "fixtures/store.db");
 
 import * as Str from "../src/text/strings.js";
 import { recorded } from "../src/store/settings.js";

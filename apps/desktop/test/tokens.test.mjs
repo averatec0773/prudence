@@ -1,7 +1,7 @@
 /* The token table, rewritten for this stack.
  *
  * `TokenTests.thePaletteDrawsTheValuesTheDocumentPrints` in the Swift app resolves every
- * colour and compares it with the table `apps/mac/DESIGN.md` prints, so a token table
+ * colour and compares it with the table `DESIGN.md` prints, so a token table
  * nobody checks cannot drift from what is drawn. `tokens.css` is the source the Swift
  * theme was transcribed from, and in this stack it *is* the theme, so the same test has to
  * exist here: the document below, and the file, read against each other.

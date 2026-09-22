@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://pypi.org/project/prudence-dev/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-dev?label=prudence-dev"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/averatec0773/prudence/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml"><img alt="Mac app" src="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml/badge.svg"></a>
+  <a href="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml"><img alt="Desktop app" src="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000">
@@ -90,7 +90,7 @@ uv tool install --python 3.12 "prudence-dev[mcp,model]"
 
 可选组件：`mcp` 提供 Claude Code 插件用的 MCP 服务；`model` 提供 Anthropic SDK，用于 `review --explain` 和 `ask` 的文字回答。不装 `model` 时其余功能照常工作，且永远不会调用模型。
 
-macOS 菜单栏应用单独下载：[最新 release](https://github.com/averatec0773/prudence/releases) 里的 DMG（Developer ID 证书就绪前为未签名版，首次启动请右键 → 打开）。也可以从 [apps/mac](apps/mac/README.md) 自行构建。
+桌面应用单独下载：[最新 release](https://github.com/averatec0773/prudence/releases) 里的 DMG（Developer ID 证书就绪前为未签名版，首次启动请右键 → 打开）。也可以从 [apps/desktop](apps/desktop/README.md) 自行构建。
 
 ## 快速开始
 
@@ -119,9 +119,11 @@ claude --plugin-dir ./plugin
 
 技能 `/prudence:sessions`、`/prudence:outcomes`、`/prudence:usage`、`/prudence:recall`、`/prudence:review`、`/prudence:ask`，以及代理可以直接查询的 MCP 服务（那里的 `ask` 只返回证据，因为调用它的代理本身就是模型）。见 [plugin/README.md](plugin/README.md)。
 
-## macOS 应用
+## 桌面应用
 
-菜单栏图标，下拉显示今天、本周按用途的 token、最新观察和上次回顾；窗口里有总览（每周按用途的 token、各项目的存活与返工及覆盖率、时间花在了哪里）、回顾（存储的回顾以卡片和图表呈现）、观察和设置。Swift 和 Swift Charts，通过一组带版本号的 `app_*` 视图读取同一个 SQLite 库；应用自己不计算任何数字。支持英文和简体中文。见 [apps/mac/README.md](apps/mac/README.md)。
+菜单栏图标，面板显示今天、本周按用途的 token、最新观察和上次回顾；窗口里有总览（每周按用途的 token、各项目的存活与返工及覆盖率、时间花在了哪里）、回顾（存储的回顾以卡片和图表呈现）、观察和设置。它能找到 `prudence` 可执行文件并替你运行采集或回顾，并且跟随数据库的变化，一次运行产生的新数字会自己出现。
+
+macOS 和 Windows 共用一套代码：Rust 外壳包着设计系统自己的 HTML，通过一组带版本号的 `app_*` 视图读取同一个 SQLite 库。**应用自己不计算任何数字**：界面上的每个数字要么是引擎算出的，要么是某个视图若干列的和，要么是同一行两列的比值，没有别的来源。支持英文和简体中文，句子按语言各自组合而不是翻译。见 [apps/desktop/README.md](apps/desktop/README.md)。
 
 ## 记录什么，永不记录什么
 
@@ -139,7 +141,7 @@ claude --plugin-dir ./plugin
 AI 编码代理的记录和钩子 ──► 一个本地 SQLite 库（原始归档 + 派生表）
         ──► 归因（哪个会话产出了哪个提交，带置信度）
         ──► 结果（存活、返工）、事实、观察、回顾
-        ──► 命令行 · Claude Code 插件与 MCP · macOS 应用（app_* 视图）
+        ──► 命令行 · Claude Code 插件与 MCP · 桌面应用（app_* 视图）
 ```
 
 目录布局和让它易于修改的规则见 [ARCHITECTURE.md](ARCHITECTURE.md)。

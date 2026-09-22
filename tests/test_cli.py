@@ -25,8 +25,8 @@ def test_menubar_says_where_the_menu_bar_went_and_succeeds() -> None:
     """The rumps prototype is gone; the command that ran it is a signpost, not an error."""
     result = CliRunner().invoke(main, ["menubar"])
     assert result.exit_code == 0, result.output
-    assert "replaced by the native Prudence app" in result.output
-    assert "apps/mac/README.md" in result.output
+    assert "replaced by the Prudence desktop app" in result.output
+    assert "apps/desktop/README.md" in result.output
 
 
 def test_nothing_in_the_package_imports_rumps() -> None:

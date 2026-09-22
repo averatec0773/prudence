@@ -79,10 +79,9 @@ src/prudence/
 apps/desktop/     the desktop app (Rust shell, HTML frontend): the menu-bar panel and
                   the window, for macOS and Windows from one codebase, reading the
                   `app_*` views and owning no numbers (apps/desktop/README.md).
-apps/mac/         the previous macOS app (Swift), frozen at v0.4.0 as the comparison and
-                  the way back. Not built, not changed (apps/mac/README.md).
-                  It replaced the Python `rumps` prototype in M3; `prudence menubar`
-                  now prints one line saying where the menu bar went.
+                  It replaced the Swift macOS app of v0.3.0 and v0.4.0, kept on the `mac`
+                  branch, which had replaced the Python `rumps` prototype in M3;
+                  `prudence menubar` prints one line saying where the menu bar went.
 plugin/           the Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`
                   wiring the `prudence mcp` command, `hooks/` (a copy of the hook set,
                   see plugin/README.md), and six skills: `skills/sessions`,

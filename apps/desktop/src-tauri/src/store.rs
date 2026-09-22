@@ -337,10 +337,10 @@ fn read_error(error: rusqlite::Error) -> StoreError {
 mod tests {
     use super::*;
 
-    /// The fixture the Swift tests read, so both stacks are judged against one store.
+    /// The fixture the engine wrote (`tests/mac_fixture.py`), so the shell is judged
+    /// against the engine's own output.
     fn fixture() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../mac/PrudenceKit/Tests/PrudenceKitTests/Fixtures/store.db")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/store.db")
     }
 
     #[test]

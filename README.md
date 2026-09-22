@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://pypi.org/project/prudence-dev/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-dev?label=prudence-dev"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/averatec0773/prudence/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml"><img alt="Mac app" src="https://github.com/averatec0773/prudence/actions/workflows/mac-ci.yml/badge.svg"></a>
+  <a href="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml"><img alt="Desktop app" src="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000">
@@ -90,7 +90,7 @@ uv tool install --python 3.12 "prudence-dev[mcp,model]"
 
 Extras: `mcp` adds the MCP server the Claude Code plugin uses; `model` adds the Anthropic SDK for `review --explain` and the prose half of `ask`. Without `model`, everything else works and no model is ever called.
 
-The macOS menu-bar app is a separate download: the DMG on the [latest release](https://github.com/averatec0773/prudence/releases) (unsigned until the Developer ID certificate exists; right-click, Open, on first launch). Build it yourself from [apps/mac](apps/mac/README.md).
+The desktop app is a separate download: the DMG on the [latest release](https://github.com/averatec0773/prudence/releases) (unsigned until the Developer ID certificate exists; right-click, Open, on first launch). Build it yourself from [apps/desktop](apps/desktop/README.md).
 
 ## Quick start
 

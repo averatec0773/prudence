@@ -71,9 +71,6 @@ jobs:
       - name: Types
         run: pnpm check
 
-      - name: The strings still match the String Catalog
-        run: python3 Scripts/strings.py --check
-
       - name: Formatting
         working-directory: apps/desktop/src-tauri
         run: cargo fmt --check
@@ -85,8 +82,8 @@ jobs:
           cargo clippy --all-targets --features harness -- -D warnings
 
       - name: The shell's own tests
-        # They read `apps/mac/PrudenceKit/Tests/.../Fixtures/store.db`, the same store the
-        # Swift tests read, so both stacks are judged against one fixture.
+        # They read `apps/desktop/fixtures/store.db`, a store the engine itself wrote
+        # (`tests/mac_fixture.py`), so the shell is judged against the engine's own output.
         working-directory: apps/desktop/src-tauri
         run: cargo test
 

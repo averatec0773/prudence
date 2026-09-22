@@ -8,10 +8,10 @@ in batch 1 with the rules and the decisions already made, and every batch that a
 component, a chart or a screen adds its row. Where this document and a screen disagree,
 the screen is wrong.
 
-`apps/mac/DESIGN.md` is the same document for the frozen Swift app and is still the best
-description of the tokens, the seven chart shapes and the localisation rule. Everything in
-it that is about SwiftUI is not about this app; everything in it that is about the product
-is, and moves here as each batch brings the code.
+The Swift app's `DESIGN.md` (branch `mac`, `apps/mac/DESIGN.md` there) is the same document
+for the app this one replaced and is still the fuller description of the tokens and the
+seven chart shapes. Everything in it that is about SwiftUI is not about this app;
+everything in it that is about the product is, and belongs here.
 
 ## The four rules
 
@@ -36,10 +36,49 @@ Unchanged from the Swift app. They are the product's rules, not a framework's.
 one**: the mockup's own page chrome (the variant switcher, the compare strip), its fake
 desktop, fake menu bar, fake status item and fake traffic lights are gone, about 190
 lines that existed to drive a clickable prototype. `docs/design/mockups/` is the frozen
-record; this file is the product's. `apps/mac/DESIGN.md` prints the table (purpose palette, outcome pair,
-project scale, surfaces and ink, spacing, type, radii, motion) and
-`test/tokens.test.mjs` asserts the file against it, so a token table nobody checks cannot
-drift from what is drawn.
+record; this file is the product's. The tables below are the values, and
+`test/tokens.test.mjs` asserts the stylesheet against them, so a token table nobody checks
+cannot drift from what is drawn.
+
+### Purpose palette
+
+One colour per purpose, identical in every chart on every screen, in this fixed stacking and
+legend order. Keys are the engine's own labels (`design/purposes.js` reads them out of
+`facts/purpose.py`); `unknown` is shown as "other", and a label this build has never heard
+of folds into it rather than being dropped. The order is never sorted by size: a chart whose
+colours move is a chart two screenshots a week apart cannot be compared across.
+
+| Purpose | Light | Dark |
+|---|---|---|
+| `--p-development` | `#007AFF` | `#0A84FF` |
+| `--p-research` | `#30B0C7` | `#40C8E0` |
+| `--p-debugging` | `#FF9500` | `#FF9F0A` |
+| `--p-conversation` | `#AF52DE` | `#BF5AF2` |
+| `--p-mixed` | `#5856D6` | `#7D7AFF` |
+| `--p-unknown` (other) | `#8E8E93` | `#98989D` |
+
+### Outcome colours
+
+`--o-alive` `#0A7D45` / `#3AC07A`, `--o-rework` `#8A5A00` / `#E0A33A`. Survival and rework
+are two readings of the same lines, so they share a warm-cool pair everywhere and differ by
+line style in a time chart. They are not meant as "good" and "bad", and the delivery-05
+report flags that the pair still reads that way; the prototype settled it and it stays until
+the founder says otherwise.
+
+### Surfaces and ink
+
+| Token | Light | Dark |
+|---|---|---|
+| `--canvas` | `#F2F2F4` | `#1C1C1E` |
+| `--surface` | `#FFFFFF` | `#2C2C2E` |
+| `--surface-2` | `#F7F7F9` | `#242426` |
+| `--surface-sunken` (chart tracks, chips) | `#EBEBEF` | `#171719` |
+| `--sidebar` | `#F6F6F8` | `#232325` |
+| `--text` / `--text-2` / `--text-3` | `#1C1C1E` / `#636366` / `#8E8E93` | `#F2F2F7` / `#AEAEB2` / `#8E8E93` |
+| `--accent` | `#007AFF` | `#0A84FF` |
+
+Elevation is a hairline ring, not a shadow. Only the panel and the window frame cast a real
+one, at the system's own weight.
 
 **`src/app.css` and `src/window.css` say where things go and never declare a token.** A
 colour, a spacing or a radius written in an app stylesheet is a decision two surfaces will
@@ -174,8 +213,8 @@ copied. A test reads every stylesheet on disk and fails on a token declared outs
 
 **Its strings are keys.** No English in a screen module, and no sentence assembled from
 fragments with punctuation in JavaScript: one key with numbered placeholders, so another
-language can order it differently. New keys go in `Scripts/strings.py`'s `DESKTOP_ONLY`
-with a reason, and the script regenerates both tables.
+language can order it differently. New keys go into both `src/text/strings.*.json`
+by hand, in the same place in each; the strings test holds the two tables to each other.
 
 **The pickers are declared, not assumed.** `scope: true` in the route table puts the
 project and range controls above the screen. A screen that does not read them sets it
@@ -390,11 +429,11 @@ Two rules that exist because each was broken once.
 
 ## Localisation
 
-Two files, `src/design/strings.en.json` and `strings.zh-Hans.json`, 227 keys each. They
-were generated once from the Swift String Catalog by `Scripts/strings.py` and **are the
-source of truth from then on**; the generator and its `--check` test exist only to stop
-the two dictionaries drifting while `apps/mac/` is still in the repository, and both die
-with it.
+Two files, `src/text/strings.en.json` and `strings.zh-Hans.json`, one key set. **They are
+the source of truth**, edited by hand; `test/strings.test.mjs` holds them to each other
+(same keys, placeholders in each language's own order, plurals, no accidental duplicate
+text). They were first generated from the Swift app's String Catalog on 2026-09-21, before
+that app was retired to the `mac` branch.
 
 - **A missing key is a bug, not a fallback.** `Str.t` returns the key itself so a screen
   still draws, and the suite fails on it.

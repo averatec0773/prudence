@@ -194,12 +194,10 @@ test("plurals choose a form in English and do not in Chinese", () => {
    function: see `test/fmt.test.mjs`, "a share rounds the way the engine rounds", and
    `test/sentences.test.mjs`, which compares the whole sentence with the engine's own. */
 
-/* The generated files say out loud that they are generated and that the generator dies
-   with `apps/mac/`, which is the lead's ruling of 2026-09-21. */
-test("both tables carry the note that says where they came from", () => {
+/* The tables say what they are: the source of truth, checked against each other here. */
+test("both tables say they are the source of truth", () => {
   for (const language of LANGUAGES) {
     assert.equal(tables[language].language, language);
-    assert.match(tables[language].note, /Scripts\/strings\.py/);
     assert.match(tables[language].note, /source of truth/);
   }
 });
