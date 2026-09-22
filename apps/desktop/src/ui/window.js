@@ -220,6 +220,28 @@ function keyboard() {
 
 /** Driven by the shell through `window.eval`, and only in a build with the `harness`
  *  feature. Registered in `DESIGN.md` as the one channel that is not `bridge.js`. */
+/**
+ * Press a button once it exists, rather than once a timer says it might.
+ *
+ * The engine block draws itself twice: a waiting state, then the answer with its buttons,
+ * once the shell has asked the executable for its version. A press fired at first draw
+ * finds nothing, which is what happened. This polls for the button itself, which is the
+ * actual condition, and gives up with a line in the log rather than silently.
+ *
+ * Harness only: `info.press` is `None` in a release build.
+ */
+function pressWhenItExists(label, attempt = 0) {
+  if (Stress.press(label)) {
+    Bridge.log(`[harness] press ${JSON.stringify(label)}: pressed after ${attempt} frames`);
+    return;
+  }
+  if (attempt >= 600) {
+    Bridge.log(`[harness] press ${JSON.stringify(label)}: no such button after ${attempt} frames`);
+    return;
+  }
+  requestAnimationFrame(() => pressWhenItExists(label, attempt + 1));
+}
+
 export const Stress = {
   step(round) {
     show(SECTIONS[round % SECTIONS.length].key, { remember: false });
@@ -232,6 +254,25 @@ export const Stress = {
   },
   scroll(offset) {
     nodes.screen.scrollTop = Number(offset) || 0;
+  },
+  /**
+   * Press a button by the text on it, and say whether one was found.
+   *
+   * The engine's actions are the one path a script could not reach: the run happens in
+   * the shell, the report happens on the page, and the only thing that connects them is
+   * a click. Everything else about the wiring is covered by a Rust test that really
+   * spawns the engine and by the bridge test that pins the command names, but nobody had
+   * pressed the button. Harness only, like the rest of this object.
+   */
+  press(label) {
+    const wanted = String(label);
+    for (const button of document.querySelectorAll("button")) {
+      if ((button.textContent ?? "").trim() === wanted) {
+        button.click();
+        return true;
+      }
+    }
+    return false;
   },
   probe(colour) {
     nodes.screen.classList.add("is-probe");
@@ -271,6 +312,11 @@ export const page = {
 
     // A screenshot of a screen taller than the window. Never set in a release build.
     if (info?.scroll) nodes.screen.scrollTop = info.scroll;
+
+    // A button a script asked to have pressed, once everything is drawn. Never set in a
+    // release build. The result is logged, so a script that asked for a button that is
+    // not there learns that rather than waiting for something that will not happen.
+    if (info?.press) pressWhenItExists(String(info.press));
 
     if (info?.harness) /** @type {any} */ (globalThis).Stress = Stress;
   },

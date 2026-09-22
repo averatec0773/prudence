@@ -123,10 +123,19 @@ struct Block {
 
 /// Can the store be read right now?
 ///
-/// The watcher's question, and it used to be answered by calling [`read`] and dropping
-/// the result: seven views pulled across, then pulled again by each page. This asks the
-/// contract row, which is the same "is it open and sane" test for a rounding error of the
-/// cost, and is the one query [`read`] itself starts with.
+/// The watcher's question. It used to be answered by calling [`read`] and dropping the
+/// result, which pulled seven views across and threw them away before each page pulled
+/// the same thing again, so it became "ask the contract row" instead.
+///
+/// **That was not the same question, and the difference is visible during an ingest.**
+/// The engine drops and recreates the `app_*` views while it rebuilds them, and
+/// `meta.app_contract_version` is a row in a table that survives the whole operation. So
+/// the probe passed, the watcher announced a change, every page re-read, and every page
+/// showed "The store could not be read: no such table: app_status". Seen by pressing
+/// Ingest now in a running app for the first time, on 2026-09-21.
+///
+/// So it asks both: the contract row, and that every view the contract names exists. That
+/// is one query against `sqlite_master` and it is the condition the pages actually need.
 pub fn readable(path: &Path) -> Result<u32, StoreError> {
     if !path.exists() {
         return Err(StoreError::Missing(path.to_path_buf()));
@@ -136,7 +145,27 @@ pub fn readable(path: &Path) -> Result<u32, StoreError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|error| StoreError::Open(error.to_string()))?;
-    contract_version(&connection)
+    let contract = contract_version(&connection)?;
+
+    let present: std::collections::HashSet<String> = connection
+        .prepare("SELECT name FROM sqlite_master WHERE name LIKE 'app\\_%' ESCAPE '\\'")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(read_error)?;
+
+    if let Some(view) = contract::VIEWS
+        .iter()
+        .find(|view| !present.contains(view.name))
+    {
+        return Err(StoreError::Read(format!(
+            "the store is mid-rebuild: {} is not there yet",
+            view.name
+        )));
+    }
+    Ok(contract)
 }
 
 pub fn read(path: &Path) -> Result<Value, StoreError> {
@@ -456,6 +485,44 @@ mod tests {
                 .expect("a row");
         }
         path
+    }
+
+    /// The probe must fail while the engine is rebuilding the views, because the pages
+    /// will fail if it does not.
+    ///
+    /// Pressing Ingest now in a running app for the first time showed every page reading
+    /// "The store could not be read: no such table: app_status". The watcher had
+    /// announced a change because the probe only asked the contract row, and
+    /// `meta.app_contract_version` is a row in a table that survives a view rebuild.
+    #[test]
+    fn a_store_whose_views_are_mid_rebuild_is_not_readable() {
+        let directory =
+            std::env::temp_dir().join(format!("prudence-rebuild-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let path = contract_two_store(&directory);
+
+        // It reads to begin with: `contract_two_store` builds every view.
+        assert!(readable(&path).is_ok(), "the built store does not read");
+
+        // Now drop one, which is what an ingest does to all of them for a moment.
+        let connection = Connection::open(&path).expect("open for writing");
+        connection
+            .execute("DROP TABLE app_status", [])
+            .expect("drop a view");
+        drop(connection);
+
+        let error = readable(&path).expect_err("a store with no app_status must not read");
+        let message = format!("{error}");
+        assert!(
+            message.contains("app_status"),
+            "the error does not name the missing view: {message}"
+        );
+        // And the contract row is still there, which is exactly why asking only for it
+        // was not enough.
+        let connection = Connection::open(&path).expect("open again");
+        assert_eq!(contract_version(&connection).ok(), Some(2));
+
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     /// The contract-2 path, exercised against an actual database.

@@ -443,6 +443,23 @@ pub fn run(
         command.env(key, value);
     }
 
+    // **Its own process group**, so that quitting the app does not abort an ingest.
+    //
+    // An ingest rebuilds the `app_*` views: it drops them and creates them again. A child
+    // in the app's process group receives the same terminate the app gets, so closing the
+    // window part-way through left the store with no views at all and the app could not
+    // read it until another ingest finished. Reproduced on 2026-09-21 by pressing Ingest
+    // now and quitting: two `app_*` objects left out of nine.
+    //
+    // Detaching does not make the engine's rebuild atomic, which is the other half of
+    // that story and is the engine's to fix. It does mean the app cannot be the thing
+    // that interrupts it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
     let output = command
         .output()
         .map_err(|error| EngineError::Launch(error.to_string()))?;

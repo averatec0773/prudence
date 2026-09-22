@@ -40,6 +40,22 @@ pub fn section() -> Option<String> {
     }
 }
 
+/// A button a script wants pressed once the page has drawn.
+///
+/// The engine's two actions are the only path a script could not reach: the run happens
+/// in the shell, the report happens on the page, and a click is the only thing joining
+/// them. Handed to the page in `shell_info` for the same reason the scroll offset is: a
+/// value the page reads after it has drawn cannot race its first draw, and an eval can.
+pub fn press() -> Option<String> {
+    let wanted = std::env::var("PRUDENCE_PRESS").ok()?;
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        None
+    } else {
+        Some(wanted.to_string())
+    }
+}
+
 /// A screen taller than the window cannot be photographed whole, and the charts below
 /// the fold are the ones a batch is usually judged on. The offset is handed to the page
 /// in `shell_info` rather than evaluated into it, because an eval races the page's first

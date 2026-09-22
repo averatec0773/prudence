@@ -65,6 +65,8 @@ pub struct ShellInfo {
     /// How far down a script wants the screen scrolled before it is photographed.
     /// Always null in a release build.
     scroll: Option<u32>,
+    /// A button a script wants pressed once the page has drawn. Never set in a release.
+    press: Option<String>,
 }
 
 /// `async` so that a slow disk cannot freeze the panel: a non-async command runs on the
@@ -90,7 +92,19 @@ fn shell_info(shell: State<'_, Shell>) -> ShellInfo {
             .or_else(|| shell.memory.read().usable_section().map(str::to_string)),
         harness: cfg!(feature = "harness"),
         scroll: scripted_scroll(),
+        press: scripted_press(),
     }
+}
+
+/// Harness only, like every other automation hook.
+#[cfg(feature = "harness")]
+fn scripted_press() -> Option<String> {
+    harness::press()
+}
+
+#[cfg(not(feature = "harness"))]
+fn scripted_press() -> Option<String> {
+    None
 }
 
 fn scripted_scroll() -> Option<u32> {
