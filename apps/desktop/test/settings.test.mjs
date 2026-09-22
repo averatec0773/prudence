@@ -1,4 +1,4 @@
-/* The Settings screen: four tabs of controls.
+/* The Settings screen: five tabs of controls.
  *
  * What these guard, in order: that the four tabs are there and only one is open, that the
  * prose the founder asked to have taken off the screen is gone, that **every control
@@ -90,9 +90,76 @@ const settled = () => new Promise(setImmediate);
  * Every setter answers with the settings block **as the shell has it**, which is what lets
  * "a refused login item does not tick itself" be a test rather than a hope.
  */
+/**
+ * The scan `prudence init --scan --json` prints, trimmed to the four shapes the tab has
+ * to draw: enabled at a level, enabled at the other, never enabled, gone from disk, and
+ * the group of sessions that belong to no repository.
+ */
+const SCAN = [
+  {
+    path: "/Users/someone/code/beatos",
+    repoKey: "root:df32e8a9",
+    sessions: 65,
+    firstAt: "2026-05-14T18:02:11.855000+00:00",
+    lastAt: "2026-08-06T05:06:51.273000+00:00",
+    enabled: true,
+    level: "full",
+    exists: true,
+  },
+  {
+    path: "/Users/someone/code/averatec-career",
+    repoKey: "root:742d2192",
+    sessions: 50,
+    firstAt: "2026-05-15T16:38:17.649000+00:00",
+    lastAt: "2026-09-19T06:57:00.425000+00:00",
+    enabled: true,
+    level: "metadata-only",
+    exists: true,
+  },
+  {
+    path: "/Users/someone/code/offeros",
+    repoKey: "root:2c3f8baf",
+    sessions: 23,
+    firstAt: "2026-07-14T23:12:11.815000+00:00",
+    lastAt: "2026-08-18T01:31:25.008000+00:00",
+    enabled: false,
+    level: null,
+    exists: true,
+  },
+  {
+    path: "/Users/someone/code/moved-away",
+    repoKey: "root:9e202fea",
+    sessions: 11,
+    firstAt: "2026-05-07T23:46:49.382000+00:00",
+    lastAt: "2026-09-08T18:59:28.507000+00:00",
+    enabled: false,
+    level: null,
+    exists: false,
+  },
+  {
+    path: null,
+    repoKey: "no repository",
+    sessions: 115,
+    firstAt: "2026-04-22T21:12:03.542000+00:00",
+    lastAt: "2026-09-22T06:46:17.434000+00:00",
+    enabled: false,
+    level: null,
+    exists: false,
+  },
+];
+
 function fakePort(overrides = {}) {
-  const asked = { language: [], appearance: [], login: [], interval: [], modelLanguage: [], links: [] };
+  const asked = {
+    language: [],
+    appearance: [],
+    login: [],
+    interval: [],
+    modelLanguage: [],
+    links: [],
+    levels: [],
+  };
   let now = { ...INFO.settings, ...(overrides.settings ?? {}) };
+  let scan = overrides.scan ?? SCAN.map((row) => ({ ...row }));
   const answer = () => Promise.resolve(now);
   SETTINGS.port = {
     read: answer,
@@ -124,6 +191,19 @@ function fakePort(overrides = {}) {
     modelLanguage: (code) => {
       asked.modelLanguage.push(code);
       return Promise.resolve({ ...MODEL, languageKey: code });
+    },
+    repositories: () => Promise.resolve(scan),
+    // The engine's answer, not the click's: the fake moves the row itself and hands the
+    // whole scan back, which is what the real command does.
+    repositoryLevel: (key, level) => {
+      asked.levels.push([key, level]);
+      if (overrides.levelRefuses) return Promise.reject(new Error("failed"));
+      scan = scan.map((row) =>
+        row.repoKey === key
+          ? { ...row, enabled: level !== "off", level: level === "off" ? null : level }
+          : row
+      );
+      return Promise.resolve(scan);
     },
     link: (name) => {
       asked.links.push(name);
@@ -195,18 +275,18 @@ test("the screen returns one element and appends nothing to the page", () => {
   assert.ok(screen.tree.className.split(/\s+/).includes("screen-body"));
 });
 
-test("four tabs, left to right, and exactly one of them open", () => {
+test("five tabs, left to right, and exactly one of them open", () => {
   fakePort();
   const screen = screenFor();
   assert.deepEqual(
     screen.tree.findAll(".tab").map((node) => node.textContent),
-    ["General", "Engine", "Model", "About"]
+    ["General", "Engine", "Model", "Repositories", "About"]
   );
   const shown = screen.tree.findAll(".tab-pane").filter((pane) => !pane.hidden);
   assert.equal(shown.length, 1, "one pane at a time");
   assert.deepEqual(
     screen.tree.findAll(".tab").map((node) => node.getAttribute("aria-selected")),
-    ["true", "false", "false", "false"]
+    ["true", "false", "false", "false", "false"]
   );
 });
 
@@ -232,13 +312,11 @@ test("the record's prose is off the screen and one link is left in its place", (
   assert.deepEqual(asked.links, ["recorded"]);
 });
 
-/* There is no Repositories tab yet, and a tab that opens on "not built yet" is worse than
-   a tab that is not there. */
-test("no stub is left for the tab that has not been built", () => {
+test("no tab opens on a placeholder", () => {
   fakePort();
   const screen = screenFor();
-  assert.equal(screen.tree.textContent.includes("Repositor"), false);
   assert.equal(screen.tree.textContent.includes("Not built yet"), false);
+  assert.equal(screen.tree.textContent.includes("arrives with"), false);
 });
 
 /* --- General ------------------------------------------------------------------------- */
@@ -408,6 +486,154 @@ test("an engine that cannot be asked says so rather than drawing an empty tab", 
   assert.ok(visible(screen).includes(Str.t("settings.model.unread")));
 });
 
+/* --- Repositories -----------------------------------------------------------------------
+ *
+ * The tab answers the founder's question: "why are only three repositories recorded?"
+ * So what is asserted is that the answer is on it (recording is opt-in, and the two lists
+ * are told apart), that every figure is the engine's own, and that changing one goes
+ * through the shell and redraws from **the engine's answer** rather than from the click.
+ */
+
+async function repositoriesTab(overrides = {}) {
+  const asked = fakePort(overrides);
+  const screen = screenFor({}, INFO, asked);
+  open(screen, "repositories");
+  await settled();
+  return { screen, asked };
+}
+
+test("the tab says recording is opt-in, and tells the two lists apart", async () => {
+  const { screen } = await repositoriesTab();
+  const text = visible(screen);
+  assert.ok(text.includes(Str.t("settings.repositories.note")), "the opt-in sentence is missing");
+  assert.ok(text.includes(Str.t("settings.repositories.recorded")), "no recorded block");
+  assert.ok(text.includes(Str.t("settings.repositories.found")), "no found-not-recorded block");
+  // Both blocks are drawn, and the rows are in the right one.
+  const blocks = screen.tree.findAll(".repo-table");
+  assert.equal(blocks.length, 2, "the list was not split");
+  assert.ok(blocks[0].textContent.includes("beatos"));
+  assert.ok(blocks[1].textContent.includes("offeros"));
+  assert.equal(blocks[0].textContent.includes("offeros"), false, "a row is in the wrong block");
+});
+
+test("every figure on a row is the engine's own", async () => {
+  const { screen } = await repositoriesTab();
+  const row = screen.tree
+    .findAll("tr")
+    .find((node) => node.textContent.includes("/Users/someone/code/beatos"));
+  assert.ok(row, "the row is not on the tab");
+  const text = row.textContent;
+  assert.ok(text.includes("beatos"), "the name is missing");
+  assert.ok(text.includes("/Users/someone/code/beatos"), "the path is missing");
+  assert.ok(text.includes("65"), "the session count is missing");
+  // The engine's dates, as the reader's language writes a day.
+  assert.ok(text.includes("2026"), `the dates are missing: ${text}`);
+  // And the control is set from the engine's level.
+  const ticked = row
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(ticked, [Str.t("settings.repositories.level.full")]);
+});
+
+test("a repository that is no longer on disk says so, and is still on the list", async () => {
+  const { screen } = await repositoriesTab();
+  const row = screen.tree
+    .findAll("tr")
+    .find((node) => node.textContent.includes("moved-away"));
+  assert.ok(row, "a repository that left the disk was dropped from the list");
+  assert.ok(row.textContent.includes(Str.t("settings.repositories.gone")));
+});
+
+/* The sessions that belong to no repository are a count, not a row with a dead control on
+   it: there is nothing to enable for them. */
+test("the sessions that belong to no repository are a line and not a row", async () => {
+  const { screen } = await repositoriesTab();
+  const text = visible(screen);
+  assert.ok(
+    text.includes(Str.t("settings.repositories.unassigned", Str.plural("unit.sessions", 115, "115"))),
+    `the unassigned sessions are not reported: ${text}`
+  );
+  const rows = screen.tree.findAll(".repo-table").flatMap((table) => table.findAll("tr"));
+  assert.equal(
+    rows.some((row) => row.textContent.includes("no repository")),
+    false,
+    "the group with no path was drawn as a repository"
+  );
+});
+
+test("changing a level asks the shell with the engine's own key, and redraws from the answer", async () => {
+  const { screen, asked } = await repositoriesTab();
+  const row = screen.tree
+    .findAll("tr")
+    .find((node) => node.textContent.includes("offeros"));
+  const button = row
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("settings.repositories.level.metadataOnly"));
+  assert.ok(button, "the row offers no metadata-only");
+  button.fire("click");
+  await settled();
+
+  // The key, never the path: `prudence init --enable` refuses a path.
+  assert.deepEqual(asked.levels, [["root:2c3f8baf", "metadata-only"]]);
+
+  // And the row moved to the recorded block, because that is what the engine answered.
+  const blocks = screen.tree.findAll(".repo-table");
+  assert.ok(blocks[0].textContent.includes("offeros"), "the answer was not drawn");
+  const ticked = screen.tree
+    .findAll("tr")
+    .find((node) => node.textContent.includes("offeros"))
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(ticked, [Str.t("settings.repositories.level.metadataOnly")]);
+});
+
+test("every level the tab offers is one the shell will take", async () => {
+  const { screen, asked } = await repositoriesTab();
+  const row = screen.tree.findAll("tr").find((node) => node.textContent.includes("beatos"));
+  const labels = row.findAll("button").map((node) => node.textContent);
+  assert.deepEqual(labels, [
+    Str.t("settings.choice.off"),
+    Str.t("settings.repositories.level.metadataOnly"),
+    Str.t("settings.repositories.level.full"),
+  ]);
+  for (const label of labels) {
+    screen.tree
+      .findAll("tr")
+      .find((node) => node.textContent.includes("beatos"))
+      .findAll("button")
+      .find((node) => node.textContent === label)
+      .fire("click");
+    await settled();
+  }
+  assert.deepEqual(
+    asked.levels.map(([, level]) => level),
+    ["off", "metadata-only", "full"]
+  );
+});
+
+test("an engine that cannot be asked for its repositories says so", async () => {
+  const asked = fakePort();
+  SETTINGS.port.repositories = () => Promise.reject(new Error("notFound"));
+  const screen = screenFor({}, INFO, asked);
+  open(screen, "repositories");
+  await settled();
+  assert.ok(visible(screen).includes(Str.t("settings.repositories.unread")));
+});
+
+test("a change the engine refuses leaves the tab saying so rather than showing the click", async () => {
+  const { screen, asked } = await repositoriesTab({ levelRefuses: true });
+  const row = screen.tree.findAll("tr").find((node) => node.textContent.includes("offeros"));
+  row
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("settings.repositories.level.full"))
+    .fire("click");
+  await settled();
+  assert.deepEqual(asked.levels, [["root:2c3f8baf", "full"]]);
+  assert.ok(visible(screen).includes(Str.t("settings.repositories.unread")));
+});
+
 /* --- About ----------------------------------------------------------------------------- */
 
 test("About names this build, the engine, the licence, the machine and the developer", () => {
@@ -458,7 +684,7 @@ test("a store with no status row still draws, and says the figures are not read"
 test("no shell info at all draws rather than throwing", () => {
   fakePort();
   const screen = open(screenFor({}, undefined), "general");
-  assert.ok(screen.tree.findAll(".tab").length === 4, "the screen did not draw");
+  assert.ok(screen.tree.findAll(".tab").length === 5, "the screen did not draw");
   assert.equal(screen.tree.textContent.includes("undefined"), false);
 });
 

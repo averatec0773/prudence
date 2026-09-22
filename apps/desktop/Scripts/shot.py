@@ -192,7 +192,9 @@ def main() -> int:
         help="press the button with this exact label once the page has drawn, and "
         "photograph what happens. It is how a Settings tab, or a run started from the "
         "panel, gets into a picture: an agent cannot click, and the shell's own eval "
-        "channel only reaches the window. Harness builds only.",
+        "channel only reaches the window. Several labels separated by '>' are pressed in "
+        "order, each waiting for its own button, which is how a control inside a tab is "
+        "reached. Harness builds only.",
     )
     parser.add_argument("--debug-build", action="store_true")
     parser.add_argument("--no-backdrop", action="store_true")

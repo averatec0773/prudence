@@ -76,6 +76,10 @@ test("every key is translated in both languages", () => {
 const SHARED_TEXT = {
   en: [
     ["chart.hours", "overview.activeHours"],
+    // A chart's short axis word, and the unit a progress counter counts in. The Chinese
+    // is not the same in the two places (`会话` against `个会话`), which is what makes
+    // them two decisions rather than one written twice.
+    ["chart.sessionsShort", "engine.unit.sessions"],
     ["common.dateWithRelative", "menu.stamped"],
     ["menu.noReview", "review.empty.title"],
     ["observation.outcome.rework", "overview.legend.reworkName"],

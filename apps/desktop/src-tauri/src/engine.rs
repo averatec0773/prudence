@@ -416,6 +416,126 @@ pub struct Answer {
     pub status: i32,
 }
 
+/* --- what a run says while it is going ----------------------------------------------
+ *
+ * `prudence ingest --progress` writes one JSON object per line to standard error and
+ * nothing else. Every line is therefore one of two things, and the two are kept apart
+ * here rather than in the page:
+ *
+ * - a progress event, which is reported as it arrives and then forgotten;
+ * - anything else, which is the engine speaking and is kept, because it is what the
+ *   failure text is made of.
+ *
+ * A line that does not parse is the second kind **by definition**. Guessing at a
+ * half-written object would be the app inventing what the engine meant, and a malformed
+ * line must not end a run that the engine is still completing.
+ */
+
+/// One `--progress` line, read.
+///
+/// Only `event` is required, and it is the engine's own marker for these lines. The rest
+/// default, so a step that reports no total yet is still a step being reported: the page
+/// draws the label and no fill, which is the truth. Every field is the engine's own; the
+/// interface translates `step` and `unit` and computes only the fraction of the bar.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub step: String,
+    pub step_index: u64,
+    pub steps: u64,
+    pub current: u64,
+    pub total: u64,
+    pub unit: String,
+    pub label: String,
+}
+
+/// Who a run tells about its progress. Borrowed rather than owned, so the caller can keep
+/// whatever the report needs (an app handle, in production) without this module knowing
+/// what any of it is.
+pub type Reporter<'a> = dyn Fn(&Progress) + Sync + 'a;
+
+/// The engine's word for this step of the run, as the [`Progress`] fields' own marker.
+const PROGRESS_EVENT: &str = "progress";
+
+/// One line of standard error, read as a progress event or not at all.
+pub fn parse_progress(line: &str) -> Option<Progress> {
+    let json = serde_json::from_str::<Value>(line).ok()?;
+    if json.get("event").and_then(Value::as_str) != Some(PROGRESS_EVENT) {
+        return None;
+    }
+    let number = |key: &str| json.get(key).and_then(Value::as_u64).unwrap_or_default();
+    let text = |key: &str| {
+        json.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    Some(Progress {
+        step: text("step"),
+        step_index: number("step_index"),
+        steps: number("steps"),
+        current: number("current"),
+        total: number("total"),
+        unit: text("unit"),
+        label: text("label"),
+    })
+}
+
+/// How much of one stderr line is read before the rest of it is dropped.
+///
+/// A line is only bounded by the next newline, and the picker can point this module at any
+/// executable: one that writes megabytes with no newline in them would otherwise be
+/// buffered whole, which is the defect [`OUTPUT_CAP`] exists to stop on the other pipe.
+const LINE_CAP: usize = 64 * 1024;
+
+/// Read standard error a line at a time: report the progress lines, keep the rest.
+///
+/// Chunked rather than `BufRead::lines`, for the same reason [`capped`] is: a child that
+/// prints forever without a newline must not grow this process.
+fn progress_reader<R: Read>(mut source: R, report: Option<&Reporter>) -> String {
+    let mut kept: Vec<u8> = Vec::new();
+    let mut pending: Vec<u8> = Vec::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        match source.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                for &byte in &chunk[..read] {
+                    if byte == b'\n' {
+                        take_line(&mut pending, &mut kept, report);
+                    } else if pending.len() < LINE_CAP {
+                        pending.push(byte);
+                    }
+                }
+            }
+        }
+    }
+    // Whatever the child wrote without a closing newline is still something it said.
+    take_line(&mut pending, &mut kept, report);
+    String::from_utf8_lossy(&kept).to_string()
+}
+
+fn take_line(pending: &mut Vec<u8>, kept: &mut Vec<u8>, report: Option<&Reporter>) {
+    if pending.is_empty() {
+        return;
+    }
+    let line = String::from_utf8_lossy(pending).to_string();
+    pending.clear();
+    if let Some(progress) = parse_progress(line.trim()) {
+        if let Some(report) = report {
+            report(&progress);
+        }
+        // Dropped whether or not anybody was listening: a progress line is not something
+        // the engine said about a failure, and keeping it would put a hundred JSON objects
+        // in front of the one sentence that says what went wrong.
+        return;
+    }
+    if kept.len() < OUTPUT_CAP {
+        kept.extend_from_slice(line.as_bytes());
+        kept.push(b'\n');
+    }
+}
+
 /// `<executable> <arguments>`, with the child's environment set.
 ///
 /// A non-zero exit is not automatically something to shout about: `prudence review` says
@@ -468,15 +588,26 @@ pub fn run(
     arguments: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<Answer, EngineError> {
-    run_bounded(executable, arguments, environment, None)
+    run_bounded(executable, arguments, environment, None, None)
 }
 
-/// [`run`], with an optional deadline.
+/// [`run`], telling `report` about every progress line the child writes while it runs.
+pub fn run_reporting(
+    executable: &Path,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+    report: &Reporter,
+) -> Result<Answer, EngineError> {
+    run_bounded(executable, arguments, environment, None, Some(report))
+}
+
+/// [`run`], with an optional deadline and an optional listener.
 pub fn run_bounded(
     executable: &Path,
     arguments: &[&str],
     environment: &[(&str, &str)],
     deadline: Option<Duration>,
+    report: Option<&Reporter>,
 ) -> Result<Answer, EngineError> {
     let mut command = Command::new(executable);
     command
@@ -511,38 +642,54 @@ pub fn run_bounded(
         .map_err(|error| EngineError::Launch(error.to_string()))?;
 
     // Both pipes drained on their own threads, so a child that fills stderr cannot wedge
-    // the reader, and each is capped.
+    // the reader, and each is capped. **Scoped** threads, so the stderr reader may borrow
+    // the caller's listener: a run reports while it is going, which is the whole point,
+    // and an owned `'static` closure would mean the app handle being cloned into a thread
+    // this function has no way to name.
     let out_pipe = child.stdout.take();
     let err_pipe = child.stderr.take();
-    let out_reader = std::thread::spawn(move || out_pipe.map(capped).unwrap_or_default());
-    let err_reader = std::thread::spawn(move || err_pipe.map(capped).unwrap_or_default());
+    let (stdout, stderr, exit) = std::thread::scope(|threads| {
+        let out_reader = threads.spawn(move || out_pipe.map(capped).unwrap_or_default());
+        let err_reader = threads.spawn(move || {
+            err_pipe
+                .map(|pipe| progress_reader(pipe, report))
+                .unwrap_or_default()
+        });
 
-    let exit = match deadline {
-        None => child
-            .wait()
-            .map_err(|error| EngineError::Launch(error.to_string()))?,
-        Some(limit) => {
-            let started = Instant::now();
-            loop {
-                match child.try_wait() {
-                    Err(error) => return Err(EngineError::Launch(error.to_string())),
-                    Ok(Some(status)) => break status,
-                    Ok(None) => {}
+        let exit = match deadline {
+            None => child
+                .wait()
+                .map_err(|error| EngineError::Launch(error.to_string())),
+            Some(limit) => {
+                let started = Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Err(error) => break Err(EngineError::Launch(error.to_string())),
+                        Ok(Some(status)) => break Ok(status),
+                        Ok(None) => {}
+                    }
+                    if started.elapsed() >= limit {
+                        // Killed rather than left behind: this is the probe, not a run, and
+                        // a file that will not answer `--version` is not the engine.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Err(EngineError::NoVersion(String::new()));
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
                 }
-                if started.elapsed() >= limit {
-                    // Killed rather than left behind: this is the probe, not a run, and a
-                    // file that will not answer `--version` is not the engine.
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(EngineError::NoVersion(String::new()));
-                }
-                std::thread::sleep(Duration::from_millis(20));
             }
-        }
-    };
+        };
 
-    let stdout = out_reader.join().unwrap_or_default();
-    let stderr = err_reader.join().unwrap_or_default();
+        // Joined whichever way the wait ended: a killed child closes its pipes, so the
+        // readers finish, and leaving them unjoined would leak the scope's own threads.
+        (
+            out_reader.join().unwrap_or_default(),
+            err_reader.join().unwrap_or_default(),
+            exit,
+        )
+    });
+    let exit = exit?;
+
     let json = serde_json::from_str::<Value>(&stdout).ok();
     let status = exit.code().unwrap_or(-1);
 
@@ -622,9 +769,14 @@ impl Action {
     /// segment needs an API key this app never asks for and never holds, and a button
     /// that fails on a machine without one would be a button that fails for most people.
     /// The review is complete without a segment; `prudence explain <id>` adds one later.
+    ///
+    /// `--progress` on an ingest is asked for every time rather than when somebody is
+    /// listening. It changes nothing about what the run does and nothing about stdout; it
+    /// is the only way the app can say what a run that takes minutes is doing, and a flag
+    /// the app sometimes passes is a flag whose absence is another state to test.
     pub fn arguments(self, force: bool) -> Vec<&'static str> {
         match self {
-            Self::Ingest => vec!["ingest", "--json"],
+            Self::Ingest => vec!["ingest", "--json", "--progress"],
             Self::Review if force => vec!["review", "--json", "--no-explain", "--force"],
             Self::Review => vec!["review", "--json", "--no-explain"],
         }
@@ -849,7 +1001,17 @@ impl Engine {
 
     /// Run one action. Blocks until the engine is done, which is minutes for an ingest,
     /// so this is only ever called from an async command.
-    pub fn run(&self, remembered: Option<&str>, action: Action, force: bool) -> RunOutcome {
+    ///
+    /// `report` is told about every progress line while the run is going. A review writes
+    /// none, and a caller with nothing to report to passes a closure that does nothing;
+    /// neither changes what is run.
+    pub fn run(
+        &self,
+        remembered: Option<&str>,
+        action: Action,
+        force: bool,
+        report: &Reporter,
+    ) -> RunOutcome {
         if self
             .running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -888,7 +1050,7 @@ impl Engine {
 
         let arguments = action.arguments(force);
         eprintln!("[engine] {} {}", found.path.display(), arguments.join(" "));
-        match run(&found.path, &arguments, &[]) {
+        match run_reporting(&found.path, &arguments, &[], report) {
             Ok(answer) => {
                 eprintln!("[engine] {} exit {}", action.name(), answer.status);
                 if !answer.stderr.trim().is_empty() {
@@ -929,7 +1091,7 @@ impl Engine {
 }
 
 fn version_of(executable: &Path) -> Result<String, EngineError> {
-    let answer = run_bounded(executable, &["--version"], &[], Some(VERSION_TIMEOUT))?;
+    let answer = run_bounded(executable, &["--version"], &[], Some(VERSION_TIMEOUT), None)?;
     parse_version(&answer.stdout).ok_or(EngineError::NoVersion(answer.stdout))
 }
 
@@ -1557,6 +1719,7 @@ mod tests {
             &["--version"],
             &[],
             Some(Duration::from_secs(2)),
+            None,
         );
 
         assert!(answer.is_err(), "an endless child was treated as an answer");
@@ -1620,6 +1783,7 @@ mod tests {
             Some(&executable.display().to_string()),
             Action::Ingest,
             false,
+            &|_| {},
         );
 
         assert!(
@@ -1696,7 +1860,7 @@ mod tests {
         .expect("it ran");
 
         let json = answer.json.expect("the fake answered with JSON");
-        assert_eq!(json["argv"], "ingest --json");
+        assert_eq!(json["argv"], "ingest --json --progress");
         // The marker the capture hooks and a user's rc files can guard against.
         assert_eq!(json["internal"], "1");
         // Both, every time: an ingest writes, and one pointed at a real store would
@@ -1833,6 +1997,181 @@ mod tests {
             outcome.ok || outcome.not_ready,
             "review neither wrote nor declined: {outcome:?}"
         );
+    }
+
+    /* --- what a run says while it is going ------------------------------------------
+     *
+     * The fixture is a **recording**, not a hand-written stream: `fixtures/`'s
+     * `ingest-progress.jsonl` is the standard error of one real
+     * `prudence ingest --json --progress` against a copy of the founder's store on
+     * 2026-09-22. A stream somebody wrote by hand would agree with whatever this module
+     * expects, which is the thing under test.
+     */
+
+    fn recorded_stream() -> String {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ingest-progress.jsonl");
+        std::fs::read_to_string(&path).expect("the recorded progress stream")
+    }
+
+    /// The eleven steps `prudence ingest --progress` walks, in the order it walks them.
+    const STEPS: [&str; 11] = [
+        "repositories",
+        "archive",
+        "parse",
+        "hooks",
+        "turn_trees",
+        "commits",
+        "attribution",
+        "outcomes",
+        "facts",
+        "observations",
+        "views",
+    ];
+
+    #[test]
+    fn a_recorded_run_reads_as_the_engines_own_sequence_of_steps() {
+        let events: Vec<Progress> = recorded_stream()
+            .lines()
+            .map(|line| parse_progress(line).unwrap_or_else(|| panic!("not progress: {line}")))
+            .collect();
+        assert_eq!(events.len(), 116, "the recording is not the one committed");
+
+        // The steps, in order, each one entered once and never returned to.
+        let mut walked: Vec<&str> = Vec::new();
+        for event in &events {
+            if walked.last() != Some(&event.step.as_str()) {
+                walked.push(&event.step);
+            }
+        }
+        assert_eq!(walked, STEPS);
+
+        for event in &events {
+            assert_eq!(event.steps, 11, "{event:?}");
+            assert_eq!(
+                event.step_index,
+                (STEPS.iter().position(|step| *step == event.step).unwrap() + 1) as u64,
+                "{event:?}"
+            );
+            assert!(
+                event.current <= event.total,
+                "past its own total: {event:?}"
+            );
+            assert!(
+                !event.unit.is_empty() && !event.label.is_empty(),
+                "{event:?}"
+            );
+        }
+
+        // The first and the last, in full: what the panel draws when a run starts and what
+        // it draws just before the outcome sentence replaces it.
+        assert_eq!(
+            events[0],
+            Progress {
+                step: "repositories".into(),
+                step_index: 1,
+                steps: 11,
+                current: 0,
+                total: 3,
+                unit: "repositories".into(),
+                label: "Reading repositories".into(),
+            }
+        );
+        assert_eq!(events[events.len() - 1].step, "views");
+        assert_eq!(events[events.len() - 1].current, 9);
+        assert_eq!(events[events.len() - 1].total, 9);
+    }
+
+    /// Anything that is not one of the engine's progress objects is something the engine
+    /// said, and is kept as the failure text. This is the whole of the rule: a malformed
+    /// line must neither be drawn as progress nor end the run.
+    #[test]
+    fn a_line_that_is_not_progress_is_kept_as_what_the_engine_said() {
+        assert_eq!(parse_progress("Traceback (most recent call last):"), None);
+        assert_eq!(parse_progress(""), None);
+        // Valid JSON, and not an event of this kind.
+        assert_eq!(
+            parse_progress(r#"{"event": "finished", "step": "views"}"#),
+            None
+        );
+        assert_eq!(parse_progress(r#"{"step": "archive", "current": 1}"#), None);
+        // Half an object, which is what a line torn in two by a buffer looks like.
+        assert_eq!(
+            parse_progress(r#"{"event": "progress", "step": "arch"#),
+            None
+        );
+    }
+
+    #[test]
+    fn the_reader_reports_the_progress_lines_and_keeps_the_rest() {
+        let recorded = recorded_stream();
+        let mixed = format!(
+            "{}Traceback (most recent call last):\n  File \"ingest.py\", line 3\nValueError: no\n",
+            recorded
+        );
+        let seen = Mutex::new(Vec::new());
+        let report = |progress: &Progress| seen.lock().unwrap().push(progress.clone());
+
+        let kept = progress_reader(mixed.as_bytes(), Some(&report));
+
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            116,
+            "the events were not reported"
+        );
+        assert_eq!(
+            kept,
+            "Traceback (most recent call last):\n  File \"ingest.py\", line 3\nValueError: no\n",
+            "the failure text is not the engine's own words alone"
+        );
+    }
+
+    /// Nobody listening is not a reason to keep a hundred JSON objects as the failure
+    /// text: `run` is called with no reporter from the version probe and from a test.
+    #[test]
+    fn progress_lines_are_dropped_even_with_nothing_listening() {
+        let kept = progress_reader(recorded_stream().as_bytes(), None);
+        assert_eq!(kept, "");
+    }
+
+    /// A child that writes no newline for ever does not grow this process.
+    #[test]
+    fn one_endless_line_is_capped_rather_than_buffered_whole() {
+        let long = "x".repeat(LINE_CAP * 3);
+        let kept = progress_reader(long.as_bytes(), None);
+        assert_eq!(kept.trim_end().len(), LINE_CAP);
+    }
+
+    /// The run path, end to end, against an engine the test owns: the events arrive while
+    /// it is running, stdout is still the answer, and stderr is only what it said.
+    #[cfg(unix)]
+    #[test]
+    fn a_run_reports_every_progress_line_and_still_answers() {
+        let executable = fake_engine(
+            "reporting",
+            r#"printf '{"event": "progress", "step": "archive", "step_index": 2, "steps": 11, "current": 17, "total": 494, "unit": "files", "label": "Archiving beatos"}\n' >&2
+printf 'a warning nobody translated\n' >&2
+printf '{"event": "progress", "step": "views", "step_index": 11, "steps": 11, "current": 9, "total": 9, "unit": "tables", "label": "Rebuilding the app views"}\n' >&2
+printf '{"parsed": {"sessions": 151}}'"#,
+        );
+        let seen = Mutex::new(Vec::new());
+        let report = |progress: &Progress| seen.lock().unwrap().push(progress.clone());
+
+        let answer = run_reporting(
+            &executable,
+            &["ingest", "--json", "--progress"],
+            &[],
+            &report,
+        )
+        .expect("it ran");
+
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(events.len(), 2, "the run reported {events:?}");
+        assert_eq!(events[0].step, "archive");
+        assert_eq!(events[0].current, 17);
+        assert_eq!(events[0].total, 494);
+        assert_eq!(events[1].step_index, 11);
+        assert_eq!(answer.stderr, "a warning nobody translated\n");
+        assert_eq!(describe_ingest(answer.json.as_ref()).sessions, Some(151));
     }
 
     /* --- the dialog guard ----------------------------------------------------------- */

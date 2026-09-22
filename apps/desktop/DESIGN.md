@@ -222,10 +222,10 @@ the store, does not touch `document` outside the tree it is building, and keeps 
 between renders: it is called again from scratch whenever anything changes.
 
 **One exception, and only one: a screen may remember its own navigation.** The Settings
-screen keeps which of its four tabs is open in a module-level variable. Which tab is open
+screen keeps which of its five tabs is open in a module-level variable. Which tab is open
 is navigation, not data, and a screen rebuilt because an ingest landed must not throw the
 reader back to the first tab while they are half way through changing a setting. Nothing
-about the data may be kept this way, and the four panes are built together and shown by a
+about the data may be kept this way, and the five panes are built together and shown by a
 flag, so choosing a tab redraws nothing at all.
 
 **It returns one element** and appends nothing to the page itself.
@@ -515,6 +515,37 @@ ticked from that answer rather than from what was asked for.
 - **Removed when:** it is measured and found to cost anything, at which point it is cached
   for the launch and invalidated by the setter.
 
+### Whether a review is ready costs two runs of `prudence status`
+
+`lib.rs`, `engine_readiness`. The numbers come from `status --json`, because a sentence
+cannot be recomposed in the reader's language out of English. The sentence comes from
+`status`, because when a review **is** ready the engine's own line is the thing to say and
+the JSON carries none. The text status is asked for only in that case, so a store that is
+not ready costs one run.
+
+- **Assumes:** the two runs, a moment apart, agree about the same store.
+- **When it breaks:** an ingest landing between them would put a ready sentence beside
+  numbers from before it, which is a line one draw out of date.
+- **Removed when:** `status --json`'s `readiness` block carries the sentence the `review:`
+  line prints. That is an engine change and is the honest fix.
+
+### The readiness answer is remembered against the store's own stamps
+
+`store/readiness.js`. The answer is asked for again only when `app_status.last_ingest_at`
+or the newest review's id has moved. This is not a cache for speed: asking on every draw
+closes a loop with the store watcher, because the engine opens the store read-write and
+SQLite's checkpoint on close changes exactly the two files `watcher.rs` fingerprints.
+Measured on 2026-09-22 against a copy of the founder's store: 270 runs of
+`prudence status` in three minutes with nothing else happening.
+
+- **Assumes:** nothing changes whether a review is ready except an ingest or a review.
+- **When it breaks:** the line is one store behind. `prudence review --force` from a
+  terminal writes a review, which moves the newest id, so the case that would show is a
+  readiness rule whose own thresholds change under a running app.
+- **Removed when:** the shell can answer the question without a subprocess, or the engine
+  announces that it has finished a run. The second one is already the removal condition of
+  the watcher's own entry above.
+
 ### `window.css` is not covered by the no-tokens test
 
 `test/tokens.test.mjs` asserts that `app.css` declares no custom property; `window.css`
@@ -579,8 +610,11 @@ Grown by each batch. Batch 1 adds the window shell only.
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
 | The engine block | Where `prudence` is, its version against the store's, the actions, the picker, and the Install or Update button with uv's own output under it | `src/ui/engine-section.js`, `ui/engine-section.css` |
 | The activity strip | One report at the foot of the window: what a run is doing, and how it ended | same file |
-| The tab strip | The Settings screen's four tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
+| The tab strip | The Settings screen's five tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
 | A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
+| `shareBars` | Shares, as horizontal bars on one axis: what each row is, how far it reaches, and the figure printed beside it. Drawn by the Review screen and the Observations screen, which had one each until this sheet | `src/design/charts.js` |
+| `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel and on the activity strip | `src/design/components.js` |
+| The repositories list | Which repositories the engine found and which of them it records, split into the two, with a capture control per row. Content, so it is opaque | `src/ui/settings.js`, `ui/settings.css` |
 
 **The engine block is placed, not owned, by a screen.** The Settings screen puts it where
 it goes and the block says what is in it, so the two can be written at the same time. It
@@ -598,6 +632,13 @@ screens that do not exist yet and none had been read to a product standard. They
 in the app. `docs/design/mockups/charts.js` keeps them as the visual reference, and the
 batch that builds each screen writes that screen's chart against the rules at the top of
 `design/charts.js`.
+
+**A chart a second screen wants moves whole.** `shareBars` was written twice, once out of
+`<div>`s on the Review screen and once out of SVG on the Observations screen, with two
+class families and two readings of what a null value means. Both files' own comments said
+it should move to `design/charts.js` when a second screen wanted one; it has. A screen may
+still draw something only it has, and the moment a second screen wants that too, it moves
+rather than being copied.
 
 ## What the window remembers
 

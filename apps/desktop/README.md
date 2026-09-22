@@ -14,13 +14,20 @@ on real Liquid Glass where the system has it:
   disclosure.
 - **Observations**: one card per behaviour, paired bars on a single axis, each share over
   the number of sessions it is over, with the coverage and the commit mix beside it.
-- **Settings**: four tabs. **General** is the app's own four settings (language,
+- **Settings**: five tabs. **General** is the app's own four settings (language,
   appearance, open at login, timed ingest), each a segmented control that writes through
   the shell. **Engine** is where `prudence` is, the actions, the Install or Update button,
   and where the store is kept with what produced it. **Model** is what
   `prudence config model` prints, with the one field this app may set; it never calls a
-  model. **About** is what is running, on what, under what licence, with links to the
-  project, the developer and what is recorded.
+  model. **Repositories** is which repositories the engine found on this machine and which
+  of them it records, with the capture level per repository: recording is opt-in, which is
+  the answer to "why are only three repositories recorded?". **About** is what is running,
+  on what, under what licence, with links to the project, the developer and what is
+  recorded.
+
+A run says what it is doing: `ingest --progress` writes one JSON line per step on its
+standard error, the shell reads them as they arrive and announces them, and the panel and
+the Engine tab draw the same determinate bar until the engine's own outcome replaces it.
 
 It can also **find the `prudence` executable and run it**: ingest and review, from the
 window or from the panel, with a picker when the executable cannot be found, uv to install
@@ -115,7 +122,7 @@ here. None of them is reachable by anything a user does.
 | `PRUDENCE_FORCE_APPEARANCE=dark` | pins the windows to dark (or `light`) |
 | `PRUDENCE_FORCE_LANGUAGE=zh-Hans` | draws the pages in Chinese (or `en`) |
 | `PRUDENCE_GLASS_OPAQUE=0` | glass with nothing behind it. The panel defaults to a filled backing and the window to clear; this overrides both |
-| `PRUDENCE_PRESS=Engine` | presses the button with that exact label once the page has drawn, on whichever surface is open. It is how a Settings tab, an Overview range or a run started from the panel gets into a picture. `Scripts/shot.py --press` sets it |
+| `PRUDENCE_PRESS=Engine` | presses the button with that exact label once the page has drawn, on whichever surface is open. It is how a Settings tab, an Overview range or a run started from the panel gets into a picture. `Scripts/shot.py --press` sets it. Several labels separated by `>` are pressed in order, each one waiting for its own button: `PRUDENCE_PRESS="Repositories > Metadata only"` reaches a control inside a tab. A button inside a pane that is not open is skipped, because the Settings tabs are all built and only one is shown, so `Off` exists four times over on a screen showing one of them. The panel takes one label, because everything it draws exists at its first draw |
 
 There is no store override beyond `PRUDENCE_DATA_DIR` and `PRUDENCE_CONFIG_DIR`. The spike
 had a `PRUDENCE_DB`; it is gone, because the engine does not honour that name and a guessed
@@ -158,7 +165,8 @@ apps/desktop/
     window.css         the window's own layout
     design/            tokens.css, dom.js, brand.js, purposes.js, charts.js
     text/              strings.{en,zh-Hans}.json, strings.js, fmt.js, sentences.js
-    store/             payload.js: the shell's answer, as rows; one reader per screen
+    store/             payload.js: the shell's answer, as rows; one reader per screen,
+                       and readiness.js: when the engine is asked whether a review is ready
     ui/                one file per surface, plus wiring.js: THE ONLY FILE UNDER ui/
                        THAT CALLS THE BRIDGE
   src-tauri/

@@ -33,6 +33,7 @@ const app = join(here, "..");
 import * as Str from "../src/text/strings.js";
 import { readPayload } from "../src/store/payload.js";
 const { page, PANEL_RUN } = /** @type {any} */ (await import("../src/ui/panel.js"));
+const { forget } = /** @type {any} */ (await import("../src/store/readiness.js"));
 
 for (const language of Str.LANGUAGES) {
   Str.load(
@@ -64,6 +65,18 @@ const DATA = readPayload({
  */
 function draw() {
   PANEL_RUN.running = null;
+  PANEL_RUN.at = null;
+  // A readiness answer is remembered against the store it was taken for, and every test
+  // here draws the same store; without this the second one reads the first one's answer.
+  forget();
+  return again();
+}
+
+/**
+ * The same panel, drawn again into a body with nothing else in it, keeping whatever a run
+ * has put in `PANEL_RUN`. That is what the store watcher does while an ingest is going.
+ */
+function again() {
   /** @type {any} */ (document).body.children = [];
   const container = document.createElement("div");
   /** @type {any} */ (document).body.appendChild(container);
@@ -88,16 +101,58 @@ function note(container) {
   return line;
 }
 
-/** A shell that answers whatever the test says, and records what it was asked. */
-function fakeShell(answer) {
+/** The same place, when it is carrying a bar rather than a sentence. */
+function bar(container) {
+  const line = container.findAll(".pop-progress").find((node) => node.id === "pop-note");
+  assert.ok(line, "the panel is not drawing a progress bar");
+  return line;
+}
+
+/**
+ * The shell, as this file's tests drive it: the events it would send and whether the page
+ * stopped listening. Beside the recorder rather than on it, because the recorder is
+ * compared with `deepEqual` and an array carrying properties is not the array it looks
+ * like.
+ */
+const shell = { send: (/** @type {any} */ _progress) => {}, stopped: false };
+
+/**
+ * A shell that answers whatever the test says, and records what it was asked.
+ *
+ * `options.readiness` is what the engine says about writing a review, or nothing at all.
+ */
+function fakeShell(answer, options = {}) {
   const asked = [];
+  shell.send = () => {};
+  shell.stopped = false;
   PANEL_RUN.port = {
     run: (action) => {
       asked.push(action);
       return typeof answer === "function" ? answer(action) : Promise.resolve(answer ?? { action, ok: true });
     },
+    onProgress: (handler) => {
+      shell.send = handler;
+      return Promise.resolve(() => {
+        shell.stopped = true;
+      });
+    },
+    readiness: () => Promise.resolve(options.readiness ?? null),
   };
   return asked;
+}
+
+/** One `engine-progress` payload, as the shell serialises it. */
+function event(overrides = {}) {
+  return {
+    step: "archive",
+    stepIndex: 2,
+    steps: 11,
+    current: 17,
+    total: 494,
+    unit: "files",
+    label: "Archiving beatos",
+    ...overrides,
+  };
 }
 
 test("the panel draws its five buttons", () => {
@@ -138,8 +193,111 @@ test("Ingest now runs an ingest, and Review now runs a review", async () => {
   assert.deepEqual(asked, ["ingest", "review"]);
 });
 
-/* In flight: one line, and the two buttons dead. The next sheet replaces the line with a
-   progress bar, so what is asserted is the state and not the wording of the bar. */
+/* --- what a run says while it is going ------------------------------------------------
+ *
+ * The place the note occupies carries one of two things: a sentence, or the bar. What is
+ * asserted is that the engine's own event is what the bar is drawn from, that the outcome
+ * sentence replaces it when the run ends, and that a redraw part way through a run does
+ * not blank it.
+ */
+
+test("a progress event replaces the line with the engine's own step and count", async () => {
+  let finish;
+  const asked = fakeShell(() => new Promise((resolve) => { finish = resolve; }));
+  const container = draw();
+  pressed(container, Str.t("menu.ingestNow"));
+  await settled();
+
+  // Before the first event: the sentence that says a run started, because the engine
+  // reads its repositories before it can count anything.
+  assert.equal(note(container).textContent, Str.t("menu.ingesting"));
+
+  shell.send(event());
+  const shown = bar(container);
+  assert.ok(shown.textContent.includes(Str.t("engine.step.archive")), shown.textContent);
+  assert.ok(
+    shown.textContent.includes(
+      Str.t("engine.progress.count", "17", "494", Str.t("engine.unit.files"))
+    ),
+    shown.textContent
+  );
+  assert.equal(shown.find(".progress-fill").style.width, `${(17 / 494) * 100}%`);
+
+  finish({ action: "ingest", ok: true, sessions: 151 });
+  await settled();
+  // The engine's own outcome replaces the bar, and the listener is taken down with it.
+  assert.ok(note(container).textContent.includes("151"), note(container).textContent);
+  assert.equal(shell.stopped, true, "the panel went on listening after the run ended");
+  assert.deepEqual(asked, ["ingest"]);
+});
+
+/* A redraw mid-run used to blank the line: an ingest announces itself to the store watcher
+   several times while it works, every announcement redraws the panel, and the new tree had
+   an empty note until the engine happened to count something else. On the `parse` step
+   that is seconds of a surface saying nothing about a run it started. */
+test("a redraw part way through a run keeps the bar on screen", async () => {
+  fakeShell(() => new Promise(() => {}));
+  const container = draw();
+  pressed(container, Str.t("menu.ingestNow"));
+  await settled();
+  shell.send(event({ step: "parse", stepIndex: 3, current: 40, total: 151, unit: "sessions" }));
+
+  // What the store watcher does: the same page, drawn again, with the run still going.
+  const shown = bar(again());
+  assert.ok(shown.textContent.includes(Str.t("engine.step.parse")), shown.textContent);
+  assert.equal(shown.find(".progress-fill").style.width, `${(40 / 151) * 100}%`);
+
+  // And before the first event, the sentence comes back rather than nothing at all.
+  PANEL_RUN.at = null;
+  assert.equal(note(again()).textContent, Str.t("menu.ingesting"));
+  PANEL_RUN.running = null;
+});
+
+/* --- whether a review is ready ---------------------------------------------------------- */
+
+test("the panel says what the engine says about writing a review", async () => {
+  fakeShell(undefined, {
+    readiness: {
+      ready: true,
+      sentence: "A review is ready: 151 new sessions so far and 697 commits crossed their 7-day mark.",
+    },
+  });
+  const container = draw();
+  await settled();
+  const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
+  assert.ok(caption, "the panel has no readiness caption");
+  assert.equal(caption.hidden, false, "the caption stayed hidden with an answer in hand");
+  assert.ok(caption.textContent.includes("151 new sessions"), caption.textContent);
+});
+
+test("a review that is not ready says what is still needed, in the reader's language", async () => {
+  fakeShell(undefined, {
+    readiness: {
+      ready: false,
+      newSessions: 2,
+      requiredSessions: 5,
+      maturedCommits: 0,
+      requiredCommits: 1,
+    },
+  });
+  const container = draw();
+  await settled();
+  const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
+  assert.equal(caption.textContent, Str.t("review.readiness.needs", "2", "5", "0", "1"));
+});
+
+/* An engine that does not carry readiness gets no line at all. "Not ready" would be this
+   app inventing a verdict out of an answer it was never given. */
+test("no answer is no line rather than a guess", async () => {
+  fakeShell(undefined, { readiness: null });
+  const container = draw();
+  await settled();
+  const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
+  assert.equal(caption.hidden, true, "a line was drawn with nothing behind it");
+  assert.equal(caption.textContent, "");
+});
+
+/* In flight: one line, and the two buttons dead. */
 test("a run in flight says so and refuses a second press", async () => {
   let finish;
   const asked = fakeShell(() => new Promise((resolve) => { finish = resolve; }));

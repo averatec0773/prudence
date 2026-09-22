@@ -208,3 +208,50 @@
 .settings-pairs tr:last-child th {
   border-bottom: 0;
 }
+
+/* --- the Repositories tab ------------------------------------------------------------
+ *
+ * The list is **content**: opaque, like every card, with the frost on the tab strip above
+ * it and nowhere else. Two blocks rather than one list of twenty-eight rows, because what
+ * is recorded and what merely exists are two different questions.
+ *
+ * Narrow window: the table keeps its columns and the card scrolls sideways rather than the
+ * name column collapsing onto two characters. A path is long and a segmented control has a
+ * floor under it. */
+.repo-list {
+  overflow-x: auto;
+}
+
+.repo-table {
+  min-width: 520px;
+}
+
+/* The name is what a person calls the project; the path under it is which one it is. Two
+   checkouts of one repository have the same last component. */
+.repo-name {
+  color: var(--text);
+}
+
+.repo-path {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  /* A path exists to be read against a terminal, so it is selectable here for the same
+     reason the store's path is on the Engine tab. */
+  user-select: text;
+  cursor: text;
+  word-break: break-all;
+}
+
+/* On record and not on disk. A statement of fact, in the same quiet ink as every other
+   qualification: it is not a warning, and colour never means good or bad. */
+.repo-gone {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+/* The capture control sits in the last cell, so the cell is as wide as the control rather
+   than stretching it across whatever room is left. */
+.repo-table td .segmented {
+  display: inline-flex;
+}

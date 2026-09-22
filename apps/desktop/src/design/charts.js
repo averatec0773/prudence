@@ -13,7 +13,7 @@
  * - colour is identity, never judgement.
  */
 
-import { figure, svgEl } from "./dom.js";
+import { el, figure, svgEl } from "./dom.js";
 import { PURPOSES } from "./purposes.js";
 
 /** The palette lives in `tokens.css`; this is only how a purpose names its own variable. */
@@ -63,6 +63,120 @@ export function miniStack(options) {
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none" }, marks);
   svg.style.height = `${height}px`;
   return figure(svg, options.caption, { visuallyHidden: true });
+}
+
+/* --- shares, as horizontal bars ------------------------------------------------------
+ *
+ * One row per figure: what it is, how far it reaches, and the figure itself printed
+ * beside it. The Review screen and the Observations screen both drew this and neither
+ * drew it the same way: one built the track out of two nested `<div>`s and the other out
+ * of an SVG, with two class families, two floors and two readings of what a null value
+ * means. Two copies of a chart is two places for a chart to change, so it moved here
+ * whole, which is what both files' own comments said should happen when a second screen
+ * wanted it.
+ *
+ * The rules it keeps, which is why the two readings had to be settled rather than merged:
+ *
+ * - **One axis, always the whole share.** Every row is a fraction of the same thing, so
+ *   every row is drawn against 0 to 1. A chart that scales to its own tallest bar draws a
+ *   19% bar longer than an 84% bar on the card below it.
+ * - **The value is printed, never only drawn.** A screenshot has no pointer, and a bar
+ *   with no number beside it is a picture rather than a figure.
+ * - **Colour is identity.** The caller gives each row its colour and it says which
+ *   quantity this is, never whether the quantity is good.
+ * - **A null value is not a zero.** `value: null` is "this figure is not a share" and
+ *   draws no track at all; a value that is not a number is "the engine wrote none" and
+ *   draws the empty track. The two are different statements and must not look alike.
+ */
+
+/** How much of the track a row fills, in the track's own units. */
+const TRACK = 1000;
+
+/** The smallest mark a non-zero share draws, so a side that is nearly nothing is still a
+ *  mark rather than a gap the reader has to interpret. */
+const FLOOR = 4;
+
+/** One bar: the full track, what this row fills of it, and the context behind it. */
+function shareTrack(row) {
+  const marks = [
+    svgEl("rect", { x: 0, y: 0, width: TRACK, height: 100, fill: "var(--surface-sunken)" }),
+  ];
+  // The coverage behind the figure: context for the bar, never a series to read against
+  // it, which is why it is the full height and pale and goes down first.
+  if (Number(row.underlay) > 0) {
+    marks.push(
+      svgEl("rect", {
+        x: 0,
+        y: 0,
+        width: Math.min(Number(row.underlay), 1) * TRACK,
+        height: 100,
+        fill: "var(--coverage)",
+      })
+    );
+  }
+  if (Number(row.value) > 0) {
+    marks.push(
+      svgEl("rect", {
+        x: 0,
+        y: 0,
+        width: Math.max(Math.min(Number(row.value), 1) * TRACK, FLOOR),
+        height: 100,
+        fill: row.colour,
+      })
+    );
+  }
+  const svg = svgEl(
+    "svg",
+    { viewBox: `0 0 ${TRACK} 100`, preserveAspectRatio: "none", "aria-hidden": "true" },
+    marks
+  );
+  svg.style.width = "100%";
+  svg.style.height = "100%";
+  return el("div", { class: "track-wrap" }, [svg]);
+}
+
+/**
+ * @param {{
+ *   rows: {
+ *     label: string,
+ *     value: number | null,
+ *     text: string,
+ *     colour: string,
+ *     underlay?: number | null,
+ *     foot?: string,
+ *   }[],
+ *   caption: string,
+ * }} options
+ * @returns {HTMLElement}
+ */
+export function shareBars(options) {
+  const chart = el("figure", { class: "chart paired" });
+  for (const row of options.rows) {
+    const value = el("span", { class: "paired-value" }, [el("span", { text: row.text })]);
+    // Two elements rather than one string: a value and its qualification are not a
+    // sentence, and joining them with a space in JavaScript would be one language's
+    // punctuation applied to both.
+    if (row.foot) value.appendChild(el("span", { class: "qualifier", text: row.foot }));
+
+    chart.appendChild(
+      el("div", { class: "paired-row" }, [
+        el("span", { class: "paired-label", text: row.label }),
+        // A figure that is not a share keeps its cell and draws nothing in it, so the
+        // rows above and below it still line up.
+        row.value === null || row.value === undefined
+          ? el("span", { class: "track-blank" })
+          : shareTrack(row),
+        value,
+      ])
+    );
+  }
+
+  chart.setAttribute("role", "img");
+  chart.setAttribute("aria-label", options.caption);
+  // Hidden rather than printed: every label, value and denominator is already visible
+  // HTML beside the marks, so a printed caption would say everything twice.
+  chart.appendChild(el("figcaption", { class: "sr", text: options.caption }));
+  return chart;
 }
 
 /* --- the axis a chart over time draws on --------------------------------------------

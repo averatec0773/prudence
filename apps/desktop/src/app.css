@@ -140,6 +140,14 @@ body {
   line-height: 1.4;
 }
 
+/* What a run is doing, in the place the footer's note occupies. The bar is the design
+   system's; this only says that it takes the footer's whole width, where the note beside
+   it is a capsule that takes its own. The panel re-measures itself when either changes. */
+.pop-progress {
+  width: 100%;
+  padding: 2px 0;
+}
+
 .buttons-row {
   display: flex;
   gap: var(--s2);

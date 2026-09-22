@@ -107,6 +107,25 @@ export function installEngine(upgrade) {
   return core().invoke("engine_install", { upgrade: Boolean(upgrade) });
 }
 
+/** Every repository the engine found, and which of them it records. `prudence init
+ *  --scan --json`, decoded in `src-tauri/src/repositories.rs`. */
+export function engineRepositories() {
+  return core().invoke("engine_repositories");
+}
+
+/** Record one repository at `off`, `metadata-only` or `full`, and answer with the whole
+ *  scan as it is afterwards. The key is the scan's own `repoKey`: the engine refuses a
+ *  path. */
+export function setRepositoryLevel(key, level) {
+  return core().invoke("engine_repository_level", { key: String(key), level: String(level) });
+}
+
+/** Whether a review is ready, with the engine's own sentence when it is. Null where the
+ *  engine does not answer the question. */
+export function engineReadiness() {
+  return core().invoke("engine_readiness");
+}
+
 /* --- the model settings ---------------------------------------------------------------
  *
  * The app never calls a model. These read what `prudence config model` prints and set the
@@ -185,6 +204,27 @@ export function onSettingsChanged(handler) {
   const tauri = /** @type {any} */ (globalThis).__TAURI__;
   if (!tauri?.event) return Promise.resolve(() => {});
   return tauri.event.listen("settings-changed", () => handler());
+}
+
+/**
+ * What a run is doing, while it is still doing it. One event per line the engine writes
+ * on its standard error under `--progress`.
+ *
+ * It carries its payload for the same reason the install's does: a progress line is true
+ * for a moment, and asking for it again would mean asking a run that has moved on. Both
+ * pages listen, because a run started in one surface can be watched from the other and a
+ * timed ingest belongs to neither.
+ *
+ * @param {(progress: any) => void} handler
+ * @returns {Promise<() => void>}
+ */
+export function onEngineProgress(handler) {
+  const tauri = /** @type {any} */ (globalThis).__TAURI__;
+  if (!tauri?.event) return Promise.resolve(() => {});
+  return tauri.event.listen("engine-progress", (event) => {
+    const payload = /** @type {any} */ (event)?.payload;
+    if (payload) handler(payload);
+  });
 }
 
 /**

@@ -10,6 +10,8 @@ mod installer;
 mod model;
 mod panel;
 mod platform;
+mod readiness;
+mod repositories;
 mod store;
 mod timer;
 mod ui_state;
@@ -252,13 +254,34 @@ async fn engine_status(shell: State<'_, Shell>) -> Result<engine::EngineStatus, 
     scheduled(move || engine::shared().status(remembered.as_deref())).await
 }
 
+/// What a run is doing, while it is still doing it.
+///
+/// Unlike `store-changed` and `settings-changed`, this one carries its payload: the point
+/// of a progress line is that it is true for a moment, and asking for it again would mean
+/// asking a run that has already moved on. It is the same reasoning as
+/// `installer::INSTALL_PROGRESS`, and the same shape.
+const ENGINE_PROGRESS: &str = "engine-progress";
+
+/// Tell both pages what the run is doing.
+///
+/// Both, not the one that pressed the button: the panel and the window can be open
+/// together, and a timed ingest belongs to neither. A page that is not drawing a run
+/// ignores it.
+pub fn announce_progress(app: &AppHandle, progress: &engine::Progress) {
+    if let Err(error) = app.emit(ENGINE_PROGRESS, progress) {
+        eprintln!("[engine] could not report progress: {error}");
+    }
+}
+
 /// Run `prudence ingest` or `prudence review`, and answer with what the engine said.
 ///
-/// The page waits on this promise, which is how it knows a run is still going. Nothing is
-/// plumbed into the screens: `watcher.rs` already refreshes every page when the store
-/// changes, so a successful run's new figures arrive on their own.
+/// The page waits on this promise, which is how it knows a run is still going, and every
+/// progress line the engine writes on the way is announced over [`ENGINE_PROGRESS`].
+/// Nothing else is plumbed into the screens: `watcher.rs` already refreshes every page
+/// when the store changes, so a successful run's new figures arrive on their own.
 #[tauri::command]
 async fn engine_run(
+    app: AppHandle,
     shell: State<'_, Shell>,
     action: String,
     force: bool,
@@ -270,8 +293,12 @@ async fn engine_run(
     };
     let remembered = shell.memory.read().usable_engine().map(str::to_string);
     let timer = shell.timer.clone();
-    let outcome =
-        scheduled(move || engine::shared().run(remembered.as_deref(), action, force)).await;
+    let outcome = scheduled(move || {
+        engine::shared().run(remembered.as_deref(), action, force, &|progress| {
+            announce_progress(&app, progress)
+        })
+    })
+    .await;
     // The timed ingest's clock starts again from any run, not only from its own. Without
     // this a reader who presses Ingest now a minute before the interval is up gets a
     // second ingest a minute later, for nothing.
@@ -370,6 +397,86 @@ async fn engine_install(
         }
     })
     .await
+}
+
+/* --- the repositories, and whether a review is ready -----------------------------------
+ *
+ * Both are questions for the engine rather than for the store: which repositories exist on
+ * disk and which are enabled is what `prudence init --scan` knows, and whether there is
+ * enough new work for a review is a rule `prudence status` states. The app decodes and
+ * draws; `repositories.rs` and `readiness.rs` hold the reading.
+ */
+
+/// Every repository the engine found, and which of them it is recording.
+#[tauri::command]
+async fn engine_repositories(
+    shell: State<'_, Shell>,
+) -> Result<Vec<repositories::Repository>, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        engine::shared()
+            .read(remembered.as_deref(), &["init", "--scan", "--json"])
+            .map_err(|error| error.kind().to_string())
+            .and_then(|printed| repositories::parse(&printed))
+    })
+    .await?
+}
+
+/// Record one repository at one level, or stop recording it.
+///
+/// The answer is **the whole scan, read again**, not the change that was asked for: the
+/// engine decides what a repository's level is, and a control drawn from the click rather
+/// than from the answer is a control that lies the first time the engine refuses.
+#[tauri::command]
+async fn engine_repository_level(
+    shell: State<'_, Shell>,
+    key: String,
+    level: String,
+) -> Result<Vec<repositories::Repository>, String> {
+    let Some(arguments) = repositories::arguments(&key, &level) else {
+        // Not a user-visible sentence: the page can only send one of three words and a key
+        // out of the scan, so anything else is a defect in the bridge.
+        return Err(format!("no such capture level: {level}"));
+    };
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        let engine = engine::shared();
+        let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        engine
+            .read(remembered.as_deref(), &borrowed)
+            .and_then(|_| engine.read(remembered.as_deref(), &["init", "--scan", "--json"]))
+            .map_err(|error| error.kind().to_string())
+            .and_then(|printed| repositories::parse(&printed))
+    })
+    .await?
+}
+
+/// Whether a review is ready, with the engine's own sentence when it is.
+#[tauri::command]
+async fn engine_readiness(shell: State<'_, Shell>) -> Result<Option<readiness::Readiness>, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        let engine = engine::shared();
+        let printed = engine
+            .read(remembered.as_deref(), &["status", "--json"])
+            .map_err(|error| error.kind().to_string())?;
+        let Some(mut found) = readiness::parse(&printed) else {
+            // An engine that does not answer this question yet. Nothing is said rather
+            // than "not ready", which would be this app inventing a verdict.
+            return Ok(None);
+        };
+        // The sentence is only read where it is printed. A store that is not ready gets a
+        // line composed in the reader's own language from the numbers above, so a second
+        // status would be a second subprocess for something nothing shows.
+        if found.ready {
+            found.sentence = engine
+                .read(remembered.as_deref(), &["status"])
+                .ok()
+                .and_then(|text| readiness::review_line(&text));
+        }
+        Ok(Some(found))
+    })
+    .await?
 }
 
 /* --- the model settings --------------------------------------------------------------
@@ -674,6 +781,9 @@ pub fn run() {
             engine_choose,
             engine_forget,
             engine_install,
+            engine_repositories,
+            engine_repository_level,
+            engine_readiness,
             model_read,
             model_set_language,
             settings_read,

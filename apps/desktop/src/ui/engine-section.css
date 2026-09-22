@@ -128,6 +128,13 @@
   display: none;
 }
 
+/* The progress bar takes the strip's whole width, and holds it open: a bar is read by its
+   length, and one sized to the two words above it would be shorter than the label. */
+.engine-activity .progress {
+  flex: 1 1 100%;
+  min-width: min(420px, 100%);
+}
+
 .engine-said {
   font-size: var(--t-footnote);
   color: var(--text-2);

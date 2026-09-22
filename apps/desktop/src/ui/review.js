@@ -18,7 +18,7 @@
  *   measured; it is printed as stored and never turned into a zero.
  */
 
-import { miniStack } from "../design/charts.js";
+import { miniStack, shareBars } from "../design/charts.js";
 import { el } from "../design/dom.js";
 import { emptyState, panel, statCard } from "../design/components.js";
 import { PURPOSES } from "../design/purposes.js";
@@ -34,6 +34,7 @@ import {
   segmentParagraphs,
   shares,
 } from "../store/review.js";
+import { readiness } from "../store/readiness.js";
 import {
   count,
   day as formatDay,
@@ -43,14 +44,14 @@ import {
   sessions as sessionPhrase,
   stamp,
 } from "../text/fmt.js";
-import { observationSentence } from "../text/sentences.js";
+import { observationSentence, readinessSentence } from "../text/sentences.js";
 import { t } from "../text/strings.js";
 
 /** The engine's key for an observation computed over every project rather than one. */
 const POOLED = "*";
 
 /**
- * What the Review now button does.
+ * What the Review now button does, and what the engine says about pressing it.
  *
  * Running the engine is the CLI wiring's job, not a screen's: a screen is handed
  * everything and reaches for nothing, and `bridge.js` is the only place in the frontend
@@ -59,9 +60,14 @@ const POOLED = "*";
  * function that starts the run, and the store watcher already redraws every page when a
  * review lands.
  *
- * @type {{ run: null | (() => void) }}
+ * `readiness` is the same seam for the line above the review: whether writing one now
+ * would produce anything. **When** it is asked is `store/readiness.js`'s decision, not
+ * this screen's: the answer follows an ingest, and asking on every draw closes a loop with
+ * the store watcher that the file describes in full.
+ *
+ * @type {{ run: null | (() => void), readiness: null | (() => Promise<any>) }}
  */
-export const REVIEW_NOW = { run: null };
+export const REVIEW_NOW = { run: null, readiness: null };
 
 
 /** A section that found nothing says so in the engine's own sentence, and no more. */
@@ -143,61 +149,15 @@ function storedTable(section, { swatches = false } = {}) {
   return table;
 }
 
-/**
- * Horizontal bars with the same numbers in words beside them.
+/* The horizontal bars this screen draws are `design/charts.js`'s `shareBars`.
  *
- * Not in `design/charts.js`: this app's charts are SVG and a share bar belongs there
- * with the others, but adding one is a shared-file change, so it is drawn here for now
- * and proposed in the report. It keeps that module's rules anyway: the value is
- * printed rather than only drawn, every share carries what it is over, and the caption
- * carries the same numbers as the picture.
- *
- * @param {{ rows: {label: string, text: string, value: number|null, colour: string,
- *           underlay?: number|null, foot?: string}[], caption: string }} options
- */
-function barRows(options) {
-  const wrapper = el("figure", { class: "chart" });
-  const wrap = el("div", { class: "bar-rows", role: "img", "aria-label": options.caption });
-  for (const row of options.rows) {
-    // A figure that is not a share has no track at all. A track with nothing in it
-    // would read as a measured zero, and `lines followed` is 53,166 lines, not none.
-    const track = el("div", { class: row.value === null ? "" : "track" });
-    if (row.value !== null) {
-      if (row.underlay !== null && row.underlay !== undefined) {
-        const pale = document.createElement("span");
-        pale.className = "underlay";
-        pale.style.width = `${clamp(row.underlay) * 100}%`;
-        track.appendChild(pale);
-      }
-      const fill = document.createElement("span");
-      fill.className = "fill";
-      fill.style.width = `${clamp(row.value) * 100}%`;
-      fill.style.background = row.colour;
-      track.appendChild(fill);
-    }
-
-    // Two elements rather than one string: a value and its qualification are not a
-    // sentence, and joining them with a space in JavaScript would be one language's
-    // punctuation applied to both.
-    const figure = el("div", { class: "figure" }, [el("span", { text: row.text })]);
-    if (row.foot) figure.appendChild(el("span", { class: "qualifier", text: row.foot }));
-
-    wrap.appendChild(
-      el("div", { class: "bar-row" }, [
-        el("div", { class: "label", text: row.label }),
-        track,
-        figure,
-      ])
-    );
-  }
-  wrapper.appendChild(wrap);
-  wrapper.appendChild(el("figcaption", { class: "sr", text: options.caption }));
-  return wrapper;
-}
-
-function clamp(value) {
-  return Math.min(Math.max(Number(value) || 0, 0), 1);
-}
+ * They were a second implementation here, built out of `<div>`s where the Observations
+ * screen's were SVG, with their own class family and their own reading of what a null
+ * value means. The comment above them said a share bar belongs in the chart module with
+ * the others and that adding one was a shared-file change; this is that change. Every
+ * rule it kept is kept there, in one place: the value is printed rather than only drawn,
+ * every share carries what it is over, a figure that is not a share draws no track, and
+ * the caption carries the same numbers as the picture. */
 
 /* --- the cards ---------------------------------------------------------------------- */
 
@@ -318,7 +278,7 @@ function becameCard(section) {
   const body = el("div", { class: "stack" });
   if (rows.length) {
     body.appendChild(
-      barRows({
+      shareBars({
         rows,
         caption: list(rows.map((one) => t("review.headline.section", one.label, one.text))),
       })
@@ -420,7 +380,7 @@ function observationBlock(pair, names) {
   ];
   const block = el("div", { class: "obs-block" }, [
     el("div", { class: "obs-sentence", text: sentence }),
-    barRows({
+    shareBars({
       rows: sides,
       caption: list(sides.map((side) => t("review.headline.section", side.label, side.text))),
     }),
@@ -633,6 +593,28 @@ export function review(state) {
   head.appendChild(button);
   screen.appendChild(head);
   screen.appendChild(note);
+
+  /* Whether writing one now would produce anything, above the one that is stored.
+     Hidden until the engine answers: it is a subprocess, and an empty line reserving
+     space for a sentence nobody has said yet is worse than the sentence arriving. */
+  const ready = el("div", { class: "screen-note readiness" });
+  ready.hidden = true;
+  screen.appendChild(ready);
+  if (REVIEW_NOW.readiness) {
+    // Through `store/readiness.js`, which decides when the engine is asked at all: asking
+    // on every draw closes a loop with the store watcher, and that file holds the story.
+    readiness(data, () => /** @type {() => Promise<any>} */ (REVIEW_NOW.readiness)())
+      .then((found) => {
+        const said = readinessSentence(found);
+        if (!said) return;
+        ready.textContent = said;
+        ready.hidden = false;
+      })
+      // Silent, and deliberately: a Review screen that cannot reach the engine still has
+      // the stored review on it, which is the thing the screen is for. `wiring.js` writes
+      // the reason to the shell's standard error.
+      .catch(() => {});
+  }
 
   draw(null);
   screen.appendChild(body);

@@ -22,8 +22,9 @@
  *   the fact and inferred mix) and behind a disclosure as view and column names.
  */
 
+import { shareBars } from "../design/charts.js";
 import { emptyState } from "../design/components.js";
-import { el, svgEl } from "../design/dom.js";
+import { el } from "../design/dom.js";
 import { scoped, shareOf } from "../store/observations.js";
 import { count, decimal, percent, purpose, sessions } from "../text/fmt.js";
 import { observationCaveat, observationSentence } from "../text/sentences.js";
@@ -110,41 +111,12 @@ export function thresholdLine(row) {
 
 /* --- the chart ----------------------------------------------------------------------
  *
- * Two groups compared, as paired horizontal bars. The marks are SVG; the label, the
- * value and the n are HTML beside them, so the type stays at its real size however
- * narrow the column gets. This is the chart the product exists for, and it lives in the
- * screen that draws it until a second screen wants it, at which point it moves whole to
- * `design/charts.js` rather than being copied.
+ * Two groups compared, as two rows of `design/charts.js`'s share bars. The chart itself
+ * lived here while this was the only screen drawing one; the Review screen drew its own
+ * out of `<div>`s, which is two copies of one picture, so the drawing moved whole to the
+ * design system and both screens now call it. What is left here is what is particular to
+ * an observation: which two sides there are, what each one is over, and the caption.
  */
-
-
-/** One bar: the full track, and the share of it this side fills. */
-function track(fraction, fill) {
-  const marks = [
-    svgEl("rect", { x: 0, y: 0, width: 1000, height: 100, fill: "var(--surface-sunken)" }),
-  ];
-  if (fraction > 0) {
-    // A floor of four units, so a side that is nearly nothing is still a mark rather
-    // than a gap the reader has to interpret.
-    marks.push(
-      svgEl("rect", {
-        x: 0,
-        y: 0,
-        width: Math.max(Math.min(fraction, 1) * 1000, 4),
-        height: 100,
-        fill,
-      })
-    );
-  }
-  const svg = svgEl(
-    "svg",
-    { viewBox: "0 0 1000 100", preserveAspectRatio: "none", "aria-hidden": "true" },
-    marks
-  );
-  svg.style.width = "100%";
-  svg.style.height = "100%";
-  return el("div", { class: "track-wrap" }, [svg]);
-}
 
 /**
  * @param {{ labelWith: string, labelWithout: string, withValue: number, withoutValue: number,
@@ -152,13 +124,6 @@ function track(fraction, fill) {
  * @returns {HTMLElement}
  */
 function pairedBars(options) {
-  // **The axis is always the whole share, 0 to 100%.** It used to be a quarter, a half,
-  // three quarters or the whole, whichever first held the taller bar, and nothing on the
-  // card said which had been picked: on the founder's own store that drew a 19% bar
-  // physically longer than an 84% bar two cards below it. A bar the reader cannot compare
-  // with the next bar is worse than a short one, and every value here is a share of the
-  // same thing, so the same axis fits all of them.
-  const scale = 1;
   const sides = [
     {
       label: options.labelWith,
@@ -166,29 +131,18 @@ function pairedBars(options) {
       n: options.withN,
       // The outcome's own colour: which outcome this pair is of, never which side to be
       // on. `direction` is not consulted here and must not be.
-      fill: options.fill,
+      colour: options.fill,
     },
     {
       label: options.labelWithout,
       value: options.withoutValue,
       n: options.withoutN,
-      fill: "var(--text-3)",
+      colour: "var(--text-3)",
     },
   ];
 
-  const figure = el("figure", { class: "chart paired" });
-  const readings = [];
-  for (const side of sides) {
-    const reading = t("chart.shareOver", percent(side.value), sessions(side.n));
-    readings.push(reading);
-    figure.appendChild(
-      el("div", { class: "paired-row" }, [
-        el("span", { class: "paired-label", text: side.label }),
-        track(side.value / scale, side.fill),
-        el("span", { class: "paired-value", text: reading }),
-      ])
-    );
-  }
+  // Every share carries what it is over, beside the bar it is on.
+  const readings = sides.map((side) => t("chart.shareOver", percent(side.value), sessions(side.n)));
 
   // No gap is printed here, and that is deliberate. The distance between the two medians
   // is a quantity the **engine** owns: `store/observations.py` has `MIN_GAP = 0.10` and
@@ -199,19 +153,24 @@ function pairedBars(options) {
   // two medians are both on screen, and the engine's own sentence states them.
   // It is still used to order the list, where it is never shown; see `store/observations.js`.
 
-  const caption = t(
-    "observations.pairReading",
-    sides[0].label,
-    readings[0],
-    sides[1].label,
-    readings[1]
-  );
-  figure.setAttribute("role", "img");
-  figure.setAttribute("aria-label", caption);
-  // Hidden rather than printed: the label, the share and the n of both sides are already
-  // visible HTML beside the marks, so a printed caption would say everything twice.
-  figure.appendChild(el("figcaption", { class: "sr", text: caption }));
-  return figure;
+  return shareBars({
+    rows: sides.map((side, index) => ({
+      label: side.label,
+      // A share the engine did not write is `NaN` and draws the empty track: `percent`
+      // prints a dash for it, and an empty track is what "no value" looks like. It is not
+      // `null`, which this chart reads as "not a share at all".
+      value: side.value,
+      text: readings[index],
+      colour: side.colour,
+    })),
+    caption: t(
+      "observations.pairReading",
+      sides[0].label,
+      readings[0],
+      sides[1].label,
+      readings[1]
+    ),
+  });
 }
 
 /* --- the card ------------------------------------------------------------------------ */

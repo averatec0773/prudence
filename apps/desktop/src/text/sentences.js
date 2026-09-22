@@ -11,7 +11,7 @@
  * change, the catalog's `observation.*` keys change with it and the test says so.
  */
 
-import { list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
+import { count, list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
 import { lang as currentLang, t } from "./strings.js";
 
 /** @typedef {import("./strings.js").Language} Language */
@@ -118,6 +118,37 @@ export function reviewLine(review, language) {
   );
   const scope = review.project ?? t("review.scope.everyProject");
   return t("review.headline.project", String(review.id), range[0], range[1], scope);
+}
+
+/**
+ * Whether writing a review now would produce one, as one line.
+ *
+ * **The two halves are not the same kind of sentence, on purpose.** A review that is ready
+ * gets the engine's own words, because the rule is the engine's and `prudence status`
+ * states it in one line that the app should not reword; the app's own sentence is only the
+ * fallback for an engine that printed none. A review that is not ready is composed here
+ * out of the four numbers, in the reader's own language, because there the numbers are the
+ * answer and an English clause in the middle of a Chinese screen is not.
+ *
+ * Null for no answer at all, which is what an engine that does not carry readiness gives:
+ * saying "not ready" then would be the app inventing a verdict.
+ *
+ * @param {{ ready?: boolean, sentence?: string|null, newSessions?: number,
+ *           requiredSessions?: number, maturedCommits?: number,
+ *           requiredCommits?: number } | null | undefined} found
+ * @param {Language} [language]
+ * @returns {string}
+ */
+export function readinessSentence(found, language) {
+  if (!found) return "";
+  if (found.ready) return String(found.sentence || t("review.readiness.ready"));
+  return t(
+    "review.readiness.needs",
+    count(Number(found.newSessions ?? 0), language),
+    count(Number(found.requiredSessions ?? 0), language),
+    count(Number(found.maturedCommits ?? 0), language),
+    count(Number(found.requiredCommits ?? 0), language)
+  );
 }
 
 /** `21 Sep 01:45 (13 hours ago)`, both halves in the reader's locale. */

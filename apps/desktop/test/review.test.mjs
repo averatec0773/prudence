@@ -48,6 +48,7 @@ const {
 const { REVIEW_NOW, review, reviewCards } = /** @type {any} */ (
   await import("../src/ui/review.js")
 );
+const { forget } = /** @type {any} */ (await import("../src/store/readiness.js"));
 
 for (const language of Str.LANGUAGES) {
   Str.load(
@@ -408,17 +409,22 @@ test("both sides of an observation carry one colour, whichever side came out hig
   );
   const blocks = card.findAll(".obs-block");
   assert.equal(blocks.length, 2);
+  // The marks are SVG since the bars moved to `design/charts.js`: the ink of a side is
+  // its rectangle's `fill`, and the track behind it is not a side.
+  const inksOf = (block) =>
+    block
+      .findAll("rect")
+      .map((node) => node.getAttribute("fill"))
+      .filter((fill) => fill !== "var(--surface-sunken)" && fill !== "var(--coverage)");
   for (const block of blocks) {
-    const inks = block.findAll(".fill").map((node) => node.style.background);
+    const inks = inksOf(block);
     assert.equal(inks.length, 2);
     assert.equal(inks[0], inks[1], "the two sides of a split are not coloured against each other");
   }
   // The colour says which outcome is being measured. `test_runs` is a rework row and
   // `sittings` an alive row, so the two blocks differ and neither is a verdict.
-  const first_ = blocks[0].find(".fill").style.background;
-  const second = blocks[1].find(".fill").style.background;
-  assert.equal(first_, "var(--o-rework)");
-  assert.equal(second, "var(--o-alive)");
+  assert.equal(inksOf(blocks[0])[0], "var(--o-rework)");
+  assert.equal(inksOf(blocks[1])[0], "var(--o-alive)");
 });
 
 test("the comparison's two bars keep their ink whichever way the change went", () => {
@@ -525,6 +531,78 @@ test("Review now calls the wiring once it is there, and says nothing itself", ()
   } finally {
     REVIEW_NOW.run = null;
   }
+});
+
+/* --- whether writing one now would produce anything ---------------------------------------
+ *
+ * The line above the stored review. The engine's own sentence when a review is ready,
+ * because the rule is the engine's; what is still needed when it is not, composed from the
+ * engine's four numbers in the reader's own language.
+ */
+
+const settled = () => new Promise(setImmediate);
+
+async function withReadiness(answer) {
+  // The answer is remembered against the store it was taken for, and every case here
+  // draws the same store.
+  forget();
+  REVIEW_NOW.readiness = () => Promise.resolve(answer);
+  try {
+    const screen = review(state());
+    await settled();
+    return screen.find(".readiness");
+  } finally {
+    REVIEW_NOW.readiness = null;
+  }
+}
+
+test("a review that is ready is said in the engine's own words", async () => {
+  const said = "A review is ready: 151 new sessions so far and 697 commits crossed their 7-day mark.";
+  const line = await withReadiness({ ready: true, sentence: said });
+  assert.equal(line.hidden, false, "the line stayed hidden with an answer in hand");
+  assert.equal(line.textContent, said);
+});
+
+test("a review that is not ready says what is still needed, from the engine's numbers", async () => {
+  const line = await withReadiness({
+    ready: false,
+    newSessions: 2,
+    requiredSessions: 5,
+    maturedCommits: 0,
+    requiredCommits: 1,
+  });
+  assert.equal(line.textContent, Str.t("review.readiness.needs", "2", "5", "0", "1"));
+  // The numbers are the engine's, and the sentence is the reader's.
+  Str.setLang("zh-Hans");
+  try {
+    const chinese = await withReadiness({
+      ready: false,
+      newSessions: 2,
+      requiredSessions: 5,
+      maturedCommits: 0,
+      requiredCommits: 1,
+    });
+    assert.equal(chinese.textContent, Str.tIn("zh-Hans", "review.readiness.needs", "2", "5", "0", "1"));
+    assert.equal(chinese.textContent.includes("Not enough"), false);
+  } finally {
+    Str.setLang("en");
+  }
+});
+
+/* An engine that does not answer the question gets no line. "Not ready" on no answer would
+   be the screen inventing a verdict, and a review it declined to write is the one thing
+   this line exists to explain. */
+test("no answer is no line, and the stored review is still drawn", async () => {
+  const line = await withReadiness(null);
+  assert.equal(line.hidden, true);
+  assert.equal(line.textContent, "");
+
+  forget();
+  REVIEW_NOW.readiness = null;
+  const screen = review(state());
+  await settled();
+  assert.equal(screen.find(".readiness").hidden, true, "a line was drawn with no seam at all");
+  assert.ok(screen.find(".card"), "the stored review is not on the screen");
 });
 
 /* --- the strings ------------------------------------------------------------------------- */

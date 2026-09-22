@@ -99,6 +99,14 @@ function fakePort(answers = {}) {
         asked.stopped = true;
       });
     },
+    // The same shape for a run's own progress: the handler comes back so a test can send
+    // it the events the shell would send.
+    onProgress: (handler) => {
+      asked.running = handler;
+      return Promise.resolve(() => {
+        asked.stoppedRunning = true;
+      });
+    },
     link: (name) => {
       asked.links.push(name);
       return Promise.resolve();
@@ -301,6 +309,43 @@ test("a run says it is going, then says what the engine said", async () => {
     strip.find(".engine-said").textContent,
     Str.t("engine.ingestFinished.sessions", Fmt.sessions(151))
   );
+});
+
+/* The strip carries the same bar the panel does, and the engine's own outcome replaces it
+   when the run ends. The component itself is asserted in `test/progress.test.mjs`, against
+   a recorded run; what matters here is that the strip draws one and then stops. */
+test("a run draws its progress on the strip, and the outcome replaces it", async () => {
+  const strip = engineActivity();
+  let release = () => {};
+  const asked = fakePort({
+    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true, sessions: 151 }))),
+  });
+
+  const going = run("ingest");
+  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.ingesting"));
+
+  asked.running({
+    step: "archive",
+    stepIndex: 2,
+    steps: 11,
+    current: 17,
+    total: 494,
+    unit: "files",
+    label: "Archiving beatos",
+  });
+  const bar = strip.find(".progress");
+  assert.ok(bar, "the strip drew no progress bar");
+  assert.equal(bar.find(".progress-label").textContent, Str.t("engine.step.archive"));
+  assert.equal(bar.find(".progress-fill").style.width, `${(17 / 494) * 100}%`);
+
+  release();
+  await going;
+  assert.equal(strip.find(".progress"), null, "the bar outlived the run");
+  assert.equal(
+    strip.find(".engine-said").textContent,
+    Str.t("engine.ingestFinished.sessions", Fmt.sessions(151))
+  );
+  assert.equal(asked.stoppedRunning, true, "the page went on listening after the run ended");
 });
 
 test("the session count is the engine's own figure, and its absence is not a zero", async () => {

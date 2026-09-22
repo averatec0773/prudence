@@ -47,6 +47,7 @@ export function wireWindow() {
     forget: () => Bridge.forgetEngine(),
     install: (upgrade) => Bridge.installEngine(upgrade),
     onInstallProgress: (handler) => Bridge.onInstallProgress(handler),
+    onProgress: (handler) => Bridge.onEngineProgress(handler),
     link: (name) => Bridge.openLink(name),
   };
 
@@ -58,13 +59,19 @@ export function wireWindow() {
     timedIngest: (minutes) => reported("timed ingest", Bridge.setTimedIngest(minutes)),
     model: () => Bridge.modelSettings(),
     modelLanguage: (code) => reported("model language", Bridge.setModelLanguage(code)),
+    repositories: () => Bridge.engineRepositories(),
+    repositoryLevel: (key, level) => Bridge.setRepositoryLevel(key, level),
     link: (name) => reported("link", Bridge.openLink(name)),
   };
 
-  // The Review screen's button. `review.js` exports the seam and refuses to invent a run
-  // of its own, because a screen may not call the bridge.
+  // The Review screen's button, and the line above the review that says whether writing
+  // one would produce anything. `review.js` exports the seam and refuses to invent either
+  // of them, because a screen may not call the bridge.
   REVIEW_NOW.run = () => {
     run("review");
   };
+  // Reported rather than thrown: an engine that cannot be asked leaves the line off the
+  // screen, and the reason goes where a screen's failures have to go.
+  REVIEW_NOW.readiness = () => reported("readiness", Bridge.engineReadiness());
   document.body.appendChild(engineActivity());
 }

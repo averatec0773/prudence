@@ -165,7 +165,12 @@ pub fn start(app: &AppHandle, timer: Arc<Timer>) {
             .usable_engine()
             .map(str::to_string);
         eprintln!("[timer] the interval is up; running an ingest");
-        let outcome = engine::shared().run(remembered.as_deref(), Action::Ingest, false);
+        // An ingest nobody pressed still reports: a window open while the interval comes
+        // up shows what it is doing, on the same strip a pressed run uses.
+        let outcome =
+            engine::shared().run(remembered.as_deref(), Action::Ingest, false, &|progress| {
+                crate::announce_progress(&app, progress)
+            });
         match &outcome.error_kind {
             Some(kind) => eprintln!("[timer] the ingest did not finish: {kind}"),
             None => eprintln!("[timer] the ingest finished"),

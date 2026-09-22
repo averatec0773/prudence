@@ -871,8 +871,68 @@ figcaption.sr {
   background: transparent;
 }
 
+/* What a run is doing.
+ *
+ * One component, drawn on the panel and on the Engine tab, and fluid so that the same
+ * rules give a narrow bar in a popover and a wide one on a screen.
+ *
+ * **Nothing here animates.** The bar is rebuilt from each event the engine sends, so its
+ * width is only ever a figure the engine reported; a transition between two of them would
+ * be motion the run has not earned, and the step it is on can sit still for seconds.
+ * The accent is the only colour: a progress bar reports, it does not grade. */
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.progress-label {
+  font-size: var(--t-caption);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-count {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.progress-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+/* Which step of how many: context for the bar above it, and quieter than the figures. */
+.progress-step {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+}
+
+/* Shares, as horizontal bars: `design/charts.js`'s `shareBars`, drawn by the Review screen
+   and the Observations screen. The track is an SVG stretched to its box, so a screen that
+   wants a taller bar says so on `.track-wrap`; everything else about the row is here. */
 .chart.paired {
-  --paired-label: 128px;
+  --paired-label: minmax(96px, 168px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -885,6 +945,12 @@ figcaption.sr {
   align-items: center;
 }
 
+/* A figure that is not a share keeps its cell and draws nothing in it: a track with
+   nothing in it would read as a measured zero, and `lines followed` is 53,166 lines. */
+.track-blank {
+  display: block;
+}
+
 .paired-label {
   font-size: var(--t-caption);
   color: var(--text-2);
@@ -894,9 +960,21 @@ figcaption.sr {
 }
 
 .paired-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--s2);
   font-size: var(--t-caption);
   color: var(--text-2);
   white-space: nowrap;
+}
+
+/* What the figure is over, or how far it reaches: quieter than the figure itself, and its
+   own element rather than a string joined to it in JavaScript, because a value and its
+   qualification are not a sentence. */
+.paired-value .qualifier {
+  font-size: var(--t-caption);
+  color: var(--text-3);
 }
 
 .paired-value b {

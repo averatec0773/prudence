@@ -8,12 +8,20 @@
 
 import * as Bridge from "../bridge.js";
 import { miniStack } from "../design/charts.js";
+import { runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { mark } from "../design/brand.js";
 import { hourPhrase, list, percent, purpose, sessions, commits, tokenPhrase, day } from "../text/fmt.js";
-import { observationCaveat, observationSentence, reviewLine, stampedAgo } from "../text/sentences.js";
+import {
+  observationCaveat,
+  observationSentence,
+  readinessSentence,
+  reviewLine,
+  stampedAgo,
+} from "../text/sentences.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
 import { lastSevenDays, purposeShares, today } from "../store/payload.js";
+import { readiness } from "../store/readiness.js";
 
 /** Set by `render`, so the size report can run again when the content changes. */
 let refit = () => {};
@@ -124,10 +132,14 @@ function observationBlock(data) {
  *
  * ## What is drawn while a run is going
  *
- * One line, in the place the note already occupied, and the buttons disabled. The next
- * sheet replaces that line with a real progress bar: `progress()` is the only thing that
- * writes it and `PANEL_RUN.progress` is the only number it reads, so the swap is that
- * function and nothing else.
+ * The note's place carries one of two things: a sentence, which is what a run's outcome
+ * and every refusal is, or the progress bar, which is what the engine is doing right now.
+ * `note()` and `showProgress()` are the only two things that write it, and both re-measure
+ * the panel afterwards, because the window is only as tall as its content.
+ *
+ * The last event is kept in `PANEL_RUN.at` on purpose. `render` runs again whenever the
+ * store changes, which an ingest does several times while it is working, and a redraw
+ * would otherwise leave the bar blank until the engine happened to count something else.
  */
 
 /**
@@ -139,30 +151,40 @@ function observationBlock(data) {
  * document body, and the panel measures its own content to size its window, so a strip in
  * it would be measured into its height.
  *
- * @typedef {{ run: (action: "ingest"|"review") => Promise<any> }} PanelPort
- * @type {{ port: PanelPort | null, running: string | null }}
+ * @typedef {{
+ *   run: (action: "ingest"|"review") => Promise<any>,
+ *   onProgress?: (handler: (progress: any) => void) => Promise<() => void>,
+ *   readiness?: () => Promise<any>,
+ * }} PanelPort
+ * @type {{ port: PanelPort | null, running: string | null, at: any }}
  */
-export const PANEL_RUN = { port: null, running: null };
+export const PANEL_RUN = { port: null, running: null, at: null };
 
 /** The fake shell a test injected, the real one, or nothing at all. */
 function runner() {
   if (PANEL_RUN.port) return PANEL_RUN.port;
   if (!Bridge.attached()) return null;
-  return { run: (action) => Bridge.runEngine(action, false) };
+  return {
+    run: (action) => Bridge.runEngine(action, false),
+    onProgress: (handler) => Bridge.onEngineProgress(handler),
+    readiness: () => Bridge.engineReadiness(),
+  };
 }
 
 /** Every button a run disables, in the tree currently on screen. */
 const actionButtons = new Set();
 
 /**
- * The one line under the buttons: what a run is doing, or how it ended.
+ * The one line under the buttons: how a run ended, or why it did not start.
  *
  * It re-measures, because the line is content and the window is only as tall as its
- * content. The next sheet's progress bar replaces the body of this function.
+ * content.
  */
-function progress(text) {
+function note(text) {
   const line = document.getElementById("pop-note");
   if (!line) return;
+  PANEL_RUN.at = null;
+  line.className = "coverage-chip";
   if (!text) {
     line.hidden = true;
     line.textContent = "";
@@ -174,6 +196,31 @@ function progress(text) {
     // report a run started from the panel makes. Only where there is a shell to say it
     // to: the page is opened in a browser while layout is worked on, and under a test.
     if (Bridge.attached()) Bridge.log(`panel: ${text}`);
+  }
+  refit();
+}
+
+/**
+ * What the engine is doing, in the place the note occupies.
+ *
+ * The bar itself is `design/components.js`'s, the same one the Engine tab draws, and the
+ * event is the engine's own: this function chooses nothing and computes nothing.
+ *
+ * @param {any} progress one `engine-progress` payload
+ */
+function showProgress(progress) {
+  PANEL_RUN.at = progress;
+  const line = document.getElementById("pop-note");
+  if (!line) return;
+  line.className = "pop-progress";
+  line.innerHTML = "";
+  line.appendChild(runProgress(progress));
+  line.hidden = false;
+  if (Bridge.attached()) {
+    Bridge.log(
+      `panel: ${progress.step} ${progress.current}/${progress.total} ${progress.unit}` +
+        ` (step ${progress.stepIndex} of ${progress.steps})`
+    );
   }
   refit();
 }
@@ -195,24 +242,45 @@ function setRunning(action) {
 function run(action) {
   const port = runner();
   if (!port) {
-    progress(t("engine.noShell.detail"));
+    note(t("engine.noShell.detail"));
     return;
   }
   if (PANEL_RUN.running) {
-    progress(t("engine.busy"));
+    note(t("engine.busy"));
     return;
   }
   setRunning(action);
-  progress(action === "ingest" ? t("menu.ingesting") : t("menu.writingReview"));
+  // Said before the first event arrives, and replaced by the bar as soon as one does: the
+  // engine reads its repositories before it can count anything, and a surface that says
+  // nothing at all for that second is a surface that looks as if the button did nothing.
+  note(action === "ingest" ? t("menu.ingesting") : t("menu.writingReview"));
+
+  let stop = /** @type {(() => void) | null} */ (null);
+  // Only while this panel's own run is going. A timed ingest is announced to both pages,
+  // and a bar under buttons that are not disabled would be a lie about what the reader
+  // can do next.
+  const listening = port.onProgress?.((progress) => {
+    if (PANEL_RUN.running) showProgress(progress);
+  });
+  if (listening) {
+    listening
+      .then((off) => {
+        stop = off;
+      })
+      .catch(() => {});
+  }
+
   port
     .run(action)
     .then((outcome) => {
       setRunning(null);
-      progress(outcomeLine(action, outcome));
+      stop?.();
+      note(outcomeLine(action, outcome));
     })
     .catch((error) => {
       setRunning(null);
-      progress(error instanceof Error ? error.message : String(error));
+      stop?.();
+      note(error instanceof Error ? error.message : String(error));
     });
 }
 
@@ -245,7 +313,7 @@ function actionButton(label, onClick) {
 
 /** The button grid: the primary full width, two equal cells under it, and one baseline
  *  carrying the two quiet actions out to the block's own edges. */
-function footer() {
+function footer(data) {
   // The buttons about to be replaced are gone; the new ones register themselves.
   actionButtons.clear();
 
@@ -259,12 +327,34 @@ function footer() {
   settings.addEventListener("click", () => Bridge.openWindow());
   quit.addEventListener("click", () => Bridge.quit());
 
-  const note = el("div", { class: "coverage-chip", text: "" });
-  note.id = "pop-note";
-  note.hidden = true;
+  const line = el("div", { class: "coverage-chip", text: "" });
+  line.id = "pop-note";
+  line.hidden = true;
+
+  // Whether a review is ready, beside the button that writes one: the engine's own
+  // sentence where there is one, and what is still needed where there is not.
+  //
+  // Through `store/readiness.js`, which decides when the engine is asked at all. Asking on
+  // every draw closes a loop with the store watcher, and that file holds the whole story.
+  const ready = el("div", { class: "coverage-chip" });
+  ready.id = "pop-ready";
+  ready.hidden = true;
+  const port = runner();
+  if (port?.readiness) {
+    readiness(data, () => port.readiness())
+      .then((found) => {
+        const said = readinessSentence(found);
+        if (!said) return;
+        ready.textContent = said;
+        ready.hidden = false;
+        refit();
+      })
+      .catch(() => {});
+  }
 
   return el("div", { class: "pop-foot" }, [
-    note,
+    line,
+    ready,
     open,
     el("div", { class: "buttons-row" }, [review, ingest]),
     el("div", { class: "buttons-row spread" }, [settings, quit]),
@@ -312,7 +402,7 @@ export const page = {
     ]);
 
     pop.appendChild(body);
-    pop.appendChild(footer());
+    pop.appendChild(footer(data));
 
     container.innerHTML = "";
     container.appendChild(pop);
@@ -330,6 +420,15 @@ export const page = {
       return height;
     };
     refit();
+
+    /* A run outlives this tree. An ingest announces itself to the store watcher several
+       times while it works, and every announcement redraws the panel, which builds a new
+       empty note: without this the bar vanished part-way through the run it was drawn for
+       and came back at the next event, which on the `parse` step can be seconds later. */
+    if (PANEL_RUN.running) {
+      if (PANEL_RUN.at) showProgress(PANEL_RUN.at);
+      else note(PANEL_RUN.running === "ingest" ? t("menu.ingesting") : t("menu.writingReview"));
+    }
 
     /* The shell focuses the panel when it shows it, which is the only signal the page
        gets that it went from hidden to visible. The class is removed when the animation

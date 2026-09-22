@@ -26,7 +26,7 @@
  * and the install report is uv's own output.
  */
 
-import { emptyState } from "../design/components.js";
+import { emptyState, runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { sessions as sessionPhrase } from "../text/fmt.js";
 import { t } from "../text/strings.js";
@@ -46,6 +46,7 @@ import { t } from "../text/strings.js";
  *   forget: () => Promise<any>,
  *   install: (upgrade: boolean) => Promise<any>,
  *   onInstallProgress: (handler: (lines: string[]) => void) => Promise<() => void>,
+ *   onProgress?: (handler: (progress: any) => void) => Promise<() => void>,
  *   link: (name: string) => Promise<any>,
  * }} EnginePort
  *
@@ -383,14 +384,35 @@ export function run(action, options) {
   }
   setRunning(true);
   announce([line(action === "ingest" ? t("menu.ingesting") : t("menu.writingReview"))]);
+
+  /* What the engine is doing, on the strip, in place of the sentence that says a run
+     started. The same component the panel draws and the same events: a run can be watched
+     from either surface, and the shell announces to both.
+
+     The strip is the whole width of the screen's content column, so the bar is wide here
+     and narrow there with no second rule anywhere. */
+  let stop = /** @type {(() => void) | null} */ (null);
+  const listening = port.onProgress?.((progress) => {
+    if (running) announce([runProgress(progress)]);
+  });
+  if (listening) {
+    listening
+      .then((off) => {
+        stop = off;
+      })
+      .catch(() => {});
+  }
+
   return port
     .run(action, Boolean(options?.force))
     .then((outcome) => {
       setRunning(false);
+      stop?.();
       report(outcome);
     })
     .catch((error) => {
       setRunning(false);
+      stop?.();
       // The shell itself did not answer. Not the engine's failure, and it still has to be
       // said: a swallowed rejection here is a strip that reads "Ingesting..." for ever.
       announce([

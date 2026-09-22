@@ -10,6 +10,7 @@
  */
 
 import { el } from "./dom.js";
+import { count } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 
 /** A figure with its caption above and its qualification below. */
@@ -54,6 +55,90 @@ export function panel({ title, note, body, extra, method }) {
     card.appendChild(/** @type {Element} */ (method));
   }
   return card;
+}
+
+/* --- what a run is doing ---------------------------------------------------------------
+ *
+ * One component, drawn on the panel and on the Engine tab: the same run can be started
+ * from either, and two bars would be two things to keep in step. It is fluid, so the tab's
+ * strip gets a wide one and the panel gets a narrow one with no second rule anywhere.
+ *
+ * **Determinate per step, and never smoother than the engine is.** The engine walks eleven
+ * steps and counts within each one; the bar fills for the step it is on and starts again
+ * at the next. Nothing is animated between events, because an ingest's `parse` step counts
+ * one session at a time and a bar gliding on its own between two of them would be the app
+ * inventing progress it has not been told about. A step that reports no total yet draws an
+ * empty track: that is what "it has started and has nothing to count yet" looks like.
+ *
+ * Colour is the accent and means nothing but "this is the thing moving": a progress bar is
+ * not a verdict, so there is no second colour for a slow step or a long one.
+ */
+
+/**
+ * The step's own name, in the reader's language.
+ *
+ * The eleven steps are a closed list the engine walks in order, so each one has a key.
+ * A step this build has never heard of falls back to the engine's own `label`, which is
+ * English and is at least true; the same rule the Review screen's headers keep.
+ *
+ * @param {{ step?: string, label?: string }} progress
+ */
+function stepName(progress) {
+  const key = `engine.step.${String(progress.step ?? "")}`;
+  const said = t(key);
+  return said === key ? String(progress.label ?? "") : said;
+}
+
+/** The unit the engine counted in, in the reader's language, or the engine's own word. */
+function unitName(unit) {
+  const key = `engine.unit.${String(unit ?? "")}`;
+  const said = t(key);
+  return said === key ? String(unit ?? "") : said;
+}
+
+/**
+ * One progress event, drawn.
+ *
+ * @param {{ step?: string, stepIndex?: number, steps?: number, current?: number,
+ *           total?: number, unit?: string, label?: string }} progress
+ * @returns {HTMLElement}
+ */
+export function runProgress(progress) {
+  const current = Number(progress.current ?? 0);
+  const total = Number(progress.total ?? 0);
+  const fraction = total > 0 ? Math.min(Math.max(current / total, 0), 1) : 0;
+
+  const name = stepName(progress);
+  const counted = total > 0 ? t("engine.progress.count", count(current), count(total), unitName(progress.unit)) : "";
+
+  const fill = el("span", { class: "progress-fill" });
+  fill.style.width = `${fraction * 100}%`;
+
+  const track = el("div", { class: "progress-track", role: "progressbar" }, [fill]);
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", String(total));
+  track.setAttribute("aria-valuenow", String(current));
+  track.setAttribute("aria-label", name);
+
+  const node = el("div", { class: "progress" }, [
+    el("div", { class: "progress-head" }, [
+      el("span", { class: "progress-label", text: name }),
+      el("span", { class: "progress-count", text: counted }),
+    ]),
+    track,
+  ]);
+
+  const steps = Number(progress.steps ?? 0);
+  const index = Number(progress.stepIndex ?? 0);
+  if (steps > 0 && index > 0) {
+    node.appendChild(
+      el("div", {
+        class: "progress-step",
+        text: t("engine.progress.step", count(index), count(steps)),
+      })
+    );
+  }
+  return node;
 }
 
 /** Nothing to show, and why. Never a blank area: an empty screen is a question. */

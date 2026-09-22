@@ -15,10 +15,9 @@
  *   where the store it reads is kept.
  * - **Model**: what `prudence config model` prints, and the one field of it this app may
  *   set. The app never calls a model itself, and the tab says so.
+ * - **Repositories**: which repositories the engine found on this machine, which of them
+ *   it records, and the control that changes that.
  * - **About**: what is running, on what, under what licence, and where to go next.
- *
- * A **Repositories** tab arrives with the next sheet. There is no stub for it here: a tab
- * that opens on "not built yet" is worse than a tab that is not there.
  *
  * ## The page contract, and the one thing this screen keeps between renders
  *
@@ -35,10 +34,17 @@
  * against a fake shell in `test/settings.test.mjs`.
  */
 
-import { panel } from "../design/components.js";
+import { emptyState, panel } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { engineSection } from "./engine-section.js";
-import { list, relative, stamp } from "../text/fmt.js";
+import {
+  count,
+  day,
+  list,
+  relative,
+  sessions as sessionPhrase,
+  stamp,
+} from "../text/fmt.js";
 import { t } from "../text/strings.js";
 
 /**
@@ -52,6 +58,8 @@ import { t } from "../text/strings.js";
  *   timedIngest: (minutes: number) => Promise<any>,
  *   model: () => Promise<any>,
  *   modelLanguage: (code: string) => Promise<any>,
+ *   repositories: () => Promise<any>,
+ *   repositoryLevel: (key: string, level: string) => Promise<any>,
  *   link: (name: string) => Promise<any>,
  * }} SettingsPort
  *
@@ -64,6 +72,7 @@ export const TABS = /** @type {const} */ ([
   { key: "general", label: "settings.tab.general" },
   { key: "engine", label: "settings.tab.engine" },
   { key: "model", label: "settings.tab.model" },
+  { key: "repositories", label: "settings.tab.repositories" },
   { key: "about", label: "settings.tab.about" },
 ]);
 
@@ -153,6 +162,32 @@ function pairs(rows) {
 }
 
 /**
+ * The control itself: one row of choices, one of them ticked.
+ *
+ * Its own function because the Repositories tab puts one in a table cell, where the label
+ * and the note a setting carries would be a second copy of the column header. Whatever
+ * holds it, the ticked choice is the one the shell answered with.
+ *
+ * `disabled` is for a control whose answer is still on its way: a second click before the
+ * first one has landed is how a control ends up disagreeing with what it controls.
+ *
+ * @param {{ label: string, choices: {value: any, label: string}[], chosen: any,
+ *           onChoose: (value: any) => void, disabled?: boolean }} options
+ * @returns {HTMLElement}
+ */
+function segmented({ label, choices, chosen, onChoose, disabled }) {
+  const group = el("div", { class: "segmented", role: "radiogroup", "aria-label": label });
+  for (const choice of choices) {
+    const button = el("button", { type: "button", role: "radio", text: choice.label });
+    button.setAttribute("aria-checked", String(choice.value === chosen));
+    if (disabled) /** @type {any} */ (button).disabled = true;
+    button.addEventListener("click", () => onChoose(choice.value));
+    group.appendChild(button);
+  }
+  return group;
+}
+
+/**
  * One setting: its name, a segmented control, and a line under it.
  *
  * **Every control on this screen is this one.** Four settings in four shapes is four
@@ -168,13 +203,7 @@ function pairs(rows) {
  *           chosen: any, onChoose: (value: any) => void, foot?: Element|null }} options
  */
 function setting({ label, note, choices, chosen, onChoose, foot }) {
-  const group = el("div", { class: "segmented", role: "radiogroup", "aria-label": label });
-  for (const choice of choices) {
-    const button = el("button", { type: "button", role: "radio", text: choice.label });
-    button.setAttribute("aria-checked", String(choice.value === chosen));
-    button.addEventListener("click", () => onChoose(choice.value));
-    group.appendChild(button);
-  }
+  const group = segmented({ label, choices, chosen, onChoose });
 
   const row = el("div", { class: "setting" }, [
     el("div", { class: "setting-head" }, [
@@ -472,6 +501,224 @@ function fillModel(body, settings) {
   }
 }
 
+/* --- Repositories ---------------------------------------------------------------------
+ *
+ * The tab that answers the founder's own question about this app: "why are only three
+ * repositories recorded?" Because recording is opt-in per repository, which is the first
+ * sentence on the tab and the reason the list is split in two. Everything on it is a field
+ * of `prudence init --scan --json`; the app counts nothing and decides nothing.
+ *
+ * **The list is content**, so it is opaque like every other card. The tab strip above it
+ * is the control layer and takes the frost; design rule 1.
+ */
+
+/** Off, and the engine's two levels. The words that reach the command line are checked
+ *  again in `src-tauri/src/repositories.rs`, so nothing this file sends can be an
+ *  argument on its own. */
+function levelChoices() {
+  return [
+    { value: "off", label: t("settings.choice.off") },
+    { value: "metadata-only", label: t("settings.repositories.level.metadataOnly") },
+    { value: "full", label: t("settings.repositories.level.full") },
+  ];
+}
+
+/** What the control is set to: the engine's level, or off where it records nothing. */
+function levelOf(row) {
+  return row.enabled && row.level ? String(row.level) : "off";
+}
+
+/** The last path component, which is what a person calls the project. */
+function basename(path) {
+  const parts = String(path).split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path);
+}
+
+/** A date the scan carries, as the reader's language writes one. The scan's timestamps
+ *  are the engine's own; only the day is shown, because a repository's first session was
+ *  a day and not a moment. A repository with no sessions has neither date. */
+function scanDay(value) {
+  if (value === null || value === undefined || value === "") return t("common.dash");
+  return day(String(value).slice(0, 10));
+}
+
+/**
+ * One block of the list: a heading, its note, and a row per repository.
+ *
+ * @param {{ title: string, note: string, rows: any[], change: (row: any, level: string) => void,
+ *           busy: boolean }} block
+ */
+function repositoryTable({ title, note, rows, change, busy }) {
+  const head = el("thead", {}, [
+    el("tr", {}, [
+      el("th", { text: t("scope.project") }),
+      el("th", { class: "n", text: t("settings.repositories.column.sessions") }),
+      el("th", { text: t("settings.repositories.column.first") }),
+      el("th", { text: t("settings.repositories.column.last") }),
+      el("th", { text: t("settings.repositories.column.level") }),
+    ]),
+  ]);
+
+  const body = el("tbody");
+  for (const row of rows) {
+    const name = el("div", { class: "repo-name", text: basename(row.path) });
+    // The full path under the name, as the sentence that says which one this is: two
+    // checkouts of the same repository have the same last component.
+    const where = el("div", { class: "repo-path", text: String(row.path) });
+    const cell = el("td", {}, [name, where]);
+    // A repository that is on record and no longer on disk is still on record, and a
+    // reader looking for it has to be told which of the two states it is in.
+    if (!row.exists) {
+      cell.appendChild(el("div", { class: "repo-gone", text: t("settings.repositories.gone") }));
+    }
+
+    body.appendChild(
+      el("tr", {}, [
+        cell,
+        el("td", { class: "n", text: count(Number(row.sessions ?? 0)) }),
+        el("td", { text: scanDay(row.firstAt) }),
+        el("td", { text: scanDay(row.lastAt) }),
+        el("td", {}, [
+          segmented({
+            label: t("settings.repositories.column.level"),
+            choices: levelChoices(),
+            chosen: levelOf(row),
+            onChoose: (value) => change(row, value),
+            disabled: busy,
+          }),
+        ]),
+      ])
+    );
+  }
+
+  return el("div", { class: "fact-block" }, [
+    subhead(title, note),
+    el("table", { class: "data repo-table" }, [head, body]),
+  ]);
+}
+
+/**
+ * The scan, drawn.
+ *
+ * Split in two because the two halves answer different questions: what is being recorded,
+ * and what could be. One list of twenty-eight rows with a level control on each says
+ * neither.
+ *
+ * @param {HTMLElement} body
+ * @param {any[]} rows the engine's own scan
+ * @param {(row: any, level: string) => void} change
+ * @param {boolean} busy whether a change is in flight, which no second click may start
+ */
+function fillRepositories(body, rows, change, busy) {
+  body.innerHTML = "";
+  const found = Array.isArray(rows) ? rows : [];
+  // The group of sessions that belong to no repository arrives with no path. There is
+  // nothing to enable for it, so it is a line rather than a row with a dead control on it.
+  const known = found.filter((row) => row.path);
+  const unassigned = found.find((row) => !row.path);
+
+  if (!known.length) {
+    body.appendChild(emptyState(t("settings.tab.repositories"), t("settings.repositories.empty")));
+  }
+
+  const recorded = known.filter((row) => row.enabled);
+  const rest = known.filter((row) => !row.enabled);
+  if (recorded.length) {
+    body.appendChild(
+      repositoryTable({
+        title: t("settings.repositories.recorded"),
+        note: t("settings.repositories.recorded.note"),
+        rows: recorded,
+        change,
+        busy,
+      })
+    );
+  }
+  if (rest.length) {
+    body.appendChild(
+      repositoryTable({
+        title: t("settings.repositories.found"),
+        note: t("settings.repositories.found.note"),
+        rows: rest,
+        change,
+        busy,
+      })
+    );
+  }
+
+  if (unassigned && Number(unassigned.sessions) > 0) {
+    body.appendChild(
+      el("div", { class: "notes fact-notes" }, [
+        el("div", {
+          text: t(
+            "settings.repositories.unassigned",
+            sessionPhrase(Number(unassigned.sessions))
+          ),
+        }),
+      ])
+    );
+  }
+}
+
+function repositories() {
+  const port = SETTINGS.port;
+  const body = el("div", { class: "fact-list repo-list" });
+  const card = panel({
+    title: t("settings.tab.repositories"),
+    note: t("settings.repositories.note"),
+    body,
+    method: t("settings.repositories.method"),
+  });
+
+  if (!port) {
+    body.appendChild(el("p", { class: "setting-note", text: t("settings.noShell") }));
+    return el("div", { class: "tab-body" }, [card]);
+  }
+
+  // The scan in hand, and whether a change is in flight. Both live in this render's own
+  // closure rather than in the module: which tab is open is navigation and is kept between
+  // renders, and neither of these is.
+  let scan = /** @type {any[]} */ ([]);
+  let busy = false;
+
+  const failed = () => {
+    body.innerHTML = "";
+    body.appendChild(el("p", { class: "setting-note", text: t("settings.repositories.unread") }));
+  };
+
+  const show = (rows) => {
+    scan = Array.isArray(rows) ? rows : [];
+    fillRepositories(body, scan, change, busy);
+  };
+
+  /** Ask the engine to change one repository, and redraw from **its** answer. */
+  function change(row, level) {
+    if (busy || !SETTINGS.port) return;
+    busy = true;
+    // The scan already in hand, drawn again with every control dead: the engine is being
+    // asked, and a control that answers a second click before the first one has landed is
+    // a control that can be left disagreeing with the config.
+    show(scan);
+    SETTINGS.port.repositoryLevel(String(row.repoKey), String(level))
+      .then((next) => {
+        busy = false;
+        show(next);
+      })
+      .catch(() => {
+        busy = false;
+        failed();
+      });
+  }
+
+  // Asked for when the tab is drawn, and filled when the engine answers: it is a
+  // subprocess that walks the machine's session history, and a blank area while it runs
+  // would say nothing about the one question this tab is for.
+  body.appendChild(el("p", { class: "setting-note", text: t("menu.engineChecking") }));
+  port.repositories().then(show).catch(failed);
+
+  return el("div", { class: "tab-body" }, [card]);
+}
+
 /* --- About -------------------------------------------------------------------------- */
 
 /** A plain label that opens something in the system browser.
@@ -531,7 +778,7 @@ function about(state) {
 
 /* --- the screen --------------------------------------------------------------------- */
 
-const PANES = { general, engine, model, about };
+const PANES = { general, engine, model, repositories, about };
 
 /**
  * @param {import("./screens.js").ScreenState} state

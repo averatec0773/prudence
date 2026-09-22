@@ -245,17 +245,30 @@ function keyboard() {
  */
 const PRESS_DEADLINE = 30_000;
 
-function pressWhenItExists(label, startedAt = Date.now()) {
+/**
+ * Press one label, then the next.
+ *
+ * A sequence, not a button, because a control inside a tab takes two presses to reach:
+ * the tab, then the control. `PRUDENCE_PRESS="Repositories > Metadata only"` is how a
+ * screenshot or a check gets at one. Each label waits for its own button, because the one
+ * after a press usually does not exist until the press has been answered.
+ *
+ * @param {string[]} labels
+ */
+function pressWhenItExists(labels, startedAt = Date.now()) {
+  const [label, ...rest] = labels;
+  if (!label) return;
   const waited = Date.now() - startedAt;
   if (Stress.press(label)) {
     Bridge.log(`[harness] press ${JSON.stringify(label)}: pressed after ${waited} ms`);
+    if (rest.length) pressWhenItExists(rest);
     return;
   }
   if (waited >= PRESS_DEADLINE) {
     Bridge.log(`[harness] press ${JSON.stringify(label)}: no such button after ${waited} ms`);
     return;
   }
-  setTimeout(() => pressWhenItExists(label, startedAt), 50);
+  setTimeout(() => pressWhenItExists(labels, startedAt), 50);
 }
 
 export const Stress = {
@@ -283,6 +296,12 @@ export const Stress = {
   press(label) {
     const wanted = String(label);
     for (const button of document.querySelectorAll("button")) {
+      // Not a button inside a pane that is not open. The five Settings tabs are all built
+      // and shown by a flag, so `Off` exists four times over on a screen showing one of
+      // them: a script asking for the Repositories tab's Off pressed the General tab's,
+      // on a pane nobody could see. A button that is not on screen is not a button a
+      // script may press.
+      if (button.closest("[hidden]")) continue;
       if ((button.textContent ?? "").trim() === wanted) {
         button.click();
         return true;
@@ -339,7 +358,14 @@ export const page = {
     // the hook was meaningless. Harness only, so this never shipped.
     if (info?.press && !pressed) {
       pressed = true;
-      pressWhenItExists(String(info.press));
+      // One label, or several separated by `>`, pressed in order. No label the app draws
+      // carries that character.
+      pressWhenItExists(
+        String(info.press)
+          .split(">")
+          .map((label) => label.trim())
+          .filter(Boolean)
+      );
     }
 
     if (info?.harness) /** @type {any} */ (globalThis).Stress = Stress;
