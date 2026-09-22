@@ -77,7 +77,10 @@ DESKTOP_ONLY = {
         "en": "Active minutes per local day, summed from the app_usage_by_purpose_day view.",
         "zh-Hans": "按本地日期汇总 app_usage_by_purpose_day 视图的 active_minutes。",
     },
-    "chart.method": {"en": "How this is measured", "zh-Hans": "这张图是怎么算出来的"},
+    # `panel()` puts this on every card, and not every card holds a chart: the Review
+    # screen has cards of prose and the Settings screen has none at all. The Chinese said
+    # "how this chart is computed", which read as a mistake on all of them.
+    "chart.method": {"en": "How this is measured", "zh-Hans": "这是怎么算出来的"},
     # The honest placeholder, in place of forty fake rows. A screen that is not written
     # should say so rather than imitate one that is.
     "screen.notBuilt.title": {"en": "Not built yet", "zh-Hans": "这个页面还没写"},
@@ -293,8 +296,8 @@ DESKTOP_ONLY = {
     },
     "settings.recorded.total": {"en": "%1$@ across %2$@.", "zh-Hans": "共 %1$@，来自 %2$@。"},
     "settings.recorded.readOnly": {
-        "en": "This screen reads the store and changes nothing. A repository is enabled, and its level set, with `prudence enable <repository> --level full|metadata-only`; `prudence forget` removes what was already recorded.",
-        "zh-Hans": "这个页面只读取存储，不改动任何设置。启用一个仓库并设定它的级别要用 `prudence enable <repository> --level full|metadata-only`；`prudence forget` 会删掉已经记录下来的内容。",
+        "en": "This screen reads the store and changes nothing. A repository is enabled, and its level set, with `prudence enable <repository> --level full|metadata-only`; `prudence forget` removes what was already recorded, and `prudence status` prints where the configuration file is.",
+        "zh-Hans": "这个页面只读取存储，不改动任何设置。启用一个仓库并设定它的级别要用 `prudence enable <repository> --level full|metadata-only`；`prudence forget` 会删掉已经记录下来的内容，`prudence status` 会打印配置文件的位置。",
     },
     "settings.recorded.empty.title": {
         "en": "Nothing is recorded yet",
