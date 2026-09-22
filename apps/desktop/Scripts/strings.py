@@ -111,6 +111,99 @@ DESKTOP_ONLY = {
         "en": "%1$@ %2$@ %3$@ of %4$@ lines",
         "zh-Hans": "%1$@ %2$@ %3$@，基于 %4$@ 行",
     },
+    # --- the Review screen ------------------------------------------------------------
+    # A stored review's own titles, notes and empty sentences are the engine's English
+    # and the screen prints them as stored: they are the record of what the user was
+    # told, and rewriting them would make the page disagree with the Markdown report.
+    # Everything below is the screen's own furniture, which is the reader's language.
+    # The catalog was written for the Swift app's shorter review sheet, so it has the
+    # tags, the empty state and the segment line, and no section titles.
+    "review.section.did": {"en": "What you did", "zh-Hans": "你做了什么"},
+    "review.section.became": {
+        "en": "What became of earlier work",
+        "zh-Hans": "更早的工作后来怎么样了",
+    },
+    "review.section.compared": {
+        "en": "Compared with the previous period",
+        "zh-Hans": "与上一期相比",
+    },
+    "review.section.suggestions": {"en": "Last time's suggestions", "zh-Hans": "上次留下的建议"},
+    # One caption per card: principle 3 asks for the method stated to a reader. The
+    # engine's own notes name the views and the fact versions and go behind the
+    # disclosure, exactly as the Overview's charts do.
+    "review.did.note": {
+        "en": "The sessions of the period, grouped by the purpose their tool mix was labelled with, and the commits credited to them. A dash is a session that recorded no usage fields at all, which is not zero tokens.",
+        "zh-Hans": "这一时段的会话，按工具组合判定出的用途分组，以及计入这些会话的提交。短横线表示那个会话根本没有记录用量字段，而不是零 token。",
+    },
+    "review.became.note": {
+        "en": "Of the lines written by the commits in the outcome window, how many were still there later and how many you rewrote. Every share carries the number of lines it is over, and the pale underlay behind each bar is how much of that work the sessions themselves wrote.",
+        "zh-Hans": "在结果窗口内的提交所写下的代码行中，后来还有多少留着，又有多少被你自己改写。每个比例都标出了它所基于的行数；每根条形背后的浅色底衬，是这些工作里由会话自己写下的比例。",
+    },
+    "review.observations.note": {
+        "en": "Each row splits your own sessions in two at one threshold and takes each side's median. They describe what happened; they are not advice, and neither side is the better one.",
+        "zh-Hans": "每一行都把你自己的会话按某个阈值分成两边，各取中位数。它们描述已经发生的事，不是建议，也无所谓哪一边更好。",
+    },
+    "review.compared.note": {
+        "en": "The same figures over the period of the same length immediately before this one. A period that measured nothing is a dash, never a zero.",
+        "zh-Hans": "把同样的数字放到紧挨着的、等长的上一期旁边看。某一期没有测到的，写成短横线，而不是零。",
+    },
+    "review.suggestions.note": {
+        "en": "What became of the suggestions an earlier review left open.",
+        "zh-Hans": "更早的回顾留下、还没有处理的建议，后来怎么样了。",
+    },
+    # The two ranges are different windows and the screen must not let them read as one:
+    # outcomes are measured over commits old enough to have been followed, which is a
+    # window behind the activity window. How far behind is the engine's own constant and
+    # is left to the engine's note rather than restated here, where it would go stale in
+    # silence.
+    "review.rangeLine": {
+        "en": "Period reviewed: %1$@ to %2$@. Outcomes are measured over a different window: the commits made between %3$@ and %4$@.",
+        "zh-Hans": "回顾的时段：%1$@ 至 %2$@。成果部分用的是另一个窗口：%3$@ 至 %4$@ 之间的提交。",
+    },
+    "review.picker": {"en": "Earlier reviews", "zh-Hans": "更早的回顾"},
+    # The button is drawn now and wired when the engine wiring lands. It says which, so
+    # that a reader who presses it is not left wondering whether it failed.
+    "review.notWired": {
+        "en": "Review now runs the engine, and that wiring arrives with the next delivery. Until then, `prudence review` in a terminal writes one.",
+        "zh-Hans": "「立即回顾」需要调用引擎，这部分接线会在下一次交付里完成。在那之前，可以在终端里运行 `prudence review` 写一份。",
+    },
+    "review.segment.none": {
+        "en": "No model segment was written for this review. `prudence review --explain` writes one, and every figure in it has to be one of the review's own numbers.",
+        "zh-Hans": "这份回顾没有模型写的段落。`prudence review --explain` 可以写一段；其中出现的每个数字，都必须是这份回顾自己算出的数字。",
+    },
+    # The list is scoped by the project picker above the screen, so an empty list there
+    # means something different from an empty store and has to say which.
+    "review.emptyForProject.title": {
+        "en": "No review of %1$@ yet",
+        "zh-Hans": "还没有关于 %1$@ 的回顾",
+    },
+    "review.emptyForProject.detail": {
+        "en": "Your other projects' reviews are still there: choose All projects above. `prudence review --project %1$@` writes one for this project.",
+        "zh-Hans": "其他项目的回顾还在：在上方选择「全部项目」就能看到。要给这个项目写一份，运行 `prudence review --project %1$@`。",
+    },
+    # Not the Overview's "Commits in range". A review counts the commits **credited to
+    # the sessions of its period**, which is a different question from the commits made
+    # on the days of that period: over the founder's own review 1 the two are 18 and 32.
+    # Two measures under one caption is the defect this key exists to keep out.
+    "review.did.commits": {"en": "Commits", "zh-Hans": "提交"},
+    "review.did.commitsFoot": {
+        "en": "credited to these sessions",
+        "zh-Hans": "计入这些会话的提交",
+    },
+    # Short enough to sit under a figure. What coverage actually means is a sentence and
+    # the catalog already has it as `review.coverageHelp`, which goes in the disclosure
+    # with the rest of the method rather than into a stat card three words wide.
+    "review.did.coverageFoot": {
+        "en": "over the commits in the outcome window",
+        "zh-Hans": "基于结果窗口内的那些提交",
+    },
+    # Design rule 3: the sentence is composed in the reader's language from the review's
+    # own numbers, and the engine's English stays beside it as the thing to check it
+    # against. This is the disclosure that English lives behind.
+    "review.observations.stored": {
+        "en": "The sentences as the review stored them",
+        "zh-Hans": "这些句子在回顾中存储时的原文",
+    },
 }
 
 # Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from
