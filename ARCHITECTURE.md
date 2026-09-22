@@ -68,8 +68,11 @@ src/prudence/
   cli/            one file per command; thin, calls the engine
   mcp/            the MCP server: server.py (FastMCP, stdio), the only place `mcp` is
                    imported; started by `cli/mcp.py`
-apps/mac/         the native macOS app (Swift): the menu-bar dropdown and the window,
-                  reading the `app_*` views and owning no numbers (apps/mac/README.md).
+apps/desktop/     the desktop app (Rust shell, HTML frontend): the menu-bar panel and
+                  the window, for macOS and Windows from one codebase, reading the
+                  `app_*` views and owning no numbers (apps/desktop/README.md).
+apps/mac/         the previous macOS app (Swift), frozen at v0.4.0 as the comparison and
+                  the way back. Not built, not changed (apps/mac/README.md).
                   It replaced the Python `rumps` prototype in M3; `prudence menubar`
                   now prints one line saying where the menu bar went.
 plugin/           the Claude Code plugin: `.claude-plugin/plugin.json`, `.mcp.json`

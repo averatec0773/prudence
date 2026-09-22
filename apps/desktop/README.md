@@ -2,11 +2,27 @@
 
 One codebase for macOS and Windows: a Rust shell around the design system's own HTML.
 
-**Phase 1, batch 1 of the plan in `docs/plans/2026-09-21-desktop-phase-1-plan.md`.** The
-menu bar panel is at spike quality and the window is a shell: a sidebar, four screens of
-placeholder content, and the material. No charts, no CLI, no i18n, no updater, no
-signing. What each batch proved and what it did not is in `docs/reports/desktop/`
-(local files, not in git).
+**0.5.0.** A menu bar panel and a four-screen window, in English and Simplified Chinese,
+on real Liquid Glass where the system has it:
+
+- **Overview**: the three totals, tokens by purpose per week, what became of each week's
+  work with its coverage, and where the hours went. Every weekly chart shares one axis,
+  the range's complete week list, so a week is in the same place in each.
+- **Review**: one stored review as the engine wrote it, keeping the period reviewed and
+  the outcome window apart, with the engine's own figures and its notes behind a
+  disclosure.
+- **Observations**: one card per behaviour, paired bars on a single axis, each share over
+  the number of sessions it is over, with the coverage and the commit mix beside it.
+- **Settings**: what is recorded and at what capture level, what is never recorded, where
+  the store is and what produced it, the engine and its two actions, and an about block.
+  Read-only, and it says so rather than showing controls that do nothing.
+
+It can also **find the `prudence` executable and run it**: ingest and review, with a
+picker when the executable cannot be found, and the store watched so a run's new numbers
+arrive on their own.
+
+No updater and no signing yet. What each batch proved and what it did not is in
+`docs/reports/desktop/` (local files, not in git).
 
 The Swift app in `apps/mac/` is frozen at `v0.4.0` as the comparison and the way back.
 Do not change it.
