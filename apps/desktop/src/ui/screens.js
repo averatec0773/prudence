@@ -12,6 +12,7 @@
 
 import { RANGES } from "../store/overview.js";
 import { chosen, reviewsFor } from "../store/review.js";
+import { wholeStore } from "./review.js";
 import { day as formatDay } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 import { observations } from "./observations.js";
@@ -104,7 +105,8 @@ function reviewSubtitle(state) {
   // The one the screen opens on: the newest in scope.
   const newest = chosen(reviewsFor(state.data, { project: state.project }), null);
   if (!newest) return t("review.subtitle.none");
-  return t("review.subtitle.scope", String(newest.project ?? ""), formatDay(newest.created_at));
+  const scope = wholeStore(newest.project) ? t("review.scope.everyProject") : String(newest.project);
+  return t("review.subtitle.scope", scope, formatDay(newest.created_at));
 }
 
 function observationsSubtitle(state) {

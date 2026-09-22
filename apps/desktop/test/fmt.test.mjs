@@ -48,10 +48,6 @@ test("a share with nothing measured is a dash, not a zero", () => {
   assert.equal(Fmt.percent(Number.NaN), "-");
 });
 
-test("a gap is neutral: no sign, and the same either way round", () => {
-  assert.equal(Fmt.points(0.17), Fmt.points(-0.17));
-  assert.equal(Fmt.points(0.17), "17");
-});
 
 test("tokens abbreviate the way the mockups print them", () => {
   assert.equal(Fmt.tokens(812), "812");

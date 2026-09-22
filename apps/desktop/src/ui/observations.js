@@ -75,6 +75,15 @@ export function outcomeLabel(outcome) {
  *
  * @param {Record<string, any>} row
  */
+/**
+ * How many decimals a threshold keeps.
+ *
+ * Enough that the printed clause is the split that ran. The engine's thresholds are
+ * medians of per-session rates and carry a long tail; five places is past anything a
+ * session rate resolves to and short of showing float noise.
+ */
+const PLACES = 5;
+
 export function thresholdLine(row) {
   const fallback =
     row.threshold_text === null || row.threshold_text === undefined
@@ -86,7 +95,13 @@ export function thresholdLine(row) {
   }
   if (!Number.isFinite(value)) return fallback;
   // A count or a rate, written the way the reader's locale writes one.
-  const number = Number.isInteger(value) ? count(value) : decimal(value, 1);
+  //
+  // **A rate is not rounded.** The split ran at `> 5.17369`, and printing "more than
+  // 5.2" states a threshold that was never applied: a session at 5.19 prompts an hour is
+  // on the with-side while the card says it should not be. The engine chose this number,
+  // so the card prints the number the engine chose. `decimal` with enough places keeps
+  // the reader's own grouping and decimal mark.
+  const number = Number.isInteger(value) ? count(value) : decimal(value, PLACES);
   if (row.threshold_op === ">=") return t("observations.threshold.atLeast", number);
   if (row.threshold_op === ">") return t("observations.threshold.moreThan", number);
   if (row.threshold_op === "==") return t("observations.threshold.exactly", number);
@@ -102,19 +117,6 @@ export function thresholdLine(row) {
  * `design/charts.js` rather than being copied.
  */
 
-/**
- * The axis top: a quarter, a half, three quarters or the whole, whichever first holds
- * the taller bar. A scale fitted to the data would draw two observations with different
- * values identically.
- *
- * @param {number} value
- */
-export function niceMaxShare(value) {
-  if (value <= 0.25) return 0.25;
-  if (value <= 0.5) return 0.5;
-  if (value <= 0.75) return 0.75;
-  return 1;
-}
 
 /** One bar: the full track, and the share of it this side fills. */
 function track(fraction, fill) {
@@ -150,7 +152,13 @@ function track(fraction, fill) {
  * @returns {HTMLElement}
  */
 function pairedBars(options) {
-  const scale = niceMaxShare(Math.max(options.withValue, options.withoutValue, 0.01));
+  // **The axis is always the whole share, 0 to 100%.** It used to be a quarter, a half,
+  // three quarters or the whole, whichever first held the taller bar, and nothing on the
+  // card said which had been picked: on the founder's own store that drew a 19% bar
+  // physically longer than an 84% bar two cards below it. A bar the reader cannot compare
+  // with the next bar is worse than a short one, and every value here is a share of the
+  // same thing, so the same axis fits all of them.
+  const scale = 1;
   const sides = [
     {
       label: options.labelWith,

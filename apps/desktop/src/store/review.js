@@ -130,15 +130,20 @@ export function shares(section) {
     // up rather than pairing by position survives the two extra numbers (the commit
     // count and the mean coverage) the engine appends after the rows.
     const number = numbers.get(`became.${String(row[0] ?? "").replace(/ /g, "_")}`);
-    const value = Number(number?.value);
+    // `numberOrNull`, not `Number`: the engine writes `{"text": "-", "value": null}` for
+    // a survival whose denominator is zero (`views/outcomes.py`, "never zero by
+    // default"), and `Number(null)` is 0, which is finite and inside [0, 1]. That made a
+    // week nothing could be followed in draw an empty green track under an 88% coverage
+    // underlay: a picture saying none of your lines survived, beside a printed dash.
+    const value = numberOrNull(number?.value);
     return {
       label: row[0] ?? "",
       text: row[1] ?? "",
       coverageText: row[2] ?? "",
       method: row[3] ?? "",
-      value: Number.isFinite(value) ? value : null,
-      coverage: number?.coverage ?? null,
-      share: Number.isFinite(value) && value >= 0 && value <= 1,
+      value,
+      coverage: numberOrNull(number?.coverage),
+      share: value !== null && value >= 0 && value <= 1,
     };
   });
 }

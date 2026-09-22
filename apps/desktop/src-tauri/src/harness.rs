@@ -24,10 +24,6 @@ use tauri::{AppHandle, Manager};
 
 use crate::{panel, window, MAIN};
 
-/// A screen taller than the window cannot be photographed whole, and the charts below
-/// the fold are the ones a batch is usually judged on. The offset is handed to the page
-/// in `shell_info` rather than evaluated into it, because an eval races the page's first
-/// draw and a value the page reads cannot.
 /// The screen a shot is of.
 ///
 /// Without this a script could only photograph whatever screen the machine last left the
@@ -44,6 +40,10 @@ pub fn section() -> Option<String> {
     }
 }
 
+/// A screen taller than the window cannot be photographed whole, and the charts below
+/// the fold are the ones a batch is usually judged on. The offset is handed to the page
+/// in `shell_info` rather than evaluated into it, because an eval races the page's first
+/// draw and a value the page reads cannot.
 pub fn scroll_to() -> Option<u32> {
     std::env::var("PRUDENCE_SCROLL").ok()?.parse().ok()
 }

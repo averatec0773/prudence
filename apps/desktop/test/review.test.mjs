@@ -288,11 +288,27 @@ test("the picker appears only when there is more than one review to choose betwe
 test("choosing an earlier review redraws the cards and nothing else", () => {
   const screen = review(state());
   const select = screen.find("select");
-  assert.match(textOf(screen), /Review 2/);
+  // Against the card's own title, not against the page text: the picker lists every
+  // review by name, so /Review 2/ matches whatever the cards below it are showing. The
+  // first version of this test asserted on the page text and passed with the body
+  // emptied entirely.
+  const cardTitle = () => screen.findAll(".card-title").map((node) => node.textContent);
+
+  assert.ok(
+    cardTitle().some((title) => title.startsWith("Review 2,")),
+    `expected review 2's card, saw ${JSON.stringify(cardTitle())}`
+  );
   select.value = "1";
   select.fire("change");
-  assert.match(textOf(screen), /Review 1/);
-  assert.doesNotMatch(textOf(screen), /Review 2,/, "one review at a time");
+  assert.ok(
+    cardTitle().some((title) => title.startsWith("Review 1,")),
+    `expected review 1's card, saw ${JSON.stringify(cardTitle())}`
+  );
+  assert.equal(
+    cardTitle().some((title) => title.startsWith("Review 2,")),
+    false,
+    "one review at a time"
+  );
   assert.ok(screen.find("select"), "the picker survives its own change");
 });
 

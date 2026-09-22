@@ -110,7 +110,7 @@ globalThis.document = /** @type {any} */ ({
   documentElement: { setAttribute() {} },
 });
 
-const { observations, niceMaxShare, shortLabel, thresholdLine } = await import(
+const { observations, shortLabel, thresholdLine } = await import(
   "../src/ui/observations.js"
 );
 
@@ -260,10 +260,12 @@ test("contract 3 words the threshold itself, in the reader's language", () => {
   assert.equal(thresholdLine(row({ threshold_op: ">", threshold_value: 2 })), "more than 2");
   assert.equal(thresholdLine(row({ threshold_op: ">=", threshold_value: 3 })), "at least 3");
   assert.equal(thresholdLine(row({ threshold_op: "==", threshold_value: 1 })), "exactly 1");
-  // A rate keeps one place; a count keeps none.
+  // A rate is printed as the engine chose it, not rounded. "more than 5.2" states a
+  // split that never ran: a session at 5.19 prompts an hour is on the with-side while
+  // the card says it is not.
   assert.equal(
     thresholdLine(row({ threshold_op: ">", threshold_value: 5.17369 })),
-    "more than 5.2"
+    "more than 5.17369"
   );
   Str.setLang("zh-Hans");
   assert.equal(thresholdLine(row({ threshold_op: ">", threshold_value: 2 })), "多于 2");
@@ -322,11 +324,21 @@ test("a behaviour this build has never heard of falls back to the engine's key",
 
 /* --- the chart -------------------------------------------------------------------------- */
 
-test("the axis top is a quarter, a half, three quarters or the whole", () => {
-  assert.equal(niceMaxShare(0.2), 0.25);
-  assert.equal(niceMaxShare(0.25), 0.25);
-  assert.equal(niceMaxShare(0.26), 0.5);
-  assert.equal(niceMaxShare(0.8), 1);
+test("every pair is drawn on the same axis, so two cards can be compared", () => {
+  // The axis top used to be a quarter, a half, three quarters or the whole, whichever
+  // first held the taller bar, and nothing on the card said which: on the founder's own
+  // store that drew a 19% bar physically longer than an 84% bar two cards below it.
+  const widths = (over) =>
+    screenFor([row(over)])
+      .tagged("rect")
+      .map((node) => Number(node.getAttribute("width")))
+      .filter((width) => width !== 1000);
+  const [smallWith] = widths({ with_value: 0.19, without_value: 0.08 });
+  const [largeWith] = widths({ with_value: 0.94, without_value: 0.84 });
+  assert.ok(
+    smallWith < largeWith,
+    `19% drew ${smallWith} and 94% drew ${largeWith} on a 1000-unit track`
+  );
 });
 
 /* The distance between the two medians is a quantity the **engine** owns:
@@ -427,12 +439,17 @@ test("the page describes blocks only when it has drawn some", () => {
 
 /* --- the empty state ----------------------------------------------------------------------- */
 
-test("an empty store says which floors were not cleared", () => {
+test("an empty store says there are two floors, and names neither in numbers", () => {
   const text = screenFor([], null).textContent;
   assert.ok(text.includes("No observations yet"), text);
-  // The two floors, in numbers, because "not enough data" tells nobody what enough is.
-  assert.ok(text.includes("five sessions"), text);
-  assert.ok(text.includes("ten points"), text);
+  // It says what the rule is about. Both floors are the engine's numbers
+  // (`MIN_SESSIONS`, `MIN_GAP`) and it publishes its own sentence naming them, so a
+  // second copy here would go stale the first time either moved, with nothing failing.
+  assert.ok(text.includes("sessions on both sides"), text);
+  assert.ok(text.includes("gap between the two medians"), text);
+  for (const stale of ["five sessions", "ten points"]) {
+    assert.equal(text.includes(stale), false, `a floor is stated as a number: ${stale}`);
+  }
 });
 
 test("headings appear only when there is more than one block to tell apart", () => {

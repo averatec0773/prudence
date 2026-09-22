@@ -108,11 +108,6 @@ export function percent(share, language) {
   return `${roundHalfToEven(share * 100)}%`;
 }
 
-/** The distance between two shares, in points. Neutral: a gap has no sign. */
-export function points(gap) {
-  return String(roundHalfToEven(Math.abs(gap) * 100));
-}
-
 /* --- time -------------------------------------------------------------------------- */
 
 function asDate(value) {

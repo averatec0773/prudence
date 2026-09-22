@@ -46,11 +46,6 @@
   border-top: 0.5px solid var(--separator);
 }
 
-.obs-sentence {
-  font-size: var(--t-footnote);
-  color: var(--text-2);
-  line-height: 1.45;
-}
 
 /* The coverage and the two group sizes, on one line under the bars they qualify. They
    wrap rather than shrink: a caveat cut in half is worse than a caveat on two lines. */

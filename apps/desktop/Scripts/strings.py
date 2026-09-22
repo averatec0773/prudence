@@ -190,12 +190,22 @@ DESKTOP_ONLY = {
         "en": "credited to these sessions",
         "zh-Hans": "计入这些会话的提交",
     },
-    # Short enough to sit under a figure. What coverage actually means is a sentence and
-    # the catalog already has it as `review.coverageHelp`, which goes in the disclosure
-    # with the rest of the method rather than into a stat card three words wide.
+    # Short enough to sit under a figure. It said "over the commits in the outcome
+    # window", which is a different commit set: `did.coverage` is the engine's "mean
+    # coverage of those commits", and "those commits" is `did.commits`, the ones credited
+    # to the sessions that started inside the **period reviewed**. Only `became.coverage`
+    # is over the outcome window. On the founder's own review the page contradicted
+    # itself: 92% over a commit set the card below described as empty.
     "review.did.coverageFoot": {
-        "en": "over the commits in the outcome window",
-        "zh-Hans": "基于结果窗口内的那些提交",
+        "en": "over the commits credited to these sessions",
+        "zh-Hans": "基于计入这些会话的那些提交",
+    },
+    # And the sentence behind the disclosure, for the same reason. The catalogue's
+    # `review.coverageHelp` names the outcome window and is right where it came from, on
+    # the outcomes card; it is wrong on this one.
+    "review.did.coverageHelp": {
+        "en": "The mean share of a counted commit's added lines the session itself wrote, over the commits credited to the sessions of the period reviewed.",
+        "zh-Hans": "在计入本期各个会话的提交里，由会话本人写下的新增代码行所占比例的平均值。",
     },
     # Design rule 3: the sentence is composed in the reader's language from the review's
     # own numbers, and the engine's English stays beside it as the thing to check it
@@ -215,8 +225,13 @@ DESKTOP_ONLY = {
     # Chinese has no plural to carry that difference, so it carries it with 任何.
     "observations.empty.all.title": {"en": "No observations yet", "zh-Hans": "还没有任何观察"},
     "observations.empty.all.detail": {
-        "en": "An observation needs at least five sessions on each side of one threshold, and at least ten points between the two medians. No behaviour in this store clears both floors yet. Nothing is wrong with your store.",
-        "zh-Hans": "一条观察需要在某个阈值的两边各至少有五个会话，并且两个中位数之间至少相差十个百分点。这个库里还没有哪种行为同时越过这两道门槛。你的库没有问题。",
+        # No numbers. The engine owns the two floors (`observations.MIN_SESSIONS` and
+        # `MIN_GAP`) and publishes its own sentence naming them; this said "five" and
+        # "ten points" from a second copy, so raising a floor in Python would leave the
+        # app confidently telling the reader the old one. Describing the shape of the
+        # rule cannot go stale.
+        "en": "An observation needs enough sessions on both sides of a threshold, and a wide enough gap between the two medians. No behaviour in this store clears both floors yet. Nothing is wrong with your store.",
+        "zh-Hans": "一条观察需要某个阈值两侧都有足够多的会话，并且两个中位数之间的差距足够大。这个库里还没有任何行为同时满足这两条。你的库没有问题。",
     },
     # The range picker sits above this screen and changes nothing on it: an observation is
     # computed over every session in the store, and there is no date window anywhere in
@@ -224,8 +239,8 @@ DESKTOP_ONLY = {
     # without the range one, the screen says so, rather than let "8 weeks" above a figure
     # imply the figure is about eight weeks.
     "observations.allSessions": {
-        "en": "Every row here is computed over every session on record, so the range above does not change what this screen shows.",
-        "zh-Hans": "这里的每一行都是基于全部有记录的会话算出来的，所以上方的范围选择不会改变这个页面显示的内容。",
+        "en": "Every row here is computed over every session on record, not over a date range.",
+        "zh-Hans": "这里的每一行都是基于全部有记录的会话算出来的，不限定时间范围。",
     },
     # The sort rule, said out loud, with what it is not. A list ordered by size reads as a
     # ranking unless something says otherwise, and this product has no score in it.

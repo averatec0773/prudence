@@ -174,7 +174,11 @@ function clamp(value) {
 
 /** The head: which review this is, over which two windows, and what it rests on. */
 function headlineCard(stored, figures) {
-  const scope = stored.project ?? t("review.scope.everyProject");
+  // `app_review.project` is `COALESCE(r.name, v.project, 'all projects')`, so it is
+  // never null and the `??` fallback here was unreachable: on a whole-store review the
+  // engine's own English literal reached the screen, and a Chinese page read
+  // "范围 all projects". The literal is recognised and said in the reader's language.
+  const scope = wholeStore(stored.project) ? t("review.scope.everyProject") : String(stored.project);
   const start = formatDay(String(stored.range_start).slice(0, 10));
   const end = formatDay(String(stored.range_end).slice(0, 10));
   const card = el("div", { class: "card" }, [
@@ -227,7 +231,7 @@ function didCard(section) {
   // own notes rather than under the figure, and only when the review has a coverage.
   const method = methodNotes(
     numbers.has("did.coverage")
-      ? [...(section.notes ?? []), t("review.coverageHelp")]
+      ? [...(section.notes ?? []), t("review.did.coverageHelp")]
       : (section.notes ?? [])
   );
   if (section.empty) return panel({ title, note, body: storedEmpty(section.empty), method });
@@ -335,18 +339,36 @@ function observationsCard(section, names) {
   return panel({ title, note, body, method });
 }
 
+/**
+ * Is this review over the whole store rather than one project?
+ *
+ * The engine writes the literal `all projects` into `app_review.project` when there is
+ * no single one, so this is a comparison against an engine constant rather than a null
+ * check. It is matched here in one place so the screen and its subtitle agree.
+ */
+export function wholeStore(project) {
+  return project === null || project === undefined || String(project) === "all projects";
+}
+
 function observationBlock(pair, names) {
-  const sentence = observationSentence({
-    project: names.get(pair.repoKey) ?? pair.repoKey,
-    repo_key: pair.repoKey,
-    pooled: pair.repoKey === POOLED,
-    fact: pair.fact,
-    outcome: pair.outcome,
-    with_n: pair.withN,
-    without_n: pair.withoutN,
-    with_value: pair.withValue,
-    without_value: pair.withoutValue,
-  });
+  // A review written before the engine stored the two group sizes has `withN === null`,
+  // and composing from it printed "your null sessions that ran tests". The founder's own
+  // review is one of those. Where the counts are missing the engine's own stored English
+  // is the honest thing to show: it was written when the numbers were still there.
+  const composable = pair.withN !== null && pair.withoutN !== null;
+  const sentence = composable
+    ? observationSentence({
+        project: names.get(pair.repoKey) ?? pair.repoKey,
+        repo_key: pair.repoKey,
+        pooled: pair.repoKey === POOLED,
+        fact: pair.fact,
+        outcome: pair.outcome,
+        with_n: pair.withN,
+        without_n: pair.withoutN,
+        with_value: pair.withValue,
+        without_value: pair.withoutValue,
+      })
+    : pair.sentence;
   // One colour for both sides. Colour is which outcome is being measured, never which
   // side of the split came out higher: rule 2, and the reason the two bars are told
   // apart by their labels rather than by their ink.

@@ -176,3 +176,11 @@
   color: var(--text-2);
   line-height: 1.45;
 }
+
+/* An observation's sentence. Both the Observations screen and the Review screen show
+   one, so the rule is here rather than in either screen's own sheet. */
+.obs-sentence {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+}
