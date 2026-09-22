@@ -9,6 +9,8 @@
  */
 
 import * as Bridge from "./bridge.js";
+import * as Measure from "./measure.js";
+import { nowDrawn, worthDrawing } from "./store/drawn.js";
 import { readPayload } from "./store/payload.js";
 import { setLang, loadAll, t } from "./text/strings.js";
 import { el } from "./design/dom.js";
@@ -82,10 +84,28 @@ function message(error) {
 /**
  * Read the store and draw. Called at start-up and again whenever the shell says an
  * ingest has landed.
+ *
+ * **It draws nothing when nothing it draws has changed.** `store/drawn.js` holds that rule
+ * and the measurement behind it; `force` is for the one thing that changes the drawing
+ * without changing the store, which is a setting.
  */
-async function draw(page, root, info) {
+async function draw(page, root, info, { force = false } = {}) {
+  const read = Measure.at();
   const payload = readPayload(await Bridge.readStore());
+  const got = Measure.at();
+  if (!worthDrawing(payload, { force })) {
+    Measure.say(
+      `${page.name} draw: store ${Math.round(got - read)} ms, revision ${payload.revision}` +
+        ` already drawn, nothing rebuilt`
+    );
+    return;
+  }
   page.render(root, { info, data: payload });
+  nowDrawn(payload);
+  Measure.say(
+    `${page.name} draw: store ${Math.round(got - read)} ms, render ${Measure.since(got)} ms,` +
+      ` ${Measure.nodes(root)} nodes`
+  );
   dropFocus();
 }
 
@@ -104,14 +124,20 @@ export async function boot(page) {
     return;
   }
 
+  const bootAt = Measure.at();
   let info;
+  let askedShell = 0;
   try {
+    const asked = Measure.at();
     info = await Bridge.info();
+    askedShell = Measure.since(asked);
     applyMaterial(info);
   } catch (error) {
     failure(root, "The shell did not answer", message(error));
     return;
   }
+  // Only where the build carries the harness, which is what `shell_info.harness` is.
+  if (info?.harness) Measure.reportTo((line) => Bridge.log(line));
 
   // The media query still matters, and only while the setting is `system`: a machine that
   // switches to dark at sunset should take the page with it. A page pinned to light must
@@ -121,12 +147,14 @@ export async function boot(page) {
     .addEventListener("change", () => applyAppearance(info?.settings?.appearance));
   applyAppearance(info?.settings?.appearance);
 
+  const askedStrings = Measure.at();
   try {
     await loadAll();
   } catch (error) {
     failure(root, "The interface's strings did not load", message(error));
     return;
   }
+  const stringsTook = Measure.since(askedStrings);
 
   setLang(chooseLanguage(info));
 
@@ -158,7 +186,10 @@ export async function boot(page) {
         info = next;
         applyAppearance(next?.settings?.appearance);
         setLang(chooseLanguage(next));
-        return draw(page, root, next);
+        // Forced: a language or an appearance changes every string and every colour on
+        // the page without moving a single figure in the store, so the revision is the
+        // same one already drawn and the rule above would skip the one redraw that matters.
+        return draw(page, root, next, { force: true });
       })
       .catch((error) => {
         Bridge.log(`${page.name} could not follow a setting: ${message(error)}`);
@@ -176,6 +207,11 @@ export async function boot(page) {
     Bridge.log(`${page.name} failed to draw: ${message(error)}`);
     return;
   }
+
+  Measure.say(
+    `${page.name} boot: shell_info ${askedShell} ms, strings ${stringsTook} ms,` +
+      ` to first paint ${Measure.since(bootAt)} ms since the page started`
+  );
 
   // The shell's log is the only place an agent or a founder can see that the page got
   // all the way to the end, since a menu-bar app has no console anybody is watching.

@@ -28,6 +28,10 @@ pub fn show(app: &AppHandle) {
         return;
     };
 
+    // How long the shell's own half of "open the panel" takes. The page's half is the
+    // `[measure] panel arrived` line it writes from its focus handler, which carries the
+    // same clock, so the two together are click to painted.
+    let began = std::time::Instant::now();
     position(&window);
     let _ = window.show();
     let _ = window.set_focus();
@@ -36,8 +40,9 @@ pub fn show(app: &AppHandle) {
     *app.state::<Shell>().tray_highlight_works.lock().unwrap() = highlighted;
 
     eprintln!(
-        "[shown] {} ms after launch, position={:?} size={:?} highlight={highlighted}",
+        "[shown] {} ms after launch, shell took {} ms, position={:?} size={:?} highlight={highlighted}",
         app.state::<Shell>().started.elapsed().as_millis(),
+        began.elapsed().as_millis(),
         window.outer_position(),
         window.outer_size()
     );

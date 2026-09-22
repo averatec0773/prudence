@@ -234,6 +234,12 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                             // make our own read look like somebody else's write at the
                             // next event.
                             last = fingerprint(&database);
+                            // Before the announcement, never after: a page that re-read
+                            // between the two would be handed the answer this event is
+                            // about to invalidate. This is the only invalidation there
+                            // is, which is why it sits on the one line that says the
+                            // store moved.
+                            crate::store::invalidate();
                             if let Err(error) = app.emit(STORE_CHANGED, ()) {
                                 eprintln!("[watch] could not announce: {error}");
                             } else {

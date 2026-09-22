@@ -6,6 +6,8 @@
 //! in `src/prudence/store/app_views.py`, never a function here.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
 use serde::Serialize;
@@ -166,6 +168,118 @@ pub fn readable(path: &Path) -> Result<u32, StoreError> {
         )));
     }
     Ok(contract)
+}
+
+/* --- one copy of the store's answer ---------------------------------------------------
+ *
+ * ## What this replaced
+ *
+ * Every page asked the shell for the store on its own, and a page's only way to update
+ * was to rebuild itself whole. On the founder's 851 MB store that cost, measured on
+ * 2026-09-22 with `PRUDENCE_MEASURE=1`:
+ *
+ * - **1,225 ms twice at launch.** The panel and the window load together and both ask, so
+ *   the seven views were computed twice against one file, concurrently, for one answer.
+ * - **440 ms twice, plus two whole-page rebuilds, for nothing.** Asking the engine whether
+ *   a review is ready opens the store read-write; SQLite checkpoints the write-ahead log
+ *   when that connection closes; the checkpoint moves the size and modification time of
+ *   `prudence.db` and `-wal`, which is exactly what `watcher.rs` fingerprints. The watcher
+ *   announces, both pages re-read, and every figure they then draw is the one already on
+ *   screen.
+ *
+ * ## The rule
+ *
+ * The shell reads the store **once per change**, and says which answer this is. A page
+ * that is handed the revision it already drew draws nothing (`src/store/drawn.js`).
+ *
+ * The invalidation is the watcher's, and it is the only one, because the watcher is
+ * already the app's whole notion of the store having moved: nothing redraws without it.
+ * Marking stale **before** the read rather than after is what makes a write landing
+ * mid-read count: the flag is set again by the watcher and the next ask re-reads. A read
+ * that fails is not remembered at all, so a store caught mid-rebuild is retried rather
+ * than cached as an error.
+ */
+
+/// The answer, and which answer it is.
+struct Snapshot {
+    /// Bumped only when the payload actually differs from the one before it. A checkpoint
+    /// that moved the files without changing a figure keeps the number it had.
+    revision: u64,
+    payload: Value,
+}
+
+fn cache() -> &'static Mutex<Option<Snapshot>> {
+    static CACHE: OnceLock<Mutex<Option<Snapshot>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Whether the next ask has to go to the file. True to begin with: nothing has been read.
+static STALE: AtomicBool = AtomicBool::new(true);
+
+/// The store moved. Called by `watcher.rs` immediately before it announces.
+pub fn invalidate() {
+    STALE.store(true, Ordering::SeqCst);
+}
+
+/// The store's answer, read from the file only when it has moved since the last one.
+///
+/// The payload carries `revision`, which is what a page compares against what it drew.
+pub fn snapshot(path: &Path) -> Result<Value, StoreError> {
+    let mut held = cache().lock().unwrap();
+    if !STALE.load(Ordering::SeqCst) {
+        if let Some(found) = held.as_ref() {
+            return Ok(found.payload.clone());
+        }
+    }
+    // Before the read, not after it: a write that lands while this one is going sets the
+    // flag again, and the next ask re-reads rather than trusting what was half-written.
+    STALE.store(false, Ordering::SeqCst);
+
+    let fresh = match read(path) {
+        Ok(value) => value,
+        Err(error) => {
+            // Not remembered. A store caught mid-rebuild answers with an error, and an
+            // error kept in this cache would be handed to every page until the next file
+            // event rather than being retried.
+            STALE.store(true, Ordering::SeqCst);
+            return Err(error);
+        }
+    };
+
+    let revision = match held.as_ref() {
+        // The same figures as last time. The revision does not move, so no page redraws.
+        Some(previous) if same(&previous.payload, &fresh) => previous.revision,
+        Some(previous) => previous.revision + 1,
+        None => 1,
+    };
+    let mut payload = fresh;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("revision".into(), json!(revision));
+    }
+    *held = Some(Snapshot {
+        revision,
+        payload: payload.clone(),
+    });
+    Ok(payload)
+}
+
+/// Are these the same figures? The stored payload carries `revision` and the fresh one
+/// does not yet, so that key is the one thing not compared.
+fn same(stored: &Value, fresh: &Value) -> bool {
+    let (Some(stored), Some(fresh)) = (stored.as_object(), fresh.as_object()) else {
+        return stored == fresh;
+    };
+    stored.len() == fresh.len() + 1
+        && fresh
+            .iter()
+            .all(|(key, value)| stored.get(key).is_some_and(|had| had == value))
+}
+
+/// Forget what was read. For the tests, and for nothing else: the app has one store.
+#[cfg(test)]
+fn forget() {
+    *cache().lock().unwrap() = None;
+    STALE.store(true, Ordering::SeqCst);
 }
 
 pub fn read(path: &Path) -> Result<Value, StoreError> {
@@ -631,5 +745,69 @@ mod tests {
     fn a_missing_store_says_so_rather_than_panicking() {
         let error = read(Path::new("/nonexistent/prudence.db")).unwrap_err();
         assert!(matches!(error, StoreError::Missing(_)));
+    }
+
+    /* --- the one copy of the answer ---------------------------------------------------
+     *
+     * These share one process-wide cache, so they are one test: `cargo test` runs the
+     * module's tests on several threads and two of these interleaved would be asserting
+     * against each other's snapshot rather than against the store.
+     */
+
+    /// The whole rule, in the order it has to hold.
+    ///
+    /// Each step is the defect it exists to stop, and the middle one is the measured one:
+    /// asking the engine whether a review is ready checkpoints the write-ahead log, which
+    /// moves the two files `watcher.rs` fingerprints, so the watcher announces a change to
+    /// a store whose figures are identical. Before this the announcement cost two 440 ms
+    /// reads and two whole-page rebuilds for figures already on the screen.
+    #[test]
+    fn the_store_is_read_once_per_change_and_says_which_answer_it_is() {
+        let directory =
+            std::env::temp_dir().join(format!("prudence-snapshot-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let path = contract_two_store(&directory);
+        forget();
+
+        // One read, and the answer says it is the first.
+        let first = snapshot(&path).expect("the store reads");
+        assert_eq!(first["revision"], 1);
+
+        // A second ask with nothing changed is the same answer, and did not touch the
+        // file: the proof is that a store deleted from under it still answers.
+        std::fs::rename(&path, directory.join("moved.db")).expect("move the store aside");
+        let again = snapshot(&path).expect("the snapshot answers without the file");
+        assert_eq!(again, first);
+        std::fs::rename(directory.join("moved.db"), &path).expect("put it back");
+
+        // The watcher announced. The file is read again, and because nothing in it
+        // changed the revision does not move, so no page redraws.
+        invalidate();
+        let unchanged = snapshot(&path).expect("the store reads");
+        assert_eq!(unchanged["revision"], 1, "a checkpoint is not a change");
+        assert_eq!(unchanged, first);
+
+        // Something really changed. The revision moves, and that is what makes a page draw.
+        let connection = Connection::open(&path).expect("open for writing");
+        connection
+            .execute("UPDATE app_status SET sessions = '99'", [])
+            .expect("change a figure");
+        drop(connection);
+        invalidate();
+        let moved = snapshot(&path).expect("the store reads");
+        assert_eq!(moved["revision"], 2);
+        assert_eq!(moved["status"]["sessions"], "99");
+
+        // A store that will not read is not remembered as an error: the next ask tries
+        // again, which is what a store caught mid-rebuild needs.
+        std::fs::remove_file(&path).expect("remove the store");
+        invalidate();
+        assert!(snapshot(&path).is_err(), "a missing store must not answer");
+        assert!(
+            STALE.load(Ordering::SeqCst),
+            "a failed read left the snapshot looking fresh, so the error would be cached"
+        );
+
+        std::fs::remove_dir_all(&directory).ok();
     }
 }

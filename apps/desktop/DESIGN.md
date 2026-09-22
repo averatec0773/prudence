@@ -184,6 +184,31 @@ two engine buttons.
 is absent from a release build, and the page exposes `Stress` only when `shell_info` says
 the build carries the harness.
 
+**What the page costs is measured through the same door.** `src/measure.js` writes timings
+to the shell's standard error through `page_log`, and `boot.js` turns it on only when
+`shell_info.harness` is true, so a release build calls it and it does nothing.
+`PRUDENCE_MEASURE=1` on a harness build makes the window walk itself once it has drawn
+(every screen, every range, every project) and say what each move cost and how many DOM
+nodes it built. That walk is started by the page at the end of its first draw, not by an
+eval, for the reason `PRUDENCE_PRESS` is: an eval from the shell races the first draw and
+would time a window that is not built yet.
+
+## One copy of the store's answer
+
+**The shell reads the store once per change, and a page redraws only when what it would
+draw has changed.** `store::snapshot` in `src-tauri/src/store.rs` holds the one copy;
+`watcher.rs` invalidates it on the line where it announces, which is the app's whole
+notion of the store having moved; `src/store/drawn.js` compares the `revision` the
+snapshot stamps against the one on screen. A setting is not the store, so that path
+forces its redraw.
+
+Before this, the panel and the window each read all seven views for themselves and each
+rebuilt its whole DOM on every announcement. Measured against a copy of the founder's
+851 MB store on 2026-09-22: 1,225 ms of reading twice at launch, and a further 440 ms
+twice plus two whole-page rebuilds for figures that had not changed, because asking the
+engine whether a review is ready checkpoints the write-ahead log and the checkpoint moves
+the two files the watcher fingerprints.
+
 ## No build step
 
 Native ES modules, no bundler, no transpiler. The browser loads the files as they are
@@ -604,6 +629,35 @@ twelve of them is twelve subprocesses, sequentially because they all write `conf
   sentence says what stayed changed, and why the list is re-read from the engine rather
   than from the clicks.
 - **Removed when:** `prudence init --enable` takes more than one repository.
+
+### What the engine says it is, is remembered against the file rather than asked again
+
+`engine.rs`, `version_of`. "Found means verified" was implemented as verify on every call,
+and every question the app asks the engine goes through one, so a single launch spawned
+`prudence --version` ten times: twice for the Settings screen, twice for the readiness ask
+from each of the two pages, and once for each located path. The answer is now kept against
+the file's own identity, which is its path, its length and its modification time.
+
+- **Assumes:** an executable replaced under a running app changes at least one of its
+  length and its modification time. A reinstall, an upgrade and a `uv tool install` all do.
+- **When it breaks:** a file swapped for another of exactly the same length inside the
+  same second of modification time would be handed an action on the old verdict. The
+  property being kept is that a remembered path which has become something else is never
+  handed an action, and that case is the one hole in it.
+- **Removed when:** nothing. It is bounded by what the page can make the app ask; the
+  alternative is a process per question and it was measured at ten per launch.
+
+### The store's snapshot is invalidated only by the watcher
+
+`store.rs`, `snapshot`. One read per change, shared by both pages. The invalidation is
+`watcher.rs`'s announcement and there is no other.
+
+- **Assumes:** nothing changes the store without the watcher seeing it. The app already
+  rests on that entirely: no page redraws except on that announcement.
+- **When it breaks:** a change the watcher misses leaves every page on the old figures
+  until it sees the next one, which is what happened before this too.
+- **Removed when:** it does not need to be. A second invalidation path (after a run, say)
+  would hide a watcher defect rather than fix one.
 
 ## Working on the founder's machine
 

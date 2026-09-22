@@ -67,7 +67,7 @@ pub fn scroll_to() -> Option<u32> {
 /// Is a script driving the app right now? The panel must not dismiss itself on focus
 /// loss while one is, or every screenshot is of an empty desktop.
 pub fn driving() -> bool {
-    panel_stays_open() || window_opens_at_launch() || plan().is_some()
+    panel_stays_open() || window_opens_at_launch() || plan().is_some() || measure_wanted()
 }
 
 fn flag(name: &str) -> bool {
@@ -84,6 +84,16 @@ fn window_opens_at_launch() -> bool {
 
 fn backdrop_wanted() -> bool {
     flag("PRUDENCE_BACKDROP")
+}
+
+/// `PRUDENCE_MEASURE=1`: ask the page to walk itself and time every move.
+///
+/// The page owns the only clock that can answer "how long does a screen switch take", and
+/// a menu bar app has no console anybody is watching, so the walk is evaluated into the
+/// window and its numbers come back on the shell's standard error through `measure.js`.
+/// Harness only, like everything else here.
+fn measure_wanted() -> bool {
+    flag("PRUDENCE_MEASURE")
 }
 
 /// Open whatever the script asked for, once the status item is laid out.
@@ -114,10 +124,25 @@ pub fn start(app: &AppHandle) {
                 .clone()
                 .run_on_main_thread(move || panel::show(&open));
         }
+        if measure_wanted() {
+            // Opened, and nothing else: the walk is started by the page at the end of its
+            // own first draw, the way `PRUDENCE_PRESS` is, because an eval fired from here
+            // would race that draw and time a window that is not built yet.
+            let open = handle.clone();
+            let _ = handle
+                .clone()
+                .run_on_main_thread(move || window::open(&open));
+        }
         if let Some(plan) = plan() {
             run(&handle, plan);
         }
     });
+}
+
+/// Whether the page should walk itself once it has drawn. Handed over in `shell_info`,
+/// so it cannot race the first draw.
+pub fn measuring() -> bool {
+    measure_wanted()
 }
 
 /// AppKit lays the status item out a moment after launch, and a panel anchored before

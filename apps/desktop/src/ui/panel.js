@@ -7,6 +7,7 @@
  */
 
 import * as Bridge from "../bridge.js";
+import * as Measure from "../measure.js";
 import { miniStack } from "../design/charts.js";
 import { runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
@@ -23,8 +24,9 @@ import { PRODUCT_NAME, t } from "../text/strings.js";
 import { lastSevenDays, purposeShares, today } from "../store/payload.js";
 import { readiness } from "../store/readiness.js";
 
-/** Set by `render`, so the size report can run again when the content changes. */
-let refit = () => {};
+/** Set by `render`, so the size report can run again when the content changes. `why` is
+ *  what asked for it, which is only ever read by a harness build's timing log. */
+let refit = /** @type {(why?: string) => number|undefined} */ (() => undefined);
 
 function text(content, className) {
   return el("span", { class: className ?? "", text: content });
@@ -74,7 +76,7 @@ function weekBlock(data) {
     miniStack({
       byPurpose: week.byPurpose,
       height: 8,
-      caption: `${t("menu.thisWeek")}: ${summary} (${tokenPhrase(week.total)}, ${sessions(week.sessions)})`,
+      caption: `${t("menu.lastSevenDays")}: ${summary} (${tokenPhrase(week.total)}, ${sessions(week.sessions)})`,
     })
   );
   if (week.total) {
@@ -197,7 +199,7 @@ function note(text) {
     // to: the page is opened in a browser while layout is worked on, and under a test.
     if (Bridge.attached()) Bridge.log(`panel: ${text}`);
   }
-  refit();
+  refit("note");
 }
 
 /**
@@ -222,7 +224,7 @@ function showProgress(progress) {
         ` (step ${progress.stepIndex} of ${progress.steps})`
     );
   }
-  refit();
+  refit("progress");
 }
 
 function setRunning(action) {
@@ -347,7 +349,7 @@ function footer(data) {
         if (!said) return;
         ready.textContent = said;
         ready.hidden = false;
-        refit();
+        refit("readiness");
       })
       .catch(() => {});
   }
@@ -390,7 +392,7 @@ export const page = {
 
     const body = el("div", { class: "pop-body" }, [
       block(t("menu.today"), todayBlock(data)),
-      block(t("menu.thisWeek"), weekBlock(data)),
+      block(t("menu.lastSevenDays"), weekBlock(data)),
       el("div", { class: "pop-sep" }),
       block(t("menu.latestObservation"), observationBlock(data)),
       el("div", { class: "pop-sep" }),
@@ -410,16 +412,18 @@ export const page = {
     /* A popover is as tall as what is in it. The stretch that pins the footer to the
        bottom is lifted for one measurement, or the window's own height is what gets
        measured and the panel can only ever grow. */
-    refit = () => {
+    refit = (why) => {
       if (!Bridge.attached()) return;
+      const started = Measure.at();
       const stretch = pop.style.minHeight;
       pop.style.minHeight = "0";
       const height = Math.ceil(pop.getBoundingClientRect().height);
       pop.style.minHeight = stretch;
       if (height > 0) Bridge.fitPanel(360, height);
+      Measure.say(`panel refit (${why ?? "?"}): ${height} px, ${Measure.since(started)} ms`);
       return height;
     };
-    refit();
+    refit("render");
 
     /* A run outlives this tree. An ingest announces itself to the store watcher several
        times while it works, and every announcement redraws the panel, which builds a new
@@ -451,7 +455,12 @@ export const page = {
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") Bridge.hidePanel();
       });
-      globalThis.addEventListener("focus", () => arriving?.());
+      globalThis.addEventListener("focus", () => {
+        // The one signal the page gets that the shell has put it on screen. Paired with
+        // `[shown]` in the shell's log, the two are click to painted.
+        Measure.say("panel arrived");
+        arriving?.();
+      });
     }
     arriving();
 

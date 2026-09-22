@@ -11,7 +11,7 @@
  * change, the catalog's `observation.*` keys change with it and the test says so.
  */
 
-import { count, list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
+import { count, day, list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
 import { lang as currentLang, t } from "./strings.js";
 
 /** @typedef {import("./strings.js").Language} Language */
@@ -113,8 +113,12 @@ export function observationCaveat(row, language) {
  * @param {Language} [language]
  */
 export function reviewLine(review, language) {
+  // The reader's own date, not the stored `yyyy-MM-dd`. The Review screen's head builds
+  // the same key with `fmt.day` and the panel built it with a slice, so one review read
+  // "Review 1, Sep 7, 2026 to Sep 21, 2026" in the window and "Review 1, 2026-09-07 to
+  // 2026-09-21" in the panel, two feet apart on the same screen.
   const range = [review.range_start, review.range_end].map((value) =>
-    String(value ?? "").slice(0, 10)
+    day(String(value ?? "").slice(0, 10), language)
   );
   const scope = review.project ?? t("review.scope.everyProject");
   return t("review.headline.project", String(review.id), range[0], range[1], scope);

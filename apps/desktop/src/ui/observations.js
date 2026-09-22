@@ -241,8 +241,15 @@ function card(group) {
   }
   for (const row of group.rows) node.appendChild(outcomeBlock(row));
 
+  // The two outcomes and the caveat under them are the words a reader has to have: "still
+  // at head" is a git word, and "coverage 93%, method: 642 fact, 25 inferred" is three
+  // terms in eight words with nothing on the screen saying what any of them is. They go in
+  // the disclosure rather than on the card because they are definitions, and a definition
+  // repeated on every card is noise by the third one.
   const how = el("details", { class: "method" }, [
     el("summary", { text: t("chart.method") }),
+    el("p", { text: t("observations.outcomes.gloss") }),
+    el("p", { text: t("observations.coverage.gloss") }),
     el("p", { text: t("observations.method") }),
   ]);
   // The engine's own clause, kept where a reader can check the reworded one above
@@ -256,9 +263,10 @@ function card(group) {
   return node;
 }
 
-/** What an observation is, and which rules produced the ones on this page. */
+/** Which rules produced the ones on this page. What an observation **is** is not here:
+ *  see `lede`, which is where a definition has to be. */
 function footNotes(data) {
-  const notes = el("div", { class: "notes" }, [el("div", { text: t("observations.floor") })]);
+  const notes = el("div", { class: "notes" });
   const version = data?.status?.observation_fact_version;
   if (version !== null && version !== undefined) {
     notes.appendChild(
@@ -281,9 +289,19 @@ export function observations(state) {
   const screen = el("div", { class: "screen-body" });
   const found = scoped(data, { project });
 
+  // What an observation is, before the first one.
+  //
+  // This sentence used to be the **last** line on the page, under every card, which is
+  // where a reader who has never seen the app finds it only after scrolling past
+  // everything it was supposed to explain. It is the definition, so it goes first, and it
+  // goes on the empty screen too: "no observations yet" means nothing until you know what
+  // one is.
+  const definition = () => el("div", { text: t("observations.floor") });
+
   if (!found.rows.length) {
     // "No observations for this project" and "no observations anywhere" are two
     // different statements, and the reader has to be told which one this is.
+    screen.appendChild(el("div", { class: "notes obs-lede" }, [definition()]));
     screen.appendChild(
       project === null
         ? emptyState(t("observations.empty.all.title"), t("observations.empty.all.detail"))
@@ -311,7 +329,7 @@ export function observations(state) {
           ...found.projects.map((entry) => ({ title: entry.project, groups: entry.groups })),
         ];
 
-  const lede = el("div", { class: "notes obs-lede" });
+  const lede = el("div", { class: "notes obs-lede" }, [definition()]);
   // The line about blocks is drawn only where there are blocks. On a store with one
   // project and nothing pooled it would describe an arrangement that is not on screen.
   if (project !== null) lede.appendChild(el("div", { text: t("observations.scope.project") }));

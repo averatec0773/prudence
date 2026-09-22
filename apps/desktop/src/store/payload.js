@@ -78,6 +78,9 @@ export function readPayload(payload) {
     })),
     projects: rowsOf(source.projects),
     contract: source.app_contract_version ?? null,
+    /** Which answer this is. The shell moves it only when a figure moves; `store/drawn.js`
+     *  is what reads it, and says why a page must not redraw without one. */
+    revision: typeof source.revision === "number" ? source.revision : null,
   };
 }
 

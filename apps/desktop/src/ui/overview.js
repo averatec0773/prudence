@@ -146,9 +146,17 @@ export function overview(state) {
 
   /* --- tokens by purpose, per bucket ---------------------------------------------- */
 
-  // The chart's own title and hint say which grain is on the axis, because "per day" and
-  // "per week" are different pictures and the reader has to know which one they have.
+  // The chart's own title, note, method and hint all say which grain is on the axis,
+  // because "per day" and "per week" are different pictures and the reader has to know
+  // which one they have. The title and the hint were the only two that switched: under a
+  // daily chart the note said "What each week's tokens went on" and the method said the
+  // figures were summed into the ISO week each day falls in, which is what the weekly
+  // chart does and not what this one does.
   const chartTitle = grain === "week" ? "overview.tokensByPurpose" : "overview.tokensByPurposeDay";
+  const chartNote =
+    grain === "week" ? "overview.tokensByPurpose.note2" : "overview.tokensByPurpose.note2Day";
+  const chartMethod =
+    grain === "week" ? "overview.tokensByPurpose.method" : "overview.tokensByPurpose.methodDay";
   const hint = grain === "week" ? "chart.hint.weeks" : "chart.hint.days";
   const hover = el("div", { class: "hover-value", text: t(hint) });
 
@@ -156,10 +164,10 @@ export function overview(state) {
     screen.appendChild(
       panel({
         title: t(chartTitle),
-        note: t("overview.tokensByPurpose.note2"),
+        note: t(chartNote),
         body: emptyState(t("overview.noTokens.title"), t("overview.noTokens.detail")),
         extra: null,
-        method: t("overview.tokensByPurpose.method"),
+        method: t(chartMethod),
       })
     );
   } else {
@@ -199,10 +207,10 @@ export function overview(state) {
     screen.appendChild(
       panel({
         title: t(chartTitle),
-        note: t("overview.tokensByPurpose.note2"),
+        note: t(chartNote),
         body: el("div", {}, [chart, hover, purposeLegend(present), bucketTable(buckets, grain)]),
         extra: null,
-        method: t("overview.tokensByPurpose.method"),
+        method: t(chartMethod),
       })
     );
   }

@@ -1090,9 +1090,75 @@ impl Engine {
     }
 }
 
+/// What a file is, beyond its name: enough of its metadata to notice it being replaced.
+///
+/// Size and modification time, because those are what a reinstall, an upgrade or a
+/// `uv tool install` moves, and because reading them is a `stat` rather than a process.
+type Identity = (u64, Option<std::time::SystemTime>);
+
+fn identity(executable: &Path) -> Option<Identity> {
+    let meta = std::fs::metadata(executable).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// What one file was, and what it said it was.
+type Verdict = (Identity, Result<String, EngineError>);
+
+/// What each file this launch has asked said it was.
+///
+/// Keyed by path rather than holding one entry, because the picker verifies whatever file
+/// the user points at and a single entry would let a rejected candidate evict the engine's
+/// own answer. It grows by one per distinct path asked in a launch, which is the engine
+/// plus whatever the user chose in the picker, and it is not kept across a launch.
+fn verified() -> &'static Mutex<HashMap<PathBuf, Verdict>> {
+    static VERIFIED: OnceLock<Mutex<HashMap<PathBuf, Verdict>>> = OnceLock::new();
+    VERIFIED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// What version this executable says it is.
+///
+/// ## Why the answer is remembered, and what it is remembered against
+///
+/// "Found means verified" was implemented as **verify on every call**, and every question
+/// the app asks the engine goes through one: `status`, `read` and `run` each spawn a
+/// `--version` before they spawn anything else. Measured on 2026-09-22, one launch of the
+/// app against a copy of the founder's store spawned `prudence` eighteen times, and ten of
+/// those were `--version`. Opening the Settings screen costs two more; asking whether a
+/// review is ready costs two more again, from each of the two pages.
+///
+/// The property being defended is that a remembered path which has since become something
+/// else is never handed an action. That is a fact about **the file**, not about how
+/// recently it was asked, so the answer is kept against the file's own identity: its path,
+/// its length and its modification time. Replace, upgrade or move the executable and the
+/// identity changes and it is verified again. Nothing is remembered across a launch.
+///
 fn version_of(executable: &Path) -> Result<String, EngineError> {
-    let answer = run_bounded(executable, &["--version"], &[], Some(VERSION_TIMEOUT), None)?;
-    parse_version(&answer.stdout).ok_or(EngineError::NoVersion(answer.stdout))
+    let now = identity(executable);
+    let mut held = verified().lock().unwrap();
+    if let (Some(now), Some((before, answer))) = (now.as_ref(), held.get(executable)) {
+        if before == now {
+            return answer.clone();
+        }
+    }
+    // The lock is held across the spawn on purpose, on the same rule as the login-shell
+    // probe above it: two surfaces asking at once would otherwise start two processes,
+    // and the second one's answer is the first one's answer.
+    let answer = run_bounded(executable, &["--version"], &[], Some(VERSION_TIMEOUT), None)
+        .and_then(|answer| {
+            parse_version(&answer.stdout).ok_or(EngineError::NoVersion(answer.stdout))
+        });
+    // A file that could not be stat-ed is not remembered: there is nothing to notice it
+    // changing by, so the next ask runs it again.
+    if let Some(now) = now {
+        held.insert(executable.to_path_buf(), (now, answer.clone()));
+    }
+    answer
+}
+
+/// Forget what this file was said to be. For the tests, and for nothing else.
+#[cfg(test)]
+fn forget_the_version(executable: &Path) {
+    verified().lock().unwrap().remove(executable);
 }
 
 /* --- the picker --------------------------------------------------------------------- */
@@ -1950,6 +2016,58 @@ mod tests {
         // A real thing a picker can land on, and the reason the line has to name the tool.
         let other = fake_engine("python", "echo 'Python 3.12.1'");
         assert_eq!(version_of(&other).unwrap_err().kind(), "noVersion");
+    }
+
+    /// The engine is asked what it is once per **file**, not once per question.
+    ///
+    /// Every question the app asks the engine verifies the executable first, and one launch
+    /// spawned `prudence --version` ten times for it. The property being kept is that a
+    /// path which has become something else is never handed an action, and that is a fact
+    /// about the file, so the answer is remembered against the file's own identity and a
+    /// replacement is verified again.
+    #[cfg(unix)]
+    #[test]
+    fn the_engine_is_asked_what_it_is_once_per_file_rather_than_once_per_question() {
+        let counter = scratch("counted").join("spawns");
+        let executable = fake_engine(
+            "counted",
+            &format!(
+                "echo x >> {}\necho 'prudence, version 0.4.0'",
+                counter.display()
+            ),
+        );
+        let spawns = || {
+            std::fs::read_to_string(&counter)
+                .map(|text| text.lines().count())
+                .unwrap_or(0)
+        };
+        forget_the_version(&executable);
+
+        assert_eq!(version_of(&executable).as_deref(), Ok("0.4.0"));
+        assert_eq!(spawns(), 1);
+
+        // Four more questions of the same file. None of them is a process.
+        for _ in 0..4 {
+            assert_eq!(version_of(&executable).as_deref(), Ok("0.4.0"));
+        }
+        assert_eq!(spawns(), 1, "the same file was run again to ask what it is");
+
+        // Replaced under the app, which is what an upgrade or a reinstall is. It has to
+        // be asked again, because the guard this memory could weaken is exactly this case.
+        // The sleep is the file system's resolution, not a wait for the app: a rewrite
+        // inside one second can land on the same modification time, and then the only
+        // thing left to notice it by is the length.
+        std::thread::sleep(Duration::from_millis(1100));
+        let replaced = fake_engine(
+            "counted",
+            &format!(
+                "echo x >> {}\necho 'prudence, version 9.9.9'",
+                counter.display()
+            ),
+        );
+        assert_eq!(version_of(&replaced).as_deref(), Ok("9.9.9"));
+        assert_eq!(spawns(), 2, "a replaced engine was not asked again");
+        forget_the_version(&replaced);
     }
 
     /* --- the real engine, against a copy and nothing else --------------------------- */

@@ -134,6 +134,8 @@ pub struct ShellInfo {
     scroll: Option<u32>,
     /// A button a script wants pressed once the page has drawn. Never set in a release.
     press: Option<String>,
+    /// Whether the page should time itself once it has drawn. Never true in a release.
+    measure: bool,
 }
 
 /// `async` so that a slow disk cannot freeze the panel: a non-async command runs on the
@@ -154,10 +156,16 @@ where
         .map_err(|error| format!("the shell could not schedule the work: {error}"))
 }
 
+/// The store's answer, from the one copy the shell keeps.
+///
+/// Both pages ask, and they ask together: the panel and the window load at the same
+/// moment and both re-read on every announcement. `store::snapshot` reads the file only
+/// when the watcher says it moved, so two pages cost one read, and the `revision` it
+/// carries is what lets a page skip a redraw that would draw the same figures.
 #[tauri::command]
 async fn store_read(shell: State<'_, Shell>) -> Result<Value, String> {
     let database = shell.database.clone();
-    scheduled(move || store::read(&database).map_err(|error| error.to_string())).await?
+    scheduled(move || store::snapshot(&database).map_err(|error| error.to_string())).await?
 }
 
 #[tauri::command]
@@ -177,6 +185,7 @@ fn shell_info(app: AppHandle, shell: State<'_, Shell>) -> ShellInfo {
         harness: cfg!(feature = "harness"),
         scroll: scripted_scroll(),
         press: scripted_press(),
+        measure: scripted_measure(),
     }
 }
 
@@ -189,6 +198,16 @@ fn scripted_press() -> Option<String> {
 #[cfg(not(feature = "harness"))]
 fn scripted_press() -> Option<String> {
     None
+}
+
+#[cfg(feature = "harness")]
+fn scripted_measure() -> bool {
+    harness::measuring()
+}
+
+#[cfg(not(feature = "harness"))]
+fn scripted_measure() -> bool {
+    false
 }
 
 fn scripted_scroll() -> Option<u32> {
@@ -882,6 +901,29 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // The store, read before anybody asks for it.
+            //
+            // Both pages ask as soon as their JavaScript runs, and on the founder's 851 MB
+            // store the seven views take 1,225 ms from cold and 68 ms once the file is in
+            // the page cache. Those pages are about two seconds away from asking, and the
+            // shell has nothing else to do with that time, so it spends it on the one
+            // thing it is certain to be asked for. Nothing waits on this thread: a page
+            // that gets in first simply does the read itself, and the second one is served
+            // from the same snapshot either way.
+            let warm = app.state::<Shell>().database.clone();
+            std::thread::spawn(move || {
+                let began = std::time::Instant::now();
+                match store::snapshot(&warm) {
+                    Ok(_) => eprintln!(
+                        "[store] read at launch in {} ms",
+                        began.elapsed().as_millis()
+                    ),
+                    // Not a failure of the app: the page asks again and reports whatever it
+                    // is told. This line is so the reason is on the record either way.
+                    Err(error) => eprintln!("[store] could not read at launch: {error}"),
+                }
+            });
 
             // The window follows the store: an ingest that lands while the app is open
             // refreshes the pages instead of leaving them an hour behind.

@@ -6,6 +6,7 @@
  */
 
 import * as Bridge from "../bridge.js";
+import * as Measure from "../measure.js";
 import { el } from "../design/dom.js";
 import { icon } from "../design/icons.js";
 import { mark } from "../design/brand.js";
@@ -43,6 +44,7 @@ function exists(key) {
 }
 
 function show(section, { remember = true } = {}) {
+  const started = Measure.at();
   const next = exists(section) ? section : "overview";
   if (nodes.screen) state.scroll[state.section] = nodes.screen.scrollTop;
   state.section = next;
@@ -68,6 +70,7 @@ function show(section, { remember = true } = {}) {
   nodes.screen.appendChild(screenFor(next).render(screenState()));
 
   nodes.screen.scrollTop = state.scroll[next] ?? 0;
+  Measure.say(`screen ${next}: ${Measure.since(started)} ms, ${Measure.nodes(nodes.screen)} nodes`);
   if (remember) Bridge.setSection(next);
 }
 
@@ -199,6 +202,8 @@ let listening = false;
 let firstDraw = true;
 /** A scripted press happens once, not on every redraw. Harness only. */
 let pressed = false;
+/** So does a scripted measurement walk. Harness only. */
+let measured = false;
 
 function keyboard() {
   if (listening) return;
@@ -272,6 +277,38 @@ function pressWhenItExists(labels, startedAt = Date.now()) {
 }
 
 export const Stress = {
+  /**
+   * Walk the window the way a reader does, and say what each move cost.
+   *
+   * Every line goes to the shell's standard error through `measure.js`, which is the only
+   * place a timing taken inside the page can be read from outside it. The moves are the
+   * ones the founder makes: the four screens, then the ranges and the projects on the
+   * Overview, which are the two controls that redraw a screen without re-reading the
+   * store.
+   *
+   * Harness only, like the rest of this object; the shell evaluates it when
+   * `PRUDENCE_MEASURE` is set, and a release build has neither.
+   */
+  measure() {
+    for (const entry of SECTIONS) show(entry.key, { remember: false });
+    show("overview", { remember: false });
+    for (const range of RANGES) {
+      const started = Measure.at();
+      state.range = range.key;
+      state.bucket = null;
+      redraw();
+      Measure.say(`range ${range.key}: ${Measure.since(started)} ms end to end`);
+    }
+    state.range = DEFAULT_RANGE;
+    for (const project of [...(state.data?.projects ?? []).map((row) => String(row.name)), null]) {
+      const started = Measure.at();
+      state.project = project;
+      state.bucket = null;
+      redraw();
+      Measure.say(`project ${project ?? "all"}: ${Measure.since(started)} ms end to end`);
+    }
+    Measure.say("done");
+  },
   step(round) {
     show(SECTIONS[round % SECTIONS.length].key, { remember: false });
     const room = nodes.screen.scrollHeight - nodes.screen.clientHeight;
@@ -369,5 +406,22 @@ export const page = {
     }
 
     if (info?.harness) /** @type {any} */ (globalThis).Stress = Stress;
+
+    // A scripted walk of the window, timed. Once, and at the end of the first draw rather
+    // than from an eval in the shell, for the same reason the press is: an eval fired from
+    // outside races this draw and would time a window that is not built yet. Twice over,
+    // because the first pass builds every screen for the first time and the second is the
+    // steady state a reader actually lives in. Harness only.
+    if (info?.measure && !measured) {
+      measured = true;
+      // After this render has returned, so the walk is not counted inside the time this
+      // render took. A microtask, not a timer: it is ordering, not waiting.
+      queueMicrotask(() => {
+        Measure.say("first pass");
+        Stress.measure();
+        Measure.say("second pass");
+        Stress.measure();
+      });
+    }
   },
 };

@@ -234,7 +234,7 @@ function didCard(section) {
   // review 1 those are 18 and 32, so one caption over both would make the two screens
   // look as if one of them were broken.
   const stats = [
-    ["did.sessions", t("overview.sessionsInRange"), ""],
+    ["did.sessions", t("review.did.sessions"), ""],
     ["did.hours", t("overview.activeHours"), t("overview.sittingsNote")],
     ["did.commits", t("review.did.commits"), t("review.did.commitsFoot")],
     ["did.coverage", t("review.card.coverage"), t("review.did.coverageFoot")],
