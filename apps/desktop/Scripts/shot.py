@@ -135,6 +135,24 @@ def is_on_top(pids, window: dict) -> tuple[bool, str]:
     return False, "the window we mean is not on screen"
 
 
+def park_the_pointer() -> None:
+    """Move the pointer out of the way before capturing.
+
+    A chart that answers on hover answers **into the shot**: the Overview's reading line
+    showed the hint in one screenshot and a specific week's totals in the next, purely
+    because of where the mouse happened to be. Two runs of the same command have to make
+    the same picture, or nothing can be compared between them, and a label audit that
+    reads them is auditing the pointer.
+
+    Parked bottom-left rather than at (0, 0), which is a screen corner some systems treat
+    as a hot corner.
+    """
+    Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(4.0, 4.0))
+    # The window server coalesces a warp with whatever the mouse was doing; this lets the
+    # move be delivered as an event before anything is drawn against it.
+    Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+
+
 def activate(pid: int) -> None:
     """Bring the process we launched to the front, and nothing else."""
     app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
@@ -317,6 +335,7 @@ def main() -> int:
 
         target = out / f"{args.name}.png"
         region = f"{int(window['x'])},{int(window['y'])},{int(window['w'])},{int(window['h'])}"
+        park_the_pointer()
         subprocess.run(["screencapture", "-x", "-R", region, str(target)], check=True)
         print(f"{target}  window {window['id']}  {region}")
         return 0
