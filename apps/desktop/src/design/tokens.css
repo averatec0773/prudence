@@ -782,6 +782,14 @@ figcaption.sr {
   letter-spacing: -0.01em;
 }
 
+/* What the panel is over, beside what wrote the store. Two automatic margins, so the three
+   read as name, scope, version across the head's whole width. */
+.popover .pop-head .scope-count {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+  margin-left: auto;
+}
+
 .popover .pop-head .ver {
   font-size: var(--t-caption2);
   color: var(--text-3);

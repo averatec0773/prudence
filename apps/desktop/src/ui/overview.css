@@ -7,3 +7,73 @@
  *
  * No design token may be declared here. A test asserts it.
  */
+
+/* What the whole screen is over, said once, above everything it frames. It is prose and
+   is set as prose: the measure is held short so the sentence is read rather than scanned
+   across the window. */
+.screen-summary {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+  max-width: 68ch;
+}
+
+/* The three figures, as one strip rather than as three cards.
+ *
+ * **Two rows, not three columns of two.** The figures carry their own units, so one of
+ * them can be twice the length of another ("422.2 active hours" against "151 sessions")
+ * and wrap where the others do not. Each figure is `display: contents` in a grid of two
+ * explicit rows filled column by column, so every value sits in one row and every
+ * qualification in the next, and the three feet share a baseline whatever the values do.
+ *
+ * Narrow: the window's own floor is 900 pt (`src-tauri/src/window.rs`), so three cells
+ * always have room; under 700 the strip stacks, which is the declaration rather than a
+ * path anything reaches today. */
+.card.figures {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.figure-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  grid-template-rows: auto auto;
+  column-gap: var(--s5);
+  row-gap: 2px;
+  align-items: start;
+}
+
+.figure-row .figure {
+  display: contents;
+}
+
+@media (max-width: 700px) {
+  .figure-row {
+    grid-auto-flow: row;
+    grid-template-rows: none;
+    row-gap: var(--s3);
+  }
+
+  .figure-row .figure {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+/* The figure carries its own unit, so the value is the noun phrase and not a bare number.
+   It is the largest thing on the strip and the smallest of the page's headings. */
+.figure-row .value {
+  font-size: var(--t-title2);
+  font-weight: 660;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.figure-row .foot {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  line-height: 1.35;
+}

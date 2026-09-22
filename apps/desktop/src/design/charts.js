@@ -226,9 +226,28 @@ export function labelEvery(count) {
   return Math.ceil(count / 14);
 }
 
-/** The gridlines and their values, shared so both charts sit on the same furniture. */
-function axisFurniture({ fractions, format, plotH }) {
+/** The gridlines and their values, shared so both charts sit on the same furniture.
+ *
+ *  `unit` is the word the values are in, printed once above the topmost one. A value axis
+ *  reading `0 / 0.4B / 0.8B / 1.1B / 1.5B` states its unit nowhere: the card's title
+ *  carried "Tokens", which makes it inferable rather than stated. The percentage axis
+ *  passes none, because `%` is on every label already. */
+/**
+ * @param {{ fractions: number[], format: (fraction: number) => string, plotH: number,
+ *           unit?: string }} options
+ */
+function axisFurniture({ fractions, format, plotH, unit }) {
   const marks = [];
+  if (unit) {
+    marks.push(
+      svgEl("text", {
+        x: PLOT.width - PLOT.padRight + 8,
+        y: PLOT.padTop - 4,
+        text: unit,
+        class: "axis",
+      })
+    );
+  }
   for (const fraction of fractions) {
     const y = PLOT.padTop + plotH - plotH * fraction;
     marks.push(
@@ -279,6 +298,7 @@ function slotLabels({ slots, label, at, height }) {
  *   caption: string,
  *   label: (bucket: string) => string,
  *   axisFormat: (value: number) => string,
+ *   axisUnit?: string,
  *   selected?: string | null,
  *   onHover?: (bucket: string | null) => void,
  *   onSelect?: (bucket: string | null) => void,
@@ -299,6 +319,7 @@ export function stackedBars(options) {
     fractions: [0, 0.25, 0.5, 0.75, 1],
     format: (fraction) => options.axisFormat(max * fraction),
     plotH,
+    unit: options.axisUnit,
   });
 
   buckets.forEach((one, index) => {
@@ -470,20 +491,64 @@ function path(run, at, y) {
  * One cell per local day, seven rows Monday first, a single hue. A day the view has no
  * row for has **no value**, and is drawn as the empty track rather than as a measured
  * zero: the engine writes no row for a day nothing happened on.
+ *
+ * ## The axis
+ *
+ * The strip had none: seven rows and N columns of squares, with the day only inside each
+ * cell's `title`, which a pointer reaches and a screenshot does not. So the reader could
+ * not tell which row was Monday.
+ *
+ * **The geometry**, which is also written in `DESIGN.md`:
+ *
+ * - a cell is 13 units square, 3 between them, so a row or a column is 16;
+ * - the weekday gutter is `GUTTER` units wide, and its label sits on the cell's middle,
+ *   right-aligned against the first column;
+ * - the month band is `MONTH_BAND` units tall under the grid, and a month's name is drawn
+ *   at the **left edge of the first column whose Monday falls in it**, which is where a
+ *   month starts to within the week it starts in;
+ * - both labels are the caller's strings. This module holds no text and reads no
+ *   catalogue: `weekdays` is the seven names, Monday first, and `monthOf` answers with a
+ *   column's month name.
  */
+
+/** The width of the weekday gutter, which is three Latin letters or two Chinese ones. */
+const GUTTER = 24;
+
+/** The band under the grid that carries the months. */
+const MONTH_BAND = 14;
 
 /**
  * @param {{ weeks: {week: string, days: {day: string, hours: number|null, inRange: boolean}[]}[],
- *           max: number, caption: string, title: (day: string, hours: number|null) => string }} options
+ *           max: number, caption: string, title: (day: string, hours: number|null) => string,
+ *           weekdays?: string[], monthOf?: (week: string) => string }} options
  */
 export function heatStrip(options) {
   const cell = 13;
   const gap = 3;
   const rows = 7;
-  const width = Math.max(1, options.weeks.length * (cell + gap) - gap);
-  const height = rows * (cell + gap) - gap;
+  const weekdays = options.weekdays ?? [];
+  const grid = Math.max(1, options.weeks.length * (cell + gap) - gap);
+  const gridHeight = rows * (cell + gap) - gap;
+  const width = GUTTER + grid;
+  const height = gridHeight + MONTH_BAND;
+  const at = (column) => GUTTER + column * (cell + gap);
 
   const marks = [];
+
+  // Down the left, one per row, on the cell's own middle so the label and the row it names
+  // cannot drift apart as the strip is scaled.
+  weekdays.forEach((name, row) => {
+    marks.push(
+      svgEl("text", {
+        x: GUTTER - 6,
+        y: row * (cell + gap) + cell / 2 + 3,
+        "text-anchor": "end",
+        text: name,
+        class: "axis",
+      })
+    );
+  });
+
   options.weeks.forEach((week, column) => {
     week.days.forEach((day, row) => {
       if (!day.inRange) return;
@@ -493,7 +558,7 @@ export function heatStrip(options) {
         svgEl(
           "rect",
           {
-            x: column * (cell + gap),
+            x: at(column),
             y: row * (cell + gap),
             width: cell,
             height: cell,
@@ -507,6 +572,25 @@ export function heatStrip(options) {
       marks[marks.length - 1].querySelector("title").textContent = options.title(day.day, day.hours);
     });
   });
+
+  // Under the first column of each month. The first column carries its month too: a strip
+  // that starts mid-month would otherwise leave its opening weeks unnamed.
+  if (options.monthOf) {
+    let said = null;
+    options.weeks.forEach((week, column) => {
+      const name = options.monthOf(week.week);
+      if (!name || name === said) return;
+      said = name;
+      marks.push(
+        svgEl("text", {
+          x: at(column),
+          y: gridHeight + MONTH_BAND - 3,
+          text: name,
+          class: "axis",
+        })
+      );
+    });
+  }
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "heat" }, marks);
   svg.style.height = `${height}px`;

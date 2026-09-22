@@ -13,35 +13,16 @@
  *
  * ## The rule
  *
- * The answer is a function of what the engine has recorded, so it is remembered against
- * the store's own evidence of that: the last ingest's timestamp and the newest review's
- * id. A redraw that carries the same two is a redraw of the same store, and the remembered
- * answer is handed back without asking anything. An ingest or a review moves one of them
- * and the next draw asks again, which is what "it follows the store" means.
- *
- * A failure is not remembered: the memo is dropped so the next draw tries again, and the
- * rejection still reaches the caller rather than being swallowed here.
+ * The answer is remembered against the store's own evidence of a change, which is
+ * `store/asked.js`: that file holds the rule, the stamp and the measurements, and was
+ * generalised out of this one when the Settings screen turned out to be asking the engine
+ * two more questions the same way. This file is the readiness question's own memo and
+ * nothing else.
  */
 
-/** The store the remembered answer was taken against. */
-let at = /** @type {string | null} */ (null);
-/** The answer, or the promise of one still in flight. */
-let asked = /** @type {Promise<any> | null} */ (null);
+import { memo, storeStamp } from "./asked.js";
 
-/**
- * The store's own evidence that anything a review depends on has changed.
- *
- * Not a fingerprint of the file: the file moves when the engine merely reads it, which is
- * the whole defect above. These are two values the engine writes.
- *
- * @param {any} data the payload from `store/payload.js`
- * @returns {string}
- */
-export function storeStamp(data) {
-  const ingest = data?.status?.last_ingest_at ?? "";
-  const review = data?.reviews?.[0]?.id ?? "";
-  return `${ingest}|${review}`;
-}
+const answer = memo();
 
 /**
  * The engine's readiness answer for this store, asking for it at most once.
@@ -51,24 +32,12 @@ export function storeStamp(data) {
  * @returns {Promise<any>}
  */
 export function readiness(data, ask) {
-  const stamp = storeStamp(data);
-  if (asked && at === stamp) return asked;
-  at = stamp;
-  const answer = Promise.resolve(ask());
-  asked = answer;
-  answer.catch(() => {
-    // Only if nothing else has asked since: a later draw's answer is not this one's to
-    // throw away.
-    if (asked === answer) {
-      at = null;
-      asked = null;
-    }
-  });
-  return answer;
+  return answer.ask(data, ask);
 }
 
 /** Forget what was asked. For a test, and for nothing else: the app has one store. */
 export function forget() {
-  at = null;
-  asked = null;
+  answer.forget();
 }
+
+export { storeStamp };

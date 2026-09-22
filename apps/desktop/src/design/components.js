@@ -23,6 +23,39 @@ export function statCard(caption, value, detail) {
 }
 
 /**
+ * Something folded away, with the line that says what is in it.
+ *
+ * The card below builds one out of its `method` string. The Overview builds its own,
+ * because its two full tables belong in the same drawer as the method and the summary has
+ * to say so: a table that repeats a chart row for row is the same promise as the method
+ * ("check this figure yourself") and being open by default is what made that screen
+ * unreadable. Two hundred rows of it at 365 days.
+ *
+ * `deferred` is built the first time the drawer is opened and never again. A closed
+ * disclosure draws nothing, but its content is still nodes to build, to lay out and to
+ * keep: at 365 days the Overview's two tables were 2,158 of the screen's nodes, on a page
+ * whose reader had asked for a chart. Nothing is lost by waiting, because nothing the
+ * reader can see depends on it.
+ *
+ * @param {{ summary: string, body: Element[], deferred?: () => Element[] }} options
+ * @returns {HTMLElement}
+ */
+export function disclosure({ summary, body, deferred }) {
+  const how = el("details", { class: "method" });
+  how.appendChild(el("summary", { text: summary }));
+  for (const node of body) how.appendChild(node);
+  if (deferred) {
+    let built = false;
+    how.addEventListener("toggle", () => {
+      if (built) return;
+      built = true;
+      for (const node of deferred()) how.appendChild(node);
+    });
+  }
+  return how;
+}
+
+/**
  * A card: a title, one sentence of plain method for a reader, the body, and the view and
  * column names folded away behind a disclosure.
  *
@@ -47,10 +80,9 @@ export function panel({ title, note, body, extra, method }) {
   card.appendChild(body);
 
   if (typeof method === "string" && method) {
-    const how = el("details", { class: "method" });
-    how.appendChild(el("summary", { text: t("chart.method") }));
-    how.appendChild(el("p", { text: method }));
-    card.appendChild(how);
+    card.appendChild(
+      disclosure({ summary: t("chart.method"), body: [el("p", { text: method })] })
+    );
   } else if (method) {
     card.appendChild(/** @type {Element} */ (method));
   }

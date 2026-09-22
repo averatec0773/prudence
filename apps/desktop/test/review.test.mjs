@@ -479,7 +479,10 @@ test("every card states its method for a reader and keeps the engine's notes beh
    the founder's own review 1 those are 18 and 32. This is the list of captions this
    screen shares with the Overview, and why each one is the same question. */
 const SHARED_CAPTIONS = {
-  "did.sessions": "overview.sessionsInRange",
+  // `did.sessions` used to be here, borrowing the Overview's "Sessions in range" for a card
+  // that has no range. It has its own key now (`review.did.sessions`), and the Overview's
+  // captions have gone with the three cards that carried them: its figures say "22
+  // sessions" and its summary line says what window that is over.
   "did.hours": "overview.activeHours",
 };
 

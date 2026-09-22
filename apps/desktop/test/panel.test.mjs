@@ -32,6 +32,7 @@ const app = join(here, "..");
 
 import * as Str from "../src/text/strings.js";
 import { readPayload } from "../src/store/payload.js";
+import { projects } from "../src/text/fmt.js";
 const { page, PANEL_RUN } = /** @type {any} */ (await import("../src/ui/panel.js"));
 const { forget } = /** @type {any} */ (await import("../src/store/readiness.js"));
 
@@ -193,6 +194,88 @@ test("Ingest now runs an ingest, and Review now runs a review", async () => {
   assert.deepEqual(asked, ["ingest", "review"]);
 });
 
+/* --- what the panel is over, and how the mix is named ----------------------------------
+ *
+ * Every figure on the panel is the whole store, all projects, and nothing said so: a reader
+ * with three repositories recorded had no way to know that from here.
+ */
+
+/** Today, as the engine writes a day, so a row lands inside the rolling seven days. */
+function today() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function drawWith(payload) {
+  PANEL_RUN.running = null;
+  PANEL_RUN.at = null;
+  forget();
+  /** @type {any} */ (document).body.children = [];
+  const container = document.createElement("div");
+  /** @type {any} */ (document).body.appendChild(container);
+  page.render(/** @type {any} */ (container), { data: readPayload(payload) });
+  return /** @type {any} */ (container);
+}
+
+test("the head says what the panel is over", () => {
+  PANEL_RUN.port = null;
+  const container = drawWith({
+    status: { engine_version: "0.4.0" },
+    usage: [],
+    commits: [],
+    sessions: [],
+    outcomes: [],
+    observations: [],
+    reviews: [],
+    projects: [
+      { key: "root:a", name: "a" },
+      { key: "root:b", name: "b" },
+      { key: "root:c", name: "c" },
+    ],
+  });
+  const head = container.find(".pop-head");
+  assert.ok(
+    head.textContent.includes(projects(3)),
+    `the head does not say what it is over: ${head.textContent}`
+  );
+});
+
+/* The sentence names the purposes in order and the bar draws them, so a swatch legend
+   naming the same three words was a third row for one fact in a 360 pt window. The colour
+   goes on the name instead: identity, never judgement. */
+test("the purposes are coloured in the sentence and named nowhere else", () => {
+  PANEL_RUN.port = null;
+  const container = drawWith({
+    status: { engine_version: "0.4.0" },
+    usage: {
+      columns: ["day", "project", "repo_key", "purpose", "total_tokens", "active_minutes", "measured_sessions", "sessions"],
+      rows: [
+        [today(), "a", "root:a", "development", 900, 60, 1, 1],
+        [today(), "a", "root:a", "research", 100, 10, 1, 1],
+      ],
+    },
+    commits: [],
+    sessions: [],
+    outcomes: [],
+    observations: [],
+    reviews: [],
+    projects: [{ key: "root:a", name: "a" }],
+  });
+
+  const named = container.findAll(".purpose-name");
+  assert.deepEqual(
+    named.map((node) => node.textContent),
+    [Str.t("purpose.development"), Str.t("purpose.research")],
+    "the purposes are not named in the sentence"
+  );
+  for (const node of named) {
+    assert.match(node.style.color, /^var\(--p-[a-z]+\)$/, `no purpose colour on ${node.textContent}`);
+  }
+  assert.deepEqual(container.findAll(".legend"), [], "the swatch legend is still under the bar");
+});
+
 /* --- what a run says while it is going ------------------------------------------------
  *
  * The place the note occupies carries one of two things: a sentence, or the bar. What is
@@ -255,6 +338,47 @@ test("a redraw part way through a run keeps the bar on screen", async () => {
 
 /* --- whether a review is ready ---------------------------------------------------------- */
 
+/* --- the panel is its final height at first paint -------------------------------------
+ *
+ * The readiness answer comes from a subprocess and used to arrive into a row that was
+ * `hidden` until it did. A popover is only as tall as its content and is anchored under the
+ * status item when it is shown, so the window was re-measured and re-anchored under the
+ * reader a second after it opened: 635 px at render, 677 px a second later, measured
+ * against a copy of the founder's store on 2026-09-22.
+ *
+ * A node test has no layout, so what is asserted here is the property the equal height
+ * rests on: **the answer changes no node**. The slot is in the tree from the first paint,
+ * it is never hidden, and filling it adds nothing and removes nothing. The height itself is
+ * checked in the app, where `[measure] panel refit` prints it.
+ */
+function nodeCount(container) {
+  let count = 0;
+  for (const _ of container.walk()) count += 1;
+  return count;
+}
+
+test("the readiness answer arrives into a reserved row and changes no node", async () => {
+  fakeShell(undefined, {
+    readiness: { ready: false, newSessions: 2, requiredSessions: 5, maturedCommits: 0, requiredCommits: 1 },
+  });
+  const container = draw();
+
+  const slot = container.findAll(".pop-reserve").find((node) => node.find(".coverage-chip")?.id === "pop-ready");
+  assert.ok(slot, "the panel reserves no row for the readiness answer");
+  const caption = slot.find(".coverage-chip");
+  assert.equal(caption.hidden, false, "the readiness row is revealed rather than reserved");
+  assert.equal(caption.textContent, "", "the row has an answer before the engine gave one");
+  const before = nodeCount(container);
+
+  await settled();
+  assert.equal(caption.textContent, Str.t("review.readiness.needs", "2", "5", "0", "1"));
+  assert.equal(
+    nodeCount(container),
+    before,
+    "the readiness answer changed the panel's tree, so it changed its height"
+  );
+});
+
 test("the panel says what the engine says about writing a review", async () => {
   fakeShell(undefined, {
     readiness: {
@@ -286,15 +410,15 @@ test("a review that is not ready says what is still needed, in the reader's lang
   assert.equal(caption.textContent, Str.t("review.readiness.needs", "2", "5", "0", "1"));
 });
 
-/* An engine that does not carry readiness gets no line at all. "Not ready" would be this
-   app inventing a verdict out of an answer it was never given. */
+/* An engine that does not carry readiness says nothing at all. "Not ready" would be this
+   app inventing a verdict out of an answer it was never given. The row is reserved either
+   way, and an empty one draws nothing: `.coverage-chip:empty` in `app.css`. */
 test("no answer is no line rather than a guess", async () => {
   fakeShell(undefined, { readiness: null });
   const container = draw();
   await settled();
   const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
-  assert.equal(caption.hidden, true, "a line was drawn with nothing behind it");
-  assert.equal(caption.textContent, "");
+  assert.equal(caption.textContent, "", "a verdict was drawn with nothing behind it");
 });
 
 /* In flight: one line, and the two buttons dead. */

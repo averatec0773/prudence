@@ -80,6 +80,11 @@ const SHARED_TEXT = {
     // is not the same in the two places (`会话` against `个会话`), which is what makes
     // them two decisions rather than one written twice.
     ["chart.sessionsShort", "engine.unit.sessions"],
+    // The unit a chart's value axis is in, and the label the engine writes on a review's
+    // own table. One is this app's word for a scale it draws; the other is a header row
+    // the engine printed and this app only translates, and it changes when the engine
+    // changes it.
+    ["chart.unit.tokens", "review.header.tokens"],
     ["common.dateWithRelative", "menu.stamped"],
     ["menu.noReview", "review.empty.title"],
     ["observation.outcome.rework", "overview.legend.reworkName"],
@@ -92,6 +97,8 @@ const SHARED_TEXT = {
   ],
   "zh-Hans": [
     ["chart.hours", "overview.activeHours"],
+    // As above: a chart's own unit, and a header the engine wrote.
+    ["chart.unit.tokens", "review.header.tokens"],
     ["common.dateWithRelative", "menu.stamped"],
     ["menu.noReview", "review.empty.title"],
     ["observation.didNot", "observation.side.didNot"],
@@ -167,7 +174,7 @@ test("placeholders are the same set in each language, in each language's own ord
    the runtime asks, so it is what the test asks. */
 test("plurals choose a form in English and do not in Chinese", () => {
   const plural = Object.entries(strings.en).filter(([, v]) => typeof v !== "string");
-  assert.equal(plural.length, 6, "six keys carry a count");
+  assert.equal(plural.length, 8, "eight keys carry a count");
 
   for (const [key, english] of plural) {
     assert.deepEqual(

@@ -5,10 +5,13 @@ One codebase for macOS and Windows: a Rust shell around the design system's own 
 A menu bar panel and a four-screen window, in English and Simplified Chinese,
 on real Liquid Glass where the system has it:
 
-- **Overview**: the three totals, tokens by purpose per bucket, what became of each week's
-  work with its coverage, and where the hours went. Seven ranges from one day to all, and
-  a bucket is a day up to sixty days and an ISO week beyond; the outcomes chart stays
-  weekly under every range, because the engine measures an outcome per week.
+- **Overview**: one sentence saying what the screen is over, the three totals as a strip,
+  tokens by purpose per bucket, one card each for what was still there after thirty days
+  and what was rewritten, and where the hours went. Seven ranges from one day to all, and
+  a bucket is a day up to sixty days and an ISO week beyond; the two outcome cards stay
+  weekly under every range, because the engine measures an outcome per week. Each card's
+  full table is behind its "how this is measured" drawer and is built when the drawer is
+  first opened.
 - **Review**: one stored review as the engine wrote it, keeping the period reviewed and
   the outcome window apart, with the engine's own figures and its notes behind a
   disclosure.

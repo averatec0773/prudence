@@ -12,7 +12,18 @@ import { miniStack } from "../design/charts.js";
 import { runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { mark } from "../design/brand.js";
-import { hourPhrase, list, percent, purpose, sessions, commits, tokenPhrase, day } from "../text/fmt.js";
+import {
+  hourPhrase,
+  list,
+  listSeparator,
+  percent,
+  projects,
+  purpose,
+  sessions,
+  commits,
+  tokenPhrase,
+  day,
+} from "../text/fmt.js";
 import {
   observationCaveat,
   observationSentence,
@@ -37,12 +48,23 @@ function block(caption, node) {
   return el("div", { class: "pop-block" }, [el("span", { class: "k", text: caption }), node]);
 }
 
+/**
+ * The head: what this is, what it is over, and what wrote the store.
+ *
+ * **The scope is the answer to "what are these figures about?"** Every number on the panel
+ * is the whole store, all projects, and nothing said so: a reader with three repositories
+ * recorded had no way to know that from here. It is the same list the window's project
+ * picker offers, which is the projects the store has usage for.
+ */
 function head(data) {
   const bar = el("div", { class: "pop-head" });
   const brand = mark(18);
   brand.classList.add("brand-mark");
   bar.appendChild(brand);
   bar.appendChild(el("span", { class: "name", text: PRODUCT_NAME }));
+  bar.appendChild(
+    el("span", { class: "scope-count", text: projects((data.projects ?? []).length) })
+  );
   bar.appendChild(
     el("span", { class: "ver", text: `prudence ${data.status?.engine_version ?? ""}` })
   );
@@ -63,6 +85,15 @@ function todayBlock(data) {
   return wrap;
 }
 
+/**
+ * The last seven days: the mix in words, the same mix as a bar, and the three totals.
+ *
+ * **The sentence is the legend.** It used to be stated in words, drawn as a bar, and then
+ * named a third time by a swatch legend under it: three rows for one fact in a 360 pt
+ * window. The purpose's own colour now goes on its name where the name already is, which
+ * is what makes the bar readable and returns a row. Colour is identity here, as it is
+ * everywhere: it says which quantity this is and never whether the quantity is good.
+ */
 function weekBlock(data) {
   const week = lastSevenDays(data);
   const shares = purposeShares(week);
@@ -71,7 +102,23 @@ function weekBlock(data) {
     : t("menu.noTokensThisWeek");
 
   const wrap = el("div", { class: "week-row" });
-  wrap.appendChild(text(summary, "obs-line"));
+
+  const line = el("div", { class: "obs-line" });
+  if (!shares.length) {
+    line.appendChild(document.createTextNode(summary));
+  } else {
+    shares.forEach((part, index) => {
+      if (index) line.appendChild(document.createTextNode(listSeparator()));
+      const named = el("span", { class: "purpose-name", text: purpose(part.purpose) });
+      named.style.color = `var(--p-${part.purpose})`;
+      line.appendChild(named);
+      // A space between a name and its figure is not punctuation the language chooses, so
+      // it is part of the figure's own element rather than a bare text node in between.
+      line.appendChild(el("span", { class: "purpose-share", text: ` ${percent(part.share)}` }));
+    });
+  }
+  wrap.appendChild(line);
+
   wrap.appendChild(
     miniStack({
       byPurpose: week.byPurpose,
@@ -89,16 +136,6 @@ function weekBlock(data) {
     );
   }
 
-  const legend = el("div", { class: "legend" });
-  for (const part of shares) {
-    const key = el("span", { class: "key" });
-    const swatch = document.createElement("i");
-    swatch.style.background = `var(--p-${part.purpose})`;
-    key.appendChild(swatch);
-    key.appendChild(document.createTextNode(purpose(part.purpose)));
-    legend.appendChild(key);
-  }
-  wrap.appendChild(legend);
   return wrap;
 }
 
@@ -187,12 +224,8 @@ function note(text) {
   if (!line) return;
   PANEL_RUN.at = null;
   line.className = "coverage-chip";
-  if (!text) {
-    line.hidden = true;
-    line.textContent = "";
-  } else {
-    line.textContent = text;
-    line.hidden = false;
+  line.textContent = text ?? "";
+  if (text) {
     // On the shell's standard error as well, for the same reason `page_log` exists at
     // all: a menu bar app has no console anybody is watching, and this line is the only
     // report a run started from the panel makes. Only where there is a shell to say it
@@ -329,34 +362,47 @@ function footer(data) {
   settings.addEventListener("click", () => Bridge.openWindow());
   quit.addEventListener("click", () => Bridge.quit());
 
+  /* Both of these rows are **reserved, never revealed**.
+   *
+   * They were hidden at first draw and shown when something arrived, and the readiness one
+   * arrives from a subprocess a moment after the panel has been shown and anchored. The
+   * panel is only as tall as its content, so the window was re-measured and re-anchored
+   * under the status item while the reader was looking at it: 635 px at render and 677 px
+   * a second later, measured on 2026-09-22.
+   *
+   * So the slots are in the layout from the first paint, at the height their answer needs
+   * (`app.css`), and filling one changes no node and no height. An empty one draws nothing
+   * at all: `.coverage-chip:empty` is what keeps a capsule from sitting there with nothing
+   * in it. `refit` still runs, because a sentence longer than the slot must grow the window
+   * rather than be cut off; it reports the height it already reported.
+   */
   const line = el("div", { class: "coverage-chip", text: "" });
   line.id = "pop-note";
-  line.hidden = true;
 
   // Whether a review is ready, beside the button that writes one: the engine's own
   // sentence where there is one, and what is still needed where there is not.
   //
   // Through `store/readiness.js`, which decides when the engine is asked at all. Asking on
   // every draw closes a loop with the store watcher, and that file holds the whole story.
-  const ready = el("div", { class: "coverage-chip" });
+  const ready = el("div", { class: "coverage-chip", text: "" });
   ready.id = "pop-ready";
-  ready.hidden = true;
   const port = runner();
   if (port?.readiness) {
     readiness(data, () => port.readiness())
       .then((found) => {
+        // No answer is no line rather than a guess: the engine that carries no readiness
+        // block has said nothing, and "not ready" would be this app inventing a verdict.
         const said = readinessSentence(found);
         if (!said) return;
         ready.textContent = said;
-        ready.hidden = false;
         refit("readiness");
       })
       .catch(() => {});
   }
 
   return el("div", { class: "pop-foot" }, [
-    line,
-    ready,
+    el("div", { class: "pop-reserve" }, [line]),
+    el("div", { class: "pop-reserve is-readiness" }, [ready]),
     open,
     el("div", { class: "buttons-row" }, [review, ingest]),
     el("div", { class: "buttons-row spread" }, [settings, quit]),

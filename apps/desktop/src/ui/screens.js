@@ -10,10 +10,9 @@
  * computes no figures of its own; and its stylesheet may declare no design token.
  */
 
-import { rangeOf } from "../store/overview.js";
 import { chosen, reviewsFor } from "../store/review.js";
 import { wholeStore } from "./review.js";
-import { day as formatDay, rangeName } from "../text/fmt.js";
+import { day as formatDay } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 import { observations } from "./observations.js";
 import { overview } from "./overview.js";
@@ -54,13 +53,11 @@ import { settings } from "./settings.js";
  * }[]}
  */
 export const SCREENS = [
-  {
-    key: "overview",
-    label: "section.overview",
-    scope: ["project", "range"],
-    subtitle: overviewSubtitle,
-    render: overview,
-  },
+  // No subtitle. The Overview states its scope and its window in the summary line at the
+  // top of the screen itself, in a sentence with the three figures in it, because a grey
+  // line in the window's head was the only place the window was named and every figure
+  // below it had lost its time frame.
+  { key: "overview", label: "section.overview", scope: ["project", "range"], render: overview },
   {
     key: "review",
     label: "section.review",
@@ -94,11 +91,6 @@ export function screenExists(key) {
  * screen but the Overview, which was true while three screens were placeholders and
  * became a lie above each one as it was written.
  */
-
-function overviewSubtitle(state) {
-  const scope = state.project ?? t("scope.allProjects");
-  return t("scope.subtitle", scope, rangeName(rangeOf(state.range)));
-}
 
 function reviewSubtitle(state) {
   // The one the screen opens on: the newest in scope.

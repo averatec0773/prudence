@@ -148,6 +148,39 @@ body {
   padding: 2px 0;
 }
 
+/* The two rows in the footer that arrive late, reserved rather than revealed.
+ *
+ * A popover is as tall as its content and is anchored under the status item when it is
+ * shown, so a row that appears a moment later re-measures and re-anchors the window under
+ * the reader: 635 px at render and 677 px a second later, measured on 2026-09-22. The slot
+ * is therefore in the layout from the first paint, at the height its answer needs, and the
+ * answer is written into it.
+ *
+ * One line for a run's report, which is one sentence. Two for the readiness answer, which
+ * is the engine's own sentence or the four numbers this app composes, and is two lines at
+ * 360 pt in both languages. `DESIGN.md` carries what happens to a longer one. */
+.pop-reserve {
+  min-height: calc(var(--t-caption2) * 1.4 + 4px);
+  display: flex;
+}
+
+.pop-reserve.is-readiness {
+  min-height: calc(var(--t-caption2) * 2.8 + 4px);
+}
+
+/* A reserved slot with nothing in it yet draws nothing: the chip is a capsule, and an
+   empty capsule sitting in the footer is what the `hidden` attribute used to be for. */
+.coverage-chip:empty {
+  padding: 0;
+  background: none;
+}
+
+/* The purposes are named in the sentence and coloured there, so the bar under it can be
+   read without a legend repeating the same three words. Identity, never judgement. */
+.week-row .purpose-name {
+  font-weight: 590;
+}
+
 .buttons-row {
   display: flex;
   gap: var(--s2);

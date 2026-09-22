@@ -36,6 +36,7 @@
 
 import { emptyState, panel } from "../design/components.js";
 import { el } from "../design/dom.js";
+import { MODEL_ANSWER, REPOSITORY_SCAN } from "../store/asked.js";
 import { engineSection } from "./engine-section.js";
 import {
   count,
@@ -468,6 +469,7 @@ function engine(state) {
  */
 function model(state) {
   const port = SETTINGS.port;
+  const { data } = state;
   const body = el("div", { class: "setting-list" });
   const card = panel({
     title: t("settings.tab.model"),
@@ -484,10 +486,14 @@ function model(state) {
   // Asked for when the tab is drawn, and filled when the engine answers: it is a
   // subprocess, and a blank area while it runs would say nothing about the one question
   // this tab is for.
+  //
+  // Through `store/asked.js`, which decides when the engine is asked at all. This screen
+  // is redrawn on every store change, an ingest announces itself eight times as it works,
+  // and the five panes are all built whichever tab is open, so asking on every draw was
+  // one `prudence config model` per announcement while the engine was busy.
   body.appendChild(el("p", { class: "setting-note", text: t("menu.engineChecking") }));
-  port
-    .model()
-    .then((settings) => fillModel(body, settings))
+  MODEL_ANSWER.ask(data, () => port.model())
+    .then((settings) => fillModel(body, settings, data))
     .catch(() => {
       body.innerHTML = "";
       body.appendChild(el("p", { class: "setting-note", text: t("settings.model.unread") }));
@@ -496,7 +502,14 @@ function model(state) {
   return el("div", { class: "tab-body" }, [card]);
 }
 
-function fillModel(body, settings) {
+/**
+ * @param {any} body
+ * @param {any} settings what `prudence config model` printed
+ * @param {any} data the payload this render is drawing, so a change made here is
+ *   remembered against it: setting the prose language writes the engine's own config file
+ *   and moves no stamp.
+ */
+function fillModel(body, settings, data) {
   body.innerHTML = "";
   const port = SETTINGS.port;
   const rows = [
@@ -521,8 +534,11 @@ function fillModel(body, settings) {
         if (!port) return;
         port
           .modelLanguage(value)
-          .then((next) => fillModel(body, next))
-          .catch(() => fillModel(body, settings));
+          .then((next) => {
+            MODEL_ANSWER.keep(data, next);
+            fillModel(body, next, data);
+          })
+          .catch(() => fillModel(body, settings, data));
       },
     })
   );
@@ -875,8 +891,9 @@ function fillRepositories(body, rows, how) {
   }
 }
 
-function repositories() {
+function repositories(state) {
   const port = SETTINGS.port;
+  const { data } = state;
   const body = el("div", { class: "fact-list repo-list" });
   const card = panel({
     title: t("settings.tab.repositories"),
@@ -968,6 +985,9 @@ function repositories() {
     SETTINGS.port.repositoryLevel(String(row.repoKey), String(level))
       .then((next) => {
         busy = false;
+        // `prudence init --enable` writes `config.toml`, which no store stamp sees, so the
+        // engine's fresh answer is handed to the memo rather than left to expire.
+        REPOSITORY_SCAN.keep(data, next);
         show(next);
       })
       .catch(() => {
@@ -1018,8 +1038,12 @@ function repositories() {
 
     progress = null;
     try {
+      // Asked directly, not through the memo: the whole point of the re-read is that the
+      // list on screen has to come from the engine after the writes rather than from the
+      // clicks. The answer then becomes what the memo serves.
       const next = await SETTINGS.port.repositories();
       busy = false;
+      REPOSITORY_SCAN.keep(data, next);
       show(next);
     } catch {
       busy = false;
@@ -1030,8 +1054,12 @@ function repositories() {
   // Asked for when the tab is drawn, and filled when the engine answers: it is a
   // subprocess that walks the machine's session history, and a blank area while it runs
   // would say nothing about the one question this tab is for.
+  //
+  // Through `store/asked.js`, for the reason on the Model tab above and more so here:
+  // `init --scan` walks every repository on the machine, and it was being run once per
+  // watcher announcement while an ingest was writing the store.
   body.appendChild(el("p", { class: "setting-note", text: t("menu.engineChecking") }));
-  port.repositories().then(show).catch(failed);
+  REPOSITORY_SCAN.ask(data, () => port.repositories()).then(show).catch(failed);
 
   return el("div", { class: "tab-body" }, [card]);
 }

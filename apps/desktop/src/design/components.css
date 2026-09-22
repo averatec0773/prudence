@@ -130,11 +130,20 @@
   color: var(--text-3);
 }
 
-/* Which of the two pictures in this card you are looking at. */
+/* Which picture, or which outcome, you are looking at. */
 .chart-name {
   font-size: var(--t-footnote);
   font-weight: 590;
   color: var(--text-2);
+}
+
+/* The coverage in a legend is drawn as the band it is, and never as a swatch the size of a
+   project's: it is the context behind the lines, not another series, and a square beside
+   three project squares read as a fourth project. */
+.legend i.band {
+  width: 18px;
+  height: 5px;
+  border-radius: 2.5px;
 }
 
 .method {

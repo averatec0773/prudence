@@ -58,22 +58,58 @@ function words(node) {
 
 /* --- the Overview's tokens chart --------------------------------------------------- */
 
-function overviewFor(range, now) {
-  const day = (offset) => {
-    const date = new Date(now.getTime());
-    date.setDate(date.getDate() - offset);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate()
-    ).padStart(2, "0")}`;
-  };
+/** A day offset back from a moment, as the engine writes one. */
+function dayBefore(now, offset) {
+  const date = new Date(now.getTime());
+  date.setDate(date.getDate() - offset);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/** The Monday of a `yyyy-MM-dd` day. */
+function mondayOf(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function overviewFor(range, now, { days = [1], weeks = 0 } = {}) {
+  const outcomeRows = [];
+  for (let week = 0; week < weeks; week += 1) {
+    outcomeRows.push([
+      "p",
+      mondayOf(dayBefore(now, 7 * week + 7)),
+      10,
+      7,
+      100,
+      20,
+      0.8,
+    ]);
+  }
   const data = readPayload({
     usage: {
       columns: ["day", "project", "repo_key", "purpose", "total_tokens", "active_minutes", "measured_sessions", "sessions"],
-      rows: [[day(1), "p", "root:p", "development", 1000, 60, 1, 1]],
+      rows: days.map((offset) => [
+        dayBefore(now, offset),
+        "p",
+        "root:p",
+        "development",
+        1000,
+        60,
+        1,
+        1,
+      ]),
     },
     commits: { columns: ["day", "project", "commits", "commits_fact", "commits_inferred"], rows: [] },
     sessions: [],
-    outcomes: { columns: ["project", "week_start"], rows: [] },
+    outcomes: {
+      columns: ["project", "week_start", "measured_30d", "alive_30d", "lines", "reworked", "coverage"],
+      rows: outcomeRows,
+    },
     observations: { columns: [], rows: [] },
     reviews: { columns: [], rows: [] },
     projects: [{ key: "root:p", name: "p" }],
@@ -117,6 +153,153 @@ test("a daily tokens chart is described in days, and a weekly one in weeks", () 
     "the weekly chart lost its weekly note"
   );
 });
+
+/**
+ * The window is on the screen, above everything it frames.
+ *
+ * It was stated once, in grey, in the window's own head, and three captions said "in
+ * range" rather than naming it, so a reader who had scrolled past the first card had lost
+ * the time frame of every figure under it.
+ */
+test("the Overview says what it is over, in a sentence, above the figures", () => {
+  const now = new Date(2026, 8, 21, 12, 0, 0);
+  const said = words(overviewFor("30d", now));
+  const summary = said.findIndex((line) => line.startsWith("All projects, last 30 days:"));
+  assert.ok(summary >= 0, `the screen states no window: ${said.slice(0, 4)}`);
+  assert.equal(summary, 0, "something is said before the frame everything below is read in");
+  assert.match(said[summary], /\d+ sessions/, "the summary carries none of the figures");
+
+  // And nothing on the screen says "in range" any more, in either language.
+  for (const line of said) assert.doesNotMatch(line, /in range/i, line);
+});
+
+/** Each figure carries its unit, and the two words the engine lends the screen are glossed
+ *  on the screen that uses them rather than left to be guessed. */
+test("the three figures carry their units, and sitting, fact and inferred are glossed", () => {
+  const said = words(overviewFor("30d", new Date(2026, 8, 21, 12, 0, 0))).join("\n");
+  assert.match(said, /[\d.]+ active hours/, "the hours figure carries no unit");
+  assert.match(said, /a sitting is one stretch of a session/i, "'sitting' is used and never explained");
+  assert.match(said, /fact means the engine matched it/i, "'fact' is printed and never explained");
+  assert.match(said, /inferred means it matched it by timing/i, "'inferred' is never explained");
+});
+
+/**
+ * One question per card.
+ *
+ * "What became of each week's work" was three cards' worth in one: two charts with
+ * different line styles, a legend whose first entry was not a project, a seventy-word note,
+ * a method and a table.
+ */
+test("what became of the work is two cards, each with its own question", () => {
+  const now = new Date(2026, 8, 21, 12, 0, 0);
+  const screen = overviewFor("365d", now, { days: [1, 8, 15], weeks: 4 });
+  const titles = screen.findAll("h2").map((node) => node.textContent);
+  assert.ok(titles.includes("Still there after 30 days"), titles.join(" / "));
+  assert.ok(titles.includes("Rewritten later"), titles.join(" / "));
+  assert.equal(
+    titles.includes("What became of each week's work"),
+    false,
+    "the two questions are still one card"
+  );
+  // The coverage is a band behind the lines, not a swatch in a row of projects, where it
+  // read as a project of its own.
+  const legends = screen.findAll(".legend");
+  assert.ok(
+    legends.some((legend) => legend.findAll(".band").length === 1),
+    "the coverage is not drawn as the band it is"
+  );
+  for (const legend of legends) {
+    assert.equal(
+      legend.textContent.includes("pale wide"),
+      false,
+      "the coverage is still a legend entry pretending to be a project"
+    );
+  }
+});
+
+/**
+ * The tables are behind the disclosure, and are not built until it is opened.
+ *
+ * They exist so a figure can be checked without a pointer, which is right; being open by
+ * default is what made the screen unreadable. At 365 days they were about 210 rows and
+ * 2,158 of the page's nodes, above and below the charts a reader had come for.
+ */
+test("at 365 days every table is behind a closed drawer and is built only when it is opened", () => {
+  const now = new Date(2026, 8, 21, 12, 0, 0);
+  const screen = overviewFor("365d", now, { days: [1, 8, 15, 40, 120], weeks: 6 });
+
+  assert.deepEqual(screen.findAll("table"), [], "a full table is on the screen at first draw");
+  const drawers = screen.findAll(".method");
+  const withTables = drawers.filter((node) =>
+    node.find("summary").textContent.includes("in a table")
+  );
+  assert.equal(withTables.length, 3, `three cards carry a table: ${drawers.length} drawers`);
+  for (const drawer of withTables) {
+    assert.match(
+      drawer.find("summary").textContent,
+      /\d+ rows behind it/,
+      "the drawer does not say how much is in it"
+    );
+  }
+
+  let nodes = 0;
+  for (const _ of screen.walk()) nodes += 1;
+
+  for (const drawer of withTables) drawer.fire("toggle");
+  let opened = 0;
+  for (const _ of screen.walk()) opened += 1;
+
+  assert.equal(screen.findAll("table").length, 3, "opening the drawer produced no table");
+  assert.ok(opened > nodes, "the tables were built at first draw after all");
+  // Opening them twice does not build them twice.
+  for (const drawer of withTables) drawer.fire("toggle");
+  let again = 0;
+  for (const _ of screen.walk()) again += 1;
+  assert.equal(again, opened, "the table was built a second time");
+});
+
+/**
+ * The heat strip has an axis.
+ *
+ * Seven rows and N columns of squares, with the day only inside each cell's `title`: a
+ * pointer could read it and a screenshot could not, and nothing said which row was Monday.
+ */
+test("the heat strip names its rows and its months, in the reader's language", () => {
+  const now = new Date(2026, 8, 21, 12, 0, 0);
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      const screen = overviewFor("90d", now, { days: [1, 20, 50] });
+      const strip = screen
+        .findAll("svg")
+        .find((node) => node.getAttribute("class") === "heat");
+      assert.ok(strip, `${language}: no heat strip`);
+      const labels = strip.children
+        .filter((node) => node.localName === "text")
+        .map((node) => node.textContent);
+      for (const key of ["weekday.mon", "weekday.sun"]) {
+        assert.ok(labels.includes(Str.t(key)), `${language}: ${key} is not on the strip: ${labels}`);
+      }
+      // Ninety days is three or four months, and each is named once under the first column
+      // it starts in.
+      const months = labels.filter((one) => !Object.values(WEEKDAY_NAMES(language)).includes(one));
+      assert.ok(months.length >= 3, `${language}: the months are not under the strip: ${labels}`);
+      assert.equal(new Set(months).size, months.length, `${language}: a month is named twice`);
+    } finally {
+      Str.setLang("en");
+    }
+  }
+});
+
+/** The seven names, in whichever language is in force. */
+function WEEKDAY_NAMES(language) {
+  return Object.fromEntries(
+    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((key) => [
+      key,
+      Str.tIn(language, `weekday.${key}`),
+    ])
+  );
+}
 
 /* --- the Observations screen ------------------------------------------------------- */
 

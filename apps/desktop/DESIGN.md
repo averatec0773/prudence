@@ -253,6 +253,10 @@ reader back to the first tab while they are half way through changing a setting.
 about the data may be kept this way, and the five panes are built together and shown by a
 flag, so choosing a tab redraws nothing at all.
 
+An answer from the engine is **data**, so a screen does not keep one either. The two the
+Settings screen asks for live in `store/asked.js`, which is also where the rule about how
+often the engine may be asked is kept.
+
 **It returns one element** and appends nothing to the page itself.
 
 **It owns no numbers.** Everything a screen prints comes from a reader in `src/store/`,
@@ -344,8 +348,33 @@ Three consequences, each with a test:
   were weekly. The tokens chart follows the range's own grain and the outcomes chart stays
   weekly, so the note is what tells the reader which is which.
 
-The heat strip is unchanged: it was always one cell per local day, seven rows Monday
-first, whatever the range.
+The heat strip is one cell per local day, seven rows Monday first, whatever the range.
+
+### The heat strip's geometry
+
+It had no axis at all until this sheet: seven rows and N columns of squares, with the day
+only inside each cell's `title`, which a pointer reaches and a screenshot does not, so the
+reader could not tell which row was Monday. The strings were already in the catalogue
+(`weekday.mon` to `weekday.sun`) and nothing drew them.
+
+In the SVG's own units, all of it in `design/charts.js`:
+
+| | |
+|---|---|
+| A cell | 13 square, 3 between them, so a row and a column are both 16 |
+| The weekday gutter | 24 wide, the label right-aligned 6 before the first column and on the cell's own middle |
+| The month band | 14 tall under the grid, a name drawn at the **left edge** of the first column whose Monday falls in that month |
+| The whole strip | `24 + 16N - 3` wide, `109 + 14` tall |
+
+Two rules that are not geometry:
+
+- **The chart holds no text.** `weekdays` is the seven names in the reader's language and
+  `monthOf` answers a column with its month name. Both come from the screen, as every
+  other label in this module does.
+- **A month is named once.** The first column carries its own month too, because a strip
+  that starts mid-month would otherwise leave its opening weeks unnamed. A week that
+  straddles a month end belongs to the month its Monday is in, which is what the card's
+  method sentence says.
 
 ## The app owns no numbers
 
@@ -554,22 +583,47 @@ not ready costs one run.
 - **Removed when:** `status --json`'s `readiness` block carries the sentence the `review:`
   line prints. That is an engine change and is the honest fix.
 
-### The readiness answer is remembered against the store's own stamps
+### Every answer the engine gives about itself is remembered against the store's stamps
 
-`store/readiness.js`. The answer is asked for again only when `app_status.last_ingest_at`
-or the newest review's id has moved. This is not a cache for speed: asking on every draw
-closes a loop with the store watcher, because the engine opens the store read-write and
-SQLite's checkpoint on close changes exactly the two files `watcher.rs` fingerprints.
-Measured on 2026-09-22 against a copy of the founder's store: 270 runs of
-`prudence status` in three minutes with nothing else happening.
+`store/asked.js`, and `store/readiness.js` on top of it. Three questions go through it:
+whether a review is ready (`status --json`), what model the engine would use
+(`config model`), and which repositories it records (`init --scan --json`). Each is asked
+again only when `app_status.last_ingest_at` or the newest review's id has moved.
 
-- **Assumes:** nothing changes whether a review is ready except an ingest or a review.
-- **When it breaks:** the line is one store behind. `prudence review --force` from a
-  terminal writes a review, which moves the newest id, so the case that would show is a
-  readiness rule whose own thresholds change under a running app.
-- **Removed when:** the shell can answer the question without a subprocess, or the engine
+This is not a cache for speed: asking on every draw closes a loop with the store watcher,
+because the engine opens the store read-write and SQLite's checkpoint on close changes
+exactly the two files `watcher.rs` fingerprints. Measured on 2026-09-22 against a copy of
+the founder's store: 270 runs of `prudence status` in three minutes with nothing else
+happening, and separately, with the window left on Settings during one 230-second ingest,
+fourteen extra processes, because an ingest announces itself about eight times as it works
+and all five Settings panes are built whichever tab is open.
+
+- **Assumes:** nothing changes any of the three answers except an ingest, a review, or a
+  command this app itself ran. The third is why the memo takes a `keep`:
+  `prudence init --enable` writes `config.toml`, which no stamp sees.
+- **When it breaks:** a line is one store behind. `prudence config model --backend` or an
+  edit to `config.toml` from a terminal, under a running app, is the case that would show:
+  the Model tab keeps the answer from before it until the next ingest.
+- **Removed when:** the shell can answer these without a subprocess, or the engine
   announces that it has finished a run. The second one is already the removal condition of
   the watcher's own entry above.
+
+### The panel's two late rows are reserved at two lines and one
+
+`ui/panel.js` and `app.css`, `.pop-reserve`. The readiness answer arrives from a subprocess
+after the panel has been shown and anchored, and a popover is only as tall as its content,
+so the window was re-measured and re-anchored under the reader: 635 px at render and 677 px
+a second later. The slots are now in the layout from the first paint, and the answer is
+written into one of them.
+
+- **Assumes:** a run's report is one line, and the readiness sentence is two at 360 pt. The
+  engine's own "a review is ready" line and the four numbers this app composes are both two
+  lines in both languages today.
+- **When it breaks:** a longer sentence still grows the panel, because `refit` still runs
+  after the answer: the alternative is a sentence cut off inside a fixed slot, and a window
+  that moves is better than a figure that cannot be read.
+- **Removed when:** the shell can size the panel for its final content before showing it,
+  or the readiness answer is known before the first paint.
 
 ### `window.css` is not covered by the no-tokens test
 
@@ -720,6 +774,10 @@ Grown by each batch. Batch 1 adds the window shell only.
 | `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel and on the activity strip | `src/design/components.js` |
 | The repositories list | Which repositories the engine found and which of them it records, split into the two, with a level control per row. Content, so it is opaque. **Every column is declared**: `table-layout: fixed` and a `<colgroup>`, because an automatic table sized from its contents wrapped the count, both days and the segment labels at Chinese widths. The path is the only value allowed an ellipsis | `src/ui/settings.js`, `ui/settings.css` |
 | The batch bar | What to do with the ticked rows: how many they are, the three levels, and what the engine refused. At the foot of the card, sticky, and only while something is ticked. **Control layer**, so it takes the frost while the list above it stays opaque | same file |
+| `disclosure` | A drawer with the line that says what is in it. The card builds one out of its `method` string; a caller with more to fold away builds its own, and `deferred` is content built the first time it is opened | `src/design/components.js` |
+| The figure strip | The Overview's three figures on one row, each carrying its own unit, with the words the engine lends the screen glossed in the strip's own drawer. It was three cards taking a full row above charts starved of width | `src/ui/overview.js`, `ui/overview.css` |
+| The summary line | One sentence at the top of a screen saying what everything under it is over: the scope, the window, and the figures. Composed per language, and it replaces the head's grey subtitle rather than joining it | same file |
+| The heat strip | One cell per local day, seven rows Monday first, **with its axis**: the weekday down the left and the month under the first column it starts in. The geometry is below | `src/design/charts.js` |
 
 **The engine block is placed, not owned, by a screen.** The Settings screen puts it where
 it goes and the block says what is in it, so the two can be written at the same time. It

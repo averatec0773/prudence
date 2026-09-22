@@ -36,6 +36,9 @@ const { SETTINGS, TABS, settings, sourcesOf } = /** @type {any} */ (
   await import("../src/ui/settings.js")
 );
 const { ENGINE } = /** @type {any} */ (await import("../src/ui/engine-section.js"));
+const { MODEL_ANSWER, REPOSITORY_SCAN } = /** @type {any} */ (
+  await import("../src/store/asked.js")
+);
 
 for (const language of Str.LANGUAGES) {
   Str.load(
@@ -156,6 +159,12 @@ const SCAN = [
 ];
 
 function fakePort(overrides = {}) {
+  // The two engine answers are remembered against the store they were taken for
+  // (`store/asked.js`), and every test here draws the same fixture: without this the
+  // second test would be handed the first one's scan, and a test of a refusal would be
+  // handed the answer from before it.
+  MODEL_ANSWER.forget();
+  REPOSITORY_SCAN.forget();
   const asked = {
     language: [],
     appearance: [],
@@ -962,6 +971,82 @@ test("a refusal stops the batch where it is, in the engine's own words", async (
   assert.ok(
     screen.tree.findAll(".repo-table")[1].textContent.includes("offeros"),
     "a repository the batch never reached was drawn as changed"
+  );
+});
+
+/* --- how often the engine is asked ------------------------------------------------------
+ *
+ * Two of the five panes ask the engine a question of their own, and all five are built
+ * whichever tab is open. The screen is redrawn on every store change, and an ingest
+ * announces itself to the store watcher about eight times as it works, so leaving the
+ * window on Settings during one 230-second run cost fourteen extra processes, each
+ * `init --scan` walking every repository on the machine while the engine was busy writing
+ * the store. Measured on 2026-09-22 with `PRUDENCE_PRESS="Engine > Ingest now"`.
+ *
+ * The rule is `store/asked.js`'s: ask once per store, remember the answer against what the
+ * engine wrote, ask again when that moves.
+ */
+
+/** What an ingest does to the pages: the same store, announced again and again. */
+function announce(screen, times) {
+  for (let i = 0; i < times; i += 1) screen.state.redraw();
+}
+
+test("eight announcements about one store ask the engine once", async () => {
+  const asked = fakePort();
+  let models = 0;
+  const model = SETTINGS.port.model;
+  SETTINGS.port.model = () => {
+    models += 1;
+    return model();
+  };
+
+  const screen = screenFor({}, INFO, asked);
+  await settled();
+  announce(screen, 7);
+  await settled();
+
+  assert.equal(asked.scans, 1, `the repository scan ran ${asked.scans} times for one store`);
+  assert.equal(models, 1, `the model settings were read ${models} times for one store`);
+});
+
+/* An ingest or a review is a different store, and the next draw asks about it. That is what
+   makes this a memo that follows the store rather than an answer frozen at launch. */
+test("a store the engine has written since is asked about again", async () => {
+  const asked = fakePort();
+  const screen = screenFor({}, INFO, asked);
+  await settled();
+  assert.equal(asked.scans, 1);
+
+  screen.state.data = { ...screen.state.data, status: { ...STATUS, last_ingest_at: "2099-01-01T00:00:00Z" } };
+  screen.state.redraw();
+  await settled();
+  assert.equal(asked.scans, 2, "the scan did not follow the store");
+});
+
+/* A repository turned on writes `config.toml`, which no store stamp sees. The engine's own
+   answer to that command is what the next draw has to serve, or the tab would go back to
+   the list from before the change. */
+test("a repository changed here is remembered without asking the engine again", async () => {
+  const asked = fakePort();
+  const screen = open(screenFor({}, INFO, asked), "repositories");
+  await settled();
+  const before = asked.scans;
+
+  const off = rowFor(screen, "offeros")
+    .findAll("button")
+    .find((node) => node.textContent === Str.t("settings.repositories.level.full"));
+  off.fire("click");
+  await settled();
+
+  screen.state.redraw();
+  await settled();
+  assert.equal(asked.scans, before, "the whole list was read again for a change the app made");
+  assert.ok(
+    rowFor(open(screen, "repositories"), "offeros")
+      .findAll("button")
+      .some((node) => node.getAttribute("aria-checked") === "true"),
+    "the redraw went back to the list from before the change"
   );
 });
 

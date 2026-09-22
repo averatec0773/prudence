@@ -213,6 +213,19 @@ export function shortDay(value, language) {
   return new Intl.DateTimeFormat(langOf(language), { day: "numeric", month: "short" }).format(date);
 }
 
+/**
+ * A month on its own, for the band under the heat strip: `Sep`, `9月`.
+ *
+ * The strip's columns are weeks and its band names the month each one starts in, so the
+ * label carries no day and no year. The year is the same for every column of a range that
+ * the strip can draw, and the caption under it carries every cell's full date anyway.
+ */
+export function monthName(value, language) {
+  const date = fromDay(value);
+  if (!date) return String(value);
+  return new Intl.DateTimeFormat(langOf(language), { month: "short" }).format(date);
+}
+
 /* --- phrases built from a count ----------------------------------------------------- */
 
 /** The four that carry a count go through the catalog's plural entries. */
@@ -221,6 +234,10 @@ export function sessions(value, language) {
 }
 export function commits(value, language) {
   return plural("unit.commits", value, count(value, language), language);
+}
+/** What a surface is over, where it is over all of them: `3 projects`. */
+export function projects(value, language) {
+  return plural("unit.projects", value, count(value, language), language);
 }
 
 /** These two carry a measure rather than a count: `6.2k tokens`, `0.1 hours`. A plural
@@ -251,7 +268,14 @@ export function rangeName(range, language) {
 
 /** Join the way the language joins a list: `a, b, c` and `a，b，c`. */
 export function list(parts, language) {
-  return parts.join(tIn(langOf(language), "common.listSeparator"));
+  return parts.join(listSeparator(language));
+}
+
+/** The same separator, for a list whose parts are elements rather than strings. The panel
+ *  colours each purpose in its own sentence, so the parts are spans and the joins are text
+ *  nodes between them; the punctuation still comes from the language and not from JS. */
+export function listSeparator(language) {
+  return tIn(langOf(language), "common.listSeparator");
 }
 
 /** The purpose the reader sees. `unknown` is "other", never "unknown". */
