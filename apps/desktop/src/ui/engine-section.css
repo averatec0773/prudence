@@ -1,0 +1,95 @@
+/* Rules only the engine block and its activity strip need.
+ *
+ * Shared pieces (card, empty state, buttons) live in `design/components.css` and
+ * `app.css`. Put a rule here only when this block is the only thing that wants it; if a
+ * second surface wants it, move it to the shared file in the same change rather than
+ * copying it.
+ *
+ * No design token may be declared here. A test asserts it.
+ */
+
+.engine-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.engine-title {
+  font-size: var(--t-headline);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.engine-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* A path is the one thing on this block a reader may want to copy character for
+   character, so it is monospaced and it wraps at any point rather than pushing the
+   card wider than the window. */
+.engine-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-caption);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.engine-line {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+}
+
+.engine-note {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.engine-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  padding-top: var(--s1);
+}
+
+/* The activity strip.
+ *
+ * It sits on the page rather than in a screen, because a run outlives the screen it was
+ * started on. Raised above the content and centred at the foot: it is a report of
+ * something in progress, not part of what is being read, and the four rules put the
+ * frost on the control layer only, so this is opaque. */
+.engine-activity {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s5);
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  max-width: min(640px, calc(100% - var(--s8)));
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.engine-activity[hidden] {
+  display: none;
+}
+
+.engine-said {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* The first line of a report is what happened; the rest qualifies it. */
+.engine-said:first-child {
+  color: var(--text);
+  font-weight: 590;
+}

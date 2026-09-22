@@ -71,6 +71,36 @@ export function quit() {
   return core().invoke("app_quit");
 }
 
+/* --- the engine -----------------------------------------------------------------------
+ *
+ * The page cannot look at a filesystem and cannot start a process, so all four of these
+ * are questions for the shell. `src-tauri/src/engine.rs` holds the search order, the
+ * verification and the one-run-at-a-time rule.
+ */
+
+/** Where the `prudence` executable is and what version it is, or why there is none.
+ *  Slow the first time: it may run a login shell. */
+export function engineStatus() {
+  return core().invoke("engine_status");
+}
+
+/** Run `ingest` or `review`. The promise settles when the engine exits, which is how the
+ *  page knows a run is still going; `force` is the review's `--force`. */
+export function runEngine(action, force) {
+  return core().invoke("engine_run", { action: String(action), force: Boolean(force) });
+}
+
+/** The user picks the executable. The shell opens the picker, verifies what came back
+ *  and remembers it only if it is an engine. */
+export function chooseEngine() {
+  return core().invoke("engine_choose");
+}
+
+/** Forget the chosen path, which puts the search back in charge. */
+export function forgetEngine() {
+  return core().invoke("engine_forget");
+}
+
 /**
  * The shell watches the store and says when an ingest has landed. The payload is
  * deliberately empty: the page re-reads through `readStore`, so there is one way to get
