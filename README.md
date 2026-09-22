@@ -149,7 +149,7 @@ AI coding-agent transcripts and hooks ──► one local SQLite store (raw arch
 
 ## Status
 
-0.1.0, the first release as `prudence-core` (the engine's earlier releases as `prudence-dev` are summarised in [RELEASES.md](RELEASES.md)). Supported agent source: Claude Code (the source layer is one module per agent). The desktop app is built for macOS today; Windows is untested.
+The current version is the latest entry in [RELEASES.md](RELEASES.md) (the engine's earlier releases as `prudence-dev` are summarised at its end). Supported agent source: Claude Code (the source layer is one module per agent). The desktop app is built for macOS today; Windows is untested.
 
 ## Contributing
 

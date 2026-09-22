@@ -149,7 +149,7 @@ AI 编码代理的记录和钩子 ──► 一个本地 SQLite 库（原始归�
 
 ## 状态
 
-0.1.0，以 `prudence-core` 名义的第一个版本（引擎此前以 `prudence-dev` 发布的版本在 [RELEASES.md](RELEASES.md) 末尾有概述）。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。桌面应用目前只构建了 macOS 版；Windows 未测试。
+当前版本以 [RELEASES.md](RELEASES.md) 最新一条为准（引擎此前以 `prudence-dev` 发布的版本在其末尾有概述）。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。桌面应用目前只构建了 macOS 版；Windows 未测试。
 
 ## 参与贡献
 

@@ -2,7 +2,7 @@
 
 One codebase for macOS and Windows: a Rust shell around the design system's own HTML.
 
-**0.1.0.** A menu bar panel and a four-screen window, in English and Simplified Chinese,
+A menu bar panel and a four-screen window, in English and Simplified Chinese,
 on real Liquid Glass where the system has it:
 
 - **Overview**: the three totals, tokens by purpose per week, what became of each week's

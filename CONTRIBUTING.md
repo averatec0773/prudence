@@ -48,11 +48,9 @@ private, harness-internal file and must never appear in this public repository (
 
 To cut a release:
 
-1. Bump the version everywhere it is written. The engine and the desktop app share one
-   number: `pyproject.toml` and `src/prudence/__init__.py` (then `uv lock`, because
-   `uv.lock` carries the version and CI installs with `--locked`), and
-   `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml` (then a
-   build, so `Cargo.lock` follows) and `apps/desktop/package.json`.
+1. `python3 scripts/version.py --set X.Y.Z`. The engine, the desktop app and the plugin
+   share one number, written in eight files; the script is the only thing that edits
+   them, and CI fails if any two disagree. The READMEs do not carry the number.
 2. Add an entry to `RELEASES.md` for the new version: what changed, in a short
    paragraph, plus any known limits.
 3. Commit those changes.
@@ -68,7 +66,8 @@ To cut a release:
 ## Versioning
 
 Prudence follows [SemVer](https://semver.org/), with one version number for the engine
-(`prudence-core` on PyPI) and the desktop app, so a release is one tag. While the version stays `0.x`, a
+(`prudence-core` on PyPI), the desktop app and the Claude Code plugin, so a release is
+one tag and `scripts/version.py --check` is what "one number" means. While the version stays `0.x`, a
 minor bump may change the store schema in a way that only a rebuild (`prudence
 rebuild`), not a migration, can carry forward: the store's own stability promise (see
 `ARCHITECTURE.md`) is that raw bytes survive, not that every derived table's layout

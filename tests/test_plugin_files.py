@@ -21,7 +21,7 @@ PLUGIN = ROOT / "plugin"
 def test_plugin_manifest_parses_and_has_the_required_keys() -> None:
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == "prudence"
-    assert manifest["version"] == "0.0.1"
+    assert manifest["version"] == "0.1.0"
     assert manifest["description"]
     assert manifest["author"]["name"]
 
