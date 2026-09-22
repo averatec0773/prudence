@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
 
+from prudence.store import progress as progress_module
 from prudence.store import views
 
 FACT_VERSION = 1
@@ -230,10 +231,13 @@ class _Session:
     purpose: str | None = None
 
 
-def build(connection: sqlite3.Connection) -> ObservationStats:
+def build(
+    connection: sqlite3.Connection, progress: progress_module.Step | None = None
+) -> ObservationStats:
     """Recompute every observation. Dropped and rebuilt, never migrated (rule 1)."""
     started = time.monotonic()
     stats = ObservationStats()
+    progress = progress or progress_module.silent()
     connection.execute("DROP TABLE IF EXISTS observation")
     connection.executescript(SCHEMA)
 
@@ -245,13 +249,17 @@ def build(connection: sqlite3.Connection) -> ObservationStats:
 
     found: list[Observation] = []
     answered: set[tuple[str, str]] = set()
+    # One pass per project, then the pooled pass over all of them, which is the +1.
+    progress.start(len(by_repo) + 1, "projects")
     for repo_key in sorted(by_repo):
+        progress.advance()
         rows = _observe(repo_key, by_repo[repo_key])
         found.extend(rows)
         answered.update((row.fact, row.outcome) for row in rows)
     stats.rows = len(found)
     stats.repositories = len({row.repo_key for row in found})
 
+    progress.advance(label="Pooling across your projects")
     for row in _observe(POOLED, sessions):
         if (row.fact, row.outcome) in answered:
             continue

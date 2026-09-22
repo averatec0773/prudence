@@ -27,6 +27,7 @@ from pathlib import Path
 from prudence import sources
 from prudence.paths import spool_file
 from prudence.sources import base
+from prudence.store import progress as progress_module
 from prudence.store.identity import identify
 from prudence.store.repos import Resolver
 
@@ -97,12 +98,25 @@ def spool_targets(path: Path | None = None) -> list[Target]:
     return [Target(target, "spool", None, None)] if target.is_file() else []
 
 
-def archive(connection: sqlite3.Connection, targets: list[Target]) -> IngestStats:
-    """Store whatever of each target is not stored yet. Safe to run at any moment."""
+def archive(
+    connection: sqlite3.Connection,
+    targets: list[Target],
+    names: dict[str, str] | None = None,
+    progress: progress_module.Step | None = None,
+) -> IngestStats:
+    """Store whatever of each target is not stored yet. Safe to run at any moment.
+
+    `names` is only for the progress label: a target carries its repository's key, which
+    is a hash of a root commit, and a person watching wants the project's own name.
+    """
     started = time.monotonic()
     stats = IngestStats()
+    names = names or {}
+    progress = progress or progress_module.silent()
+    progress.start(len(targets), "files")
     now = datetime.now(UTC).isoformat()
     for target in targets:
+        progress.advance(label=_label(target, names))
         stats.files_seen += 1
         try:
             info = target.path.stat()
@@ -219,6 +233,13 @@ def archive_totals(connection: sqlite3.Connection) -> tuple[int, int, int]:
         "SELECT COALESCE(SUM(LENGTH(data)), 0) AS stored FROM archive_chunk WHERE superseded = 0"
     ).fetchone()
     return row["files"], row["size"], stored["stored"]
+
+
+def _label(target: Target, names: dict[str, str]) -> str:
+    """What one file is called while it is being read, for a person watching."""
+    if target.repo_key is None:
+        return "Archiving the hook spool"
+    return f"Archiving {names.get(target.repo_key, target.repo_key)}"
 
 
 def _repo_key(session: base.SessionFile, resolver: Resolver | None) -> str | None:

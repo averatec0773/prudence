@@ -16,6 +16,7 @@ from prudence import __version__
 from prudence import config as config_module
 from prudence.cli.render import size, thousands
 from prudence.paths import database_file
+from prudence.reviews import readiness
 from prudence.store import (
     archive,
     attribution,
@@ -73,20 +74,60 @@ def summary() -> dict:
     """The same counts the text is built from, as `views.status_summary` returns them.
 
     `views.status_summary` is where the MCP server already reads them, so `--json` is
-    that dictionary plus the two things only a command line shows: which engine wrote it
-    and where the files are.
+    that dictionary plus the three things only a command line shows: which engine wrote
+    it, where the files are, and whether a review is worth writing now.
     """
+    config = config_module.load()
     connection = db.connect() if database_file().exists() else None
     try:
         return {
             "engine_version": __version__,
-            "config_path": str(config_module.load().path),
+            "config_path": str(config.path),
             "database_path": str(database_file()),
             **views.status_summary(connection),
+            "readiness": readiness_summary(connection, config),
         }
     finally:
         if connection is not None:
             connection.close()
+
+
+def readiness_summary(connection: sqlite3.Connection | None, config: config_module.Config) -> dict:
+    """Whether a review is ready, over everything and then per enabled project.
+
+    The rule stays in `reviews/readiness.py` and is asked, never restated: a surface
+    that counted sessions itself would be a second copy of the rule, and the two would
+    disagree the day one of the thresholds moved. A store that does not exist yet is an
+    empty one, which the rule answers with zeroes of its own accord.
+    """
+    empty = sqlite3.connect(":memory:") if connection is None else None
+    if empty is not None:
+        empty.row_factory = sqlite3.Row
+    asked = connection if connection is not None else empty
+    try:
+        return {
+            **_readiness_entry(readiness.readiness(asked)),
+            "projects": [
+                _readiness_entry(readiness.readiness(asked, repo.key, name=repo.name))
+                for repo in sorted(config.repositories.values(), key=lambda r: r.name)
+            ],
+        }
+    finally:
+        if empty is not None:
+            empty.close()
+
+
+def _readiness_entry(verdict: readiness.Readiness) -> dict:
+    """One verdict as JSON, with both thresholds beside the counts they are compared to."""
+    return {
+        "ready": verdict.ready,
+        "new_sessions": verdict.new_sessions,
+        "required_sessions": readiness.MIN_NEW_SESSIONS,
+        "matured_commits": verdict.matured_commits,
+        "required_commits": readiness.MIN_MATURED_COMMITS,
+        "since": verdict.since,
+        "project": verdict.project,
+    }
 
 
 def _per_repo(connection: sqlite3.Connection | None, repo_key: str) -> tuple[int, int]:
@@ -138,6 +179,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     lines.extend(_outcome_lines(connection))
     lines.extend(_purpose_lines(connection))
     lines.extend(_observation_lines(connection))
+    lines.extend(_readiness_lines(connection))
     lines.extend(_mapping_lines(connection))
     resumed = connection.execute(
         "SELECT COUNT(*) FROM session WHERE notes LIKE '%resumed%'"
@@ -253,6 +295,11 @@ def _observation_lines(connection: sqlite3.Connection) -> list[str]:
         f"your projects (at least {observations.MIN_SESSIONS} sessions each side, at least "
         f"{observations.MIN_GAP * 100:.0f} points apart; `prudence observations`)"
     ]
+
+
+def _readiness_lines(connection: sqlite3.Connection) -> list[str]:
+    """Whether a review is worth writing now, in the readiness rule's own words."""
+    return [f"review: {readiness.readiness(connection).reason}"]
 
 
 def _mapping_lines(connection: sqlite3.Connection) -> list[str]:

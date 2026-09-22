@@ -12,19 +12,30 @@ from __future__ import annotations
 import click
 
 from prudence import config as config_module
-from prudence.cli.ingest import report
+from prudence.cli.ingest import progress_sink, report
 from prudence.store import db, derived, pipeline
 
 
 @click.command()
-def rebuild() -> None:
+@click.option(
+    "--progress",
+    "show_progress",
+    is_flag=True,
+    help="Write one JSON progress line per step to stderr while the rebuild runs.",
+)
+def rebuild(show_progress: bool) -> None:
     """Rebuild every derived table from the archive, and harvest the commits again."""
     config = config_module.load()
     try:
         with db.ingest_lock():
             connection = db.connect()
             try:
-                result = pipeline.run(connection, config, with_archive=False)
+                result = pipeline.run(
+                    connection,
+                    config,
+                    with_archive=False,
+                    progress=progress_sink(show_progress),
+                )
             finally:
                 connection.close()
     except db.Locked as error:

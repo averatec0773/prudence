@@ -20,11 +20,18 @@ from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
 from prudence.reviews import first_look
 from prudence.store import db, pipeline
+from prudence.store import progress as progress_module
 
 
 @click.command()
 @click.option("--json", "as_json", is_flag=True, help="Print what each step did as JSON.")
-def ingest(as_json: bool) -> None:
+@click.option(
+    "--progress",
+    "show_progress",
+    is_flag=True,
+    help="Write one JSON progress line per step to stderr while the ingest runs.",
+)
+def ingest(as_json: bool, show_progress: bool) -> None:
     """Record everything new from the enabled repositories."""
     config = config_module.load()
     if not config.repositories:
@@ -33,15 +40,33 @@ def ingest(as_json: bool) -> None:
         )
     try:
         with db.ingest_lock():
-            _run(config, as_json)
+            _run(config, as_json, show_progress)
     except db.Locked as error:
         raise click.ClickException(str(error)) from error
 
 
-def _run(config: config_module.Config, as_json: bool = False) -> None:
+def progress_sink(enabled: bool) -> progress_module.Sink | None:
+    """One JSON object per line on stderr, and nothing else there, or nobody listening.
+
+    stderr rather than stdout because `--progress` has to work beside `--json`, and the
+    summary on stdout is what a script parses. Shared with `prudence rebuild`, which
+    reports the same steps without the archive.
+    """
+    if not enabled:
+        return None
+
+    def write(event: progress_module.Event) -> None:
+        click.echo(json.dumps(event.as_dict()), err=True)
+
+    return write
+
+
+def _run(config: config_module.Config, as_json: bool = False, show_progress: bool = False) -> None:
     connection = db.connect()
     try:
-        result = pipeline.run(connection, config, with_archive=True)
+        result = pipeline.run(
+            connection, config, with_archive=True, progress=progress_sink(show_progress)
+        )
         _refresh_enabled(connection)
         if as_json:
             click.echo(json.dumps(summary(result), indent=2, default=str))

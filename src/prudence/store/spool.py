@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 
 from prudence.store import archive
+from prudence.store import progress as progress_module
 from prudence.store.repos import Resolver
 
 FACT_VERSION = 1
@@ -80,20 +81,31 @@ class SpoolStats:
     elapsed: float = 0.0
 
 
-def build(connection: sqlite3.Connection, resolver: Resolver | None = None) -> SpoolStats:
+def build(
+    connection: sqlite3.Connection,
+    resolver: Resolver | None = None,
+    progress: progress_module.Step | None = None,
+) -> SpoolStats:
     """Rebuild `hook_event` from every archived spool file. Idempotent."""
     started = time.monotonic()
     stats = SpoolStats()
+    progress = progress or progress_module.silent()
     connection.execute(f"DROP TABLE IF EXISTS {TABLE}__new")
     connection.execute(SCHEMA.format(name=f"{TABLE}__new"))
 
     rows: list[tuple] = []
     seen: set[str] = set()
-    for row in connection.execute(
-        "SELECT path FROM archive_file WHERE source = 'spool' ORDER BY path"
-    ):
+    paths = [
+        row["path"]
+        for row in connection.execute(
+            "SELECT path FROM archive_file WHERE source = 'spool' ORDER BY path"
+        )
+    ]
+    progress.start(len(paths), "files")
+    for path in paths:
+        progress.advance()
         stats.files += 1
-        for _, line in archive.iter_lines(connection, row["path"]):
+        for _, line in archive.iter_lines(connection, path):
             if not line.strip():
                 continue
             event_id = hashlib.sha256(line).hexdigest()

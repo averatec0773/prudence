@@ -107,6 +107,62 @@ def test_cleanup_period_days_reads_settings(tmp_path: Path) -> None:
     assert cleanup_period_days(settings) == 30
 
 
+def test_init_scan_json_lists_every_group_with_what_the_config_says(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The same scan a person reads, as objects: one per group, in the same order.
+
+    A directory that is no longer a repository cannot be identified, so its sessions land
+    in the one `no repository` group, which has no path of its own and says `exists`
+    false rather than leaving a caller to read that out of a null.
+    """
+    repo = make_repo(tmp_path / "delta")
+    claude = tmp_path / "claude"
+    write_session(claude / "projects", "d", "s1", str(repo), ["2026-09-05T10:00:00Z"])
+    write_session(claude / "projects", "d", "s2", str(repo), ["2026-09-07T10:00:00Z"])
+    write_session(
+        claude / "projects", "gone", "s3", str(tmp_path / "vanished"), ["2026-09-06T10:00:00Z"]
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    monkeypatch.setenv("PRUDENCE_CONFIG_DIR", str(tmp_path / "config"))
+
+    runner = CliRunner()
+    assert runner.invoke(main, ["init", "--enable", "delta", "--level", "full"]).exit_code == 0
+    out = runner.invoke(main, ["init", "--scan", "--json"])
+
+    assert out.exit_code == 0, out.output
+    rows = json.loads(out.output)
+    found = {row["repo_key"]: row for row in rows}
+    assert [row["repo_key"] for row in rows] == [g.key for g in scan().groups], "the same order"
+
+    delta = next(row for row in rows if row["path"] == str(repo))
+    assert delta["sessions"] == 2
+    assert delta["enabled"] is True
+    assert delta["level"] == "full"
+    assert delta["exists"] is True
+    assert delta["first_at"].startswith("2026-09-05")
+    assert delta["last_at"].startswith("2026-09-07")
+
+    unknown = found[NO_REPOSITORY]
+    assert (unknown["path"], unknown["exists"], unknown["enabled"], unknown["level"]) == (
+        None,
+        False,
+        False,
+        None,
+    )
+
+
+def test_init_json_refuses_to_enable_anything(tmp_path: Path, monkeypatch) -> None:
+    """`--json` is a way of reading the scan, never a way of writing the config."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("PRUDENCE_CONFIG_DIR", str(tmp_path / "config"))
+
+    out = CliRunner().invoke(main, ["init", "--json", "--enable", "anything"])
+
+    assert out.exit_code != 0
+    assert "cannot enable or disable" in out.output
+
+
 def test_init_scan_command_renders_a_table(tmp_path: Path, monkeypatch) -> None:
     repo = make_repo(tmp_path / "gamma")
     config = tmp_path / "claude"

@@ -8,9 +8,10 @@ version of the column lists below and changes only when one of them changes.
 Real SQL views rather than tables, for two reasons. A view is always in step with the
 tables under it, so no step can forget to refresh it; and a view costs nothing to store
 beside a 700 MB archive. They are dropped and recreated at the end of every `ingest` and
-`rebuild` (`pipeline.run` calls `install_app_views` once, after the last step), because
-`derived.build` swaps its tables by renaming, and a view over a renamed table would be
-left pointing at nothing.
+`rebuild` (`pipeline.run` calls `replace_app_views` once, after the last step that
+derives anything), because `derived.build` swaps its tables by renaming, and a view over
+a renamed table would be left pointing at nothing. The drop and the recreation are one
+transaction, so an ingest that fails leaves the contract it found rather than none.
 
 Every view is written from the same tables and the same rules as the matching function
 in `store/views/`, so the app and the CLI cannot disagree:
@@ -27,7 +28,12 @@ in `store/views/`, so the app and the CLI cannot disagree:
   the bucket a session falls in can differ, never a total.
 - `app_outcomes_by_week` counts a commit once, at its best confidence label, over the
   commits `views.counted_pairs` would count (`fact` and `inferred` only), and sums
-  `line_fate` the way `views.outcomes_by_repository` sums it. A repository whose
+  `line_fate` the way `views.outcomes_by_repository` sums it. The week begins on the
+  local Monday, the same deliberate difference from the CLI the day views make and for
+  the same reason: a person reading a chart of their own weeks means their own midnight.
+  A commit made late on a Sunday evening in UTC therefore lands in the week its author
+  was living in, not the week before. Only the bucket can differ, never a total.
+  A repository whose
   outcomes are suppressed by the multi-author guard has no rows here at all, because
   `outcomes.build` writes it no `line_fate` rows in the first place; the reason stays on
   `repository.outcomes_suppressed_note`.
@@ -53,7 +59,7 @@ in `store/views/`, so the app and the CLI cannot disagree:
 - `app_review` is one row per stored review, newest first, with the headline a dropdown
   shows and the two JSON blocks (`sections` and `numbers`) a review screen renders. The
   review tables are not derived from the archive and a store may not have them yet, so
-  `install_app_views` calls `reviews.schema.ensure` before defining the view; that is the
+  `prepare_sources` calls `reviews.schema.ensure` before the view is defined; that is the
   simpler of the two options in the task and it also brings the segment columns along.
 
 Nothing here returns message text, because none is stored.
@@ -96,6 +102,7 @@ from prudence.store import derived as derived_module
 from prudence.store import meta as meta_module
 from prudence.store import observations as observations_module
 from prudence.store import outcomes as outcomes_module
+from prudence.store import progress as progress_module
 from prudence.store import spool as spool_module
 from prudence.store.views.usage import TOKEN_COLUMNS
 
@@ -350,46 +357,85 @@ _FATE_PER_COMMIT = """
 """
 
 
-def drop_app_views(connection: sqlite3.Connection) -> None:
-    """Take the contract down before the pipeline runs, and mean it.
+def replace_app_views(
+    connection: sqlite3.Connection, progress: progress_module.Step | None = None
+) -> None:
+    """Swap the whole contract in one transaction: the new one, or the one already there.
 
-    `derived.build` swaps its tables with `ALTER TABLE ... RENAME`, and since SQLite
-    3.25 a rename walks every view in the schema to fix up its references. A view over a
-    table the swap has just dropped makes that rename fail and takes the whole rebuild
-    with it, so the views are removed first and put back by `install_app_views` at the
-    end. Nothing reads them in between; the app reads a store that is not being written.
+    `pipeline.run` calls this once, after every step that writes a table. Taking the old
+    views down and putting the new ones up is a single transaction because a store with
+    half a contract is a store no surface can render, and an ingest can be interrupted
+    at any moment.
     """
+    prepare_sources(connection)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        drop_app_views(connection)
+        _install(connection, progress)
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
+
+
+def drop_app_views(connection: sqlite3.Connection) -> None:
+    """Take the contract down, for the moment before it goes back up."""
     for name in APP_VIEWS:
         _quietly(connection, f"DROP VIEW IF EXISTS {name}")
 
 
-def install_app_views(connection: sqlite3.Connection) -> None:
-    """Recreate every `app_*` view and record the contract version. Never fatal.
+def install_app_views(
+    connection: sqlite3.Connection, progress: progress_module.Step | None = None
+) -> None:
+    """Recreate every `app_*` view, for a caller that is not the pipeline."""
+    prepare_sources(connection)
+    _install(connection, progress)
 
-    Called once at the end of `pipeline.run`, so `ingest` and `rebuild` both leave the
-    contract in place. A store missing a table a view names is not an error: SQLite
-    accepts the definition and the view raises only if something selects from it, which
-    is the surface's problem and not the ingest's.
+
+def prepare_sources(connection: sqlite3.Connection) -> None:
+    """Create the one table a view names that no pipeline step writes.
+
+    `app_review` names the `review` table, and a store that has never had a review
+    written has no such table. Creating it here rather than leaving the view broken is
+    the simpler of the two options: `ensure` is idempotent, it also adds the segment
+    columns an older store is missing, and it is the same call `prudence review` makes.
+
+    It happens outside the transaction that replaces the views, because `ensure` runs a
+    script and `sqlite3` commits whatever transaction it finds open before a script. The
+    table is not part of the contract, so ensuring it early costs nothing.
     """
-    meta_module.set_meta(
-        connection, meta_module.APP_CONTRACT_VERSION_KEY, meta_module.APP_CONTRACT_VERSION
-    )
-    # `app_review` names the `review` table, and a store that has never had a review
-    # written has no such table. Creating it here rather than leaving the view broken is
-    # the simpler of the two options: `ensure` is idempotent, it also adds the segment
-    # columns an older store is missing, and it is the same call `prudence review` makes.
     from prudence.reviews import schema as review_schema
 
     _quietly_call(lambda: review_schema.ensure(connection))
+
+
+def _install(connection: sqlite3.Connection, progress: progress_module.Step | None = None) -> None:
+    """Every view and both materialised tables, over the sources as they now stand.
+
+    Never fatal: a store missing a table a view names is not an error, because SQLite
+    accepts the definition and the view raises only if something selects from it, which
+    is the surface's problem and not the ingest's.
+
+    The two materialised tables are counted beside the views because they cost more than
+    all of them together, so a progress bar that left them out would stall on the step.
+    """
+    progress = progress or progress_module.silent()
+    progress.start(len(APP_VIEWS) + 2, "tables")
+    meta_module.set_meta(
+        connection, meta_module.APP_CONTRACT_VERSION_KEY, meta_module.APP_CONTRACT_VERSION
+    )
     for statement in INDEXES:
         _quietly(connection, statement)
+    progress.advance(label="Measuring session time")
     _quietly(connection, f"DROP TABLE IF EXISTS {SESSION_TIME_TABLE}")
     _quietly(connection, _SESSION_TIME_SCHEMA)
     _quietly(connection, _SESSION_TIME_FILL)
+    progress.advance(label="Writing observation sentences")
     _quietly(connection, f"DROP TABLE IF EXISTS {OBSERVATION_TEXT_TABLE}")
     _quietly(connection, _OBSERVATION_TEXT_SCHEMA)
     _quietly_call(lambda: fill_observation_text(connection))
     for name, select in definitions().items():
+        progress.advance(label=f"Building {name}")
         _quietly(connection, f"DROP VIEW IF EXISTS {name}")
         _quietly(connection, f"CREATE VIEW IF NOT EXISTS {name} AS{select}")
 
@@ -478,8 +524,9 @@ def definitions() -> dict[str, str]:
     )
     SELECT c.repo_key AS repo_key,
            COALESCE(r.name, c.repo_key, 'unassigned') AS project,
-           date(c.committer_at,
-                '-' || ((strftime('%w', c.committer_at) + 6) % 7) || ' days') AS week_start,
+           date(c.committer_at, 'localtime',
+                '-' || ((strftime('%w', c.committer_at, 'localtime') + 6) % 7)
+                    || ' days') AS week_start,
            COUNT(*) AS commits,
            SUM(CASE WHEN b.confidence = '{attribution_module.FACT}' THEN 1 ELSE 0 END)
                AS commits_fact,

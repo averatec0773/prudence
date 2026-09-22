@@ -36,6 +36,8 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
+from prudence.store import progress as progress_module
+
 PARSER_VERSION = 1
 
 TURN_TREE_TABLE = "turn_tree"
@@ -100,10 +102,13 @@ class _Turn:
     bash_calls: int = 0
 
 
-def build(connection: sqlite3.Connection) -> BuildStats:
+def build(
+    connection: sqlite3.Connection, progress: progress_module.Step | None = None
+) -> BuildStats:
     """Rebuild `turn_tree` and `hand_edit` from `hook_event` alone. Idempotent."""
     started = time.monotonic()
     stats = BuildStats()
+    progress = progress or progress_module.silent()
     connection.execute(f"DROP TABLE IF EXISTS {TURN_TREE_TABLE}__new")
     connection.execute(TURN_TREE_SCHEMA.format(name=f"{TURN_TREE_TABLE}__new"))
     connection.execute(f"DROP TABLE IF EXISTS {HAND_EDIT_TABLE}__new")
@@ -120,7 +125,9 @@ def build(connection: sqlite3.Connection) -> BuildStats:
         sessions = []
     stats.sessions = len(sessions)
 
+    progress.start(len(sessions), "sessions")
     for session_id in sessions:
+        progress.advance()
         events = connection.execute(
             "SELECT event, ts, prompt_id, head, dirty_fingerprint, dirty_count FROM hook_event"
             " WHERE session_id = ? ORDER BY ts, event",

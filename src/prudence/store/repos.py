@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from prudence import config as config_module
+from prudence.store import progress as progress_module
 from prudence.store.identity import identify
 
 FACT_VERSION = 3
@@ -88,12 +89,19 @@ class Match:
     method: str
 
 
-def build(connection: sqlite3.Connection, config: config_module.Config) -> list[Repository]:
+def build(
+    connection: sqlite3.Connection,
+    config: config_module.Config,
+    progress: progress_module.Step | None = None,
+) -> list[Repository]:
     """Refresh the `repository` table from the config plus git's own worktree list."""
+    progress = progress or progress_module.silent()
     connection.execute(SCHEMA)
     known = {row.repo_key: row for row in read(connection)}
     repositories: list[Repository] = []
+    progress.start(len(config.repositories), "repositories")
     for entry in config.repositories.values():
+        progress.advance(label=f"Reading {entry.name}")
         previous = known.get(entry.key)
         common_dir = entry.common_dir or (previous.common_dir if previous else None)
         toplevel = _toplevel(common_dir)
@@ -275,10 +283,12 @@ class Resolver:
 
 
 def resolver(
-    connection: sqlite3.Connection, config: config_module.Config | None = None
+    connection: sqlite3.Connection,
+    config: config_module.Config | None = None,
+    progress: progress_module.Step | None = None,
 ) -> Resolver:
     """A resolver over the recorded repositories, refreshed from the config when given."""
-    repositories = build(connection, config) if config is not None else read(connection)
+    repositories = build(connection, config, progress) if config is not None else read(connection)
     return Resolver(repositories)
 
 

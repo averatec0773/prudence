@@ -41,6 +41,7 @@ from prudence.facts import (
     tests_before_commit,
 )
 from prudence.facts.base import Fact, Label
+from prudence.store import progress as progress_module
 
 TABLE = "session_fact"
 LABEL_TABLE = "session_label"
@@ -99,7 +100,9 @@ class BuildStats:
     elapsed: float = 0.0
 
 
-def build(connection: sqlite3.Connection) -> BuildStats:
+def build(
+    connection: sqlite3.Connection, progress: progress_module.Step | None = None
+) -> BuildStats:
     """Rebuild `session_fact` and `session_label` for every session the store has.
 
     Idempotent, and deliberately so: the same store at the same versions produces the
@@ -107,6 +110,7 @@ def build(connection: sqlite3.Connection) -> BuildStats:
     """
     started = time.monotonic()
     stats = BuildStats()
+    progress = progress or progress_module.silent()
     connection.execute(f"DROP TABLE IF EXISTS {TABLE}__new")
     connection.execute(SCHEMA.format(name=f"{TABLE}__new"))
     connection.execute(f"DROP TABLE IF EXISTS {LABEL_TABLE}__new")
@@ -116,7 +120,9 @@ def build(connection: sqlite3.Connection) -> BuildStats:
     stats.sessions = len(session_ids)
     rows: list[tuple] = []
     labels: list[tuple] = []
+    progress.start(len(session_ids), "sessions")
     for session_id in session_ids:
+        progress.advance()
         for fact in FACTS:
             value = fact.compute(connection, session_id)
             if value is None:

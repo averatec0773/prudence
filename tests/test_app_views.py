@@ -9,13 +9,19 @@ say, because two implementations of one number are two chances to be wrong.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 
+import pytest
 from click.testing import CliRunner
-from conftest import Workspace, record_one_session
+from conftest import SAMPLE_SESSION, Workspace, record_one_session
 
+from prudence import config as config_module
 from prudence.cli import main
-from prudence.store import app_views, db, meta, views
+from prudence.store import app_views, db, meta, pipeline, views
 from prudence.store import observations as observations_module
 
 
@@ -282,6 +288,85 @@ def test_app_review_exists_before_any_review_has_been_written(lab: Workspace) ->
         connection.close()
 
 
+def test_a_week_begins_on_the_local_monday_not_the_utc_one(lab: Workspace) -> None:
+    """Two commits either side of a UTC midnight fall in the week their author lived in.
+
+    The timezone is fixed for the length of the test, because the whole question is what
+    `localtime` answers and a suite that passed in London and failed in Shanghai would be
+    a test keyed on somebody's machine. In Shanghai (UTC+8) a commit made at 20:00 UTC on
+    Sunday 13 September was made at 04:00 on Monday 14 September, so it belongs to the
+    week beginning that Monday, not to the one that ended the evening before.
+    """
+    record_one_session(lab)
+    with _timezone("Asia/Shanghai"):
+        connection = db.connect()
+        try:
+            repo_key = lab.repo_key()
+            _followed_commit(connection, "sunday-evening", repo_key, "2026-09-13T20:00:00")
+            _followed_commit(connection, "monday-morning", repo_key, "2026-09-14T09:00:00")
+            app_views.install_app_views(connection)
+            weeks = {
+                row["week_start"]: row["commits"]
+                for row in connection.execute(
+                    "SELECT week_start, commits FROM app_outcomes_by_week WHERE repo_key = ?",
+                    (repo_key,),
+                )
+            }
+        finally:
+            connection.close()
+
+    assert set(weeks) == {"2026-09-14"}, "the UTC rule would have made a week of its own"
+    assert weeks["2026-09-14"] == 3, "both commits above, plus the sample session's own"
+
+
+def test_the_local_week_starts_on_the_same_day_the_local_day_view_does(lab: Workspace) -> None:
+    """One rule, two views: a commit's week contains the day `app_commits_by_day` gives it."""
+    record_one_session(lab)
+    with _timezone("Asia/Shanghai"):
+        connection = db.connect()
+        try:
+            repo_key = lab.repo_key()
+            _followed_commit(connection, "sunday-evening", repo_key, "2026-09-13T20:00:00")
+            app_views.install_app_views(connection)
+            days = [row["day"] for row in connection.execute("SELECT day FROM app_commits_by_day")]
+            weeks = [
+                row["week_start"]
+                for row in connection.execute("SELECT week_start FROM app_outcomes_by_week")
+            ]
+        finally:
+            connection.close()
+
+    for day in days:
+        assert any(week <= day < _plus_seven(week) for week in weeks), day
+
+
+def test_an_interrupted_ingest_leaves_the_previous_views_in_place(
+    lab: Workspace, monkeypatch
+) -> None:
+    """A step that dies mid-pipeline must not take the app's read contract with it.
+
+    The views used to come down before the first step and go back up after the last, so
+    an ingest that failed anywhere between the two left a store with no `app_*` views at
+    all and every surface refusing to render.
+    """
+    record_one_session(lab)
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("the harvest died halfway through")
+
+    monkeypatch.setattr("prudence.store.commits.harvest", explode)
+    connection = db.connect()
+    try:
+        with pytest.raises(RuntimeError):
+            pipeline.run(connection, config_module.load(), with_archive=True)
+        for name, expected in app_views.APP_VIEWS.items():
+            assert app_views.columns(connection, name) == expected, name
+            connection.execute(f"SELECT * FROM {name}").fetchall()
+        assert connection.execute("SELECT COUNT(*) FROM app_session_list").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
 def test_a_rebuild_leaves_the_views_in_place(lab: Workspace) -> None:
     """A rebuild swaps the tables under the views; the contract has to come back up."""
     record_one_session(lab)
@@ -387,6 +472,53 @@ def _threshold_text(split: observations_module.Split) -> str:
         for index in range(8)
     ]
     return observations_module._threshold(split, held)[1]
+
+
+@contextmanager
+def _timezone(name: str):
+    """Run the body in one fixed timezone, which is what `localtime` reads."""
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+def _plus_seven(day: str) -> str:
+    return (datetime.fromisoformat(day) + timedelta(days=7)).strftime("%Y-%m-%d")
+
+
+def _followed_commit(
+    connection: sqlite3.Connection, commit_hash: str, repo_key: str, committer_at: str
+) -> None:
+    """One commit credited to a session with one line whose fate is known.
+
+    The three rows are what `app_outcomes_by_week` joins: the commit for its date, the
+    attribution for the confidence it is counted at, and the fate for the lines.
+    """
+    connection.execute(
+        'INSERT OR REPLACE INTO "commit" (commit_hash, repo_key, committer_at, author_at,'
+        " added_lines, files_changed, is_merge, fact_version) VALUES (?, ?, ?, ?, 1, 1, 0, 1)",
+        (commit_hash, repo_key, committer_at, committer_at),
+    )
+    connection.execute(
+        "INSERT OR REPLACE INTO attribution (commit_hash, session_id, method, rank,"
+        " lines_matched, coverage, confidence, fact_version)"
+        " VALUES (?, ?, 'in_session', 1, 1, 1.0, 'fact', 1)",
+        (commit_hash, SAMPLE_SESSION),
+    )
+    connection.execute(
+        "INSERT OR REPLACE INTO line_fate (commit_hash, path, line_hash, alive_7d, alive_30d,"
+        " alive_90d, alive_head, alive_head_anywhere, blame_head, reworked_by, fact_version)"
+        " VALUES (?, 'src/app.py', ?, 1, 1, NULL, 1, 1, 1, NULL, 1)",
+        (commit_hash, f"{commit_hash}-line"),
+    )
 
 
 def _usage_session(

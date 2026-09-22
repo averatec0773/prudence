@@ -75,6 +75,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from prudence.store import lines as line_module
+from prudence.store import progress as progress_module
 from prudence.store.commits import GENERATED, utc
 from prudence.store.repos import Repository
 
@@ -174,10 +175,12 @@ def build(
     repositories: list[Repository],
     key: bytes,
     now: datetime | None = None,
+    progress: progress_module.Step | None = None,
 ) -> OutcomeStats:
     """Recompute every line's fate. Dropped and rebuilt, never migrated (rule 1)."""
     started = time.monotonic()
     stats = OutcomeStats()
+    progress = progress or progress_module.silent()
     # Naive UTC throughout, the one form `store/commits.utc` puts every timestamp in.
     moment = now or datetime.now(UTC).replace(tzinfo=None)
     connection.execute("DROP TABLE IF EXISTS line_fate")
@@ -190,7 +193,9 @@ def build(
     stats.identities = len(identities)
     stats.bot_commits = _bot_commits(connection)
 
+    progress.start(len(repositories), "repositories")
     for repository in repositories:
+        progress.advance(label=f"Following {repository.name}")
         if not repository.toplevel:
             continue
         guard = _guard(connection, repository.repo_key, moment, identities)
@@ -202,7 +207,7 @@ def build(
             )
             stats.suppressed[repository.name or repository.repo_key] = guard
             continue
-        _one_repository(connection, repository, key, moment, identities, stats)
+        _one_repository(connection, repository, key, moment, identities, stats, progress)
 
     stats.elapsed = time.monotonic() - started
     return stats
@@ -276,6 +281,7 @@ def _one_repository(
     now: datetime,
     identities: set[str],
     stats: OutcomeStats,
+    progress: progress_module.Step,
 ) -> None:
     directory = repository.toplevel
     assert directory is not None
@@ -295,12 +301,19 @@ def _one_repository(
     stats.commits += len(commits)
     paths = {path for entries in fates.values() for path, _ in entries}
 
+    # This is one unit of the `outcomes` step and several minutes of git on a real
+    # repository, so each phase says its own name without moving the counter.
+    name = repository.name or repository.repo_key
     blobs = _Blobs(directory, key)
     try:
+        progress.at(f"Indexing the HEAD of {name}")
         by_path, everywhere = _head_index(directory, key, blobs)
+        progress.at(f"Finding the 7, 30 and 90 day marks of {name}")
         marks = _marks(directory, commits, now)
         at_mark = _mark_lines(blobs, fates, commits, marks)
+        progress.at(f"Blaming {name}")
         blamed = _blame(directory, key, paths & set(by_path), stats)
+        progress.at(f"Looking for rework in {name}")
         reworked = _rework(directory, key, fates, commits, identities)
         aliases = _alias_groups(connection)
 

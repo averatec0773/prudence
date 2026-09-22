@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from prudence.store import lines as line_module
+from prudence.store import progress as progress_module
 from prudence.store.repos import Repository
 
 FACT_VERSION = 2
@@ -115,6 +116,7 @@ def harvest(
     repositories: list[Repository],
     key: bytes,
     levels: dict[str, str] | None = None,
+    progress: progress_module.Step | None = None,
 ) -> HarvestStats:
     """Read every reachable commit of every enabled repository into the store.
 
@@ -126,8 +128,11 @@ def harvest(
     started = time.monotonic()
     stats = HarvestStats()
     levels = levels or {}
+    progress = progress or progress_module.silent()
     _ensure_schema(connection)
+    progress.start(len(repositories), "repositories")
     for repository in repositories:
+        progress.advance(label=f"Harvesting {repository.name}")
         directory = repository.toplevel
         if not directory:
             stats.unreadable += 1

@@ -38,6 +38,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from prudence.store import progress as progress_module
 from prudence.store import rewritten
 from prudence.store.repos import Repository
 
@@ -127,10 +128,15 @@ class AttributionStats:
     by_confidence: Counter[str] = field(default_factory=Counter)
 
 
-def build(connection: sqlite3.Connection, repositories: list[Repository]) -> AttributionStats:
+def build(
+    connection: sqlite3.Connection,
+    repositories: list[Repository],
+    progress: progress_module.Step | None = None,
+) -> AttributionStats:
     """Rebuild every attribution row. Reads the derived tables and the repositories only."""
     started = time.monotonic()
     stats = AttributionStats()
+    progress = progress or progress_module.silent()
     # Dropped rather than emptied, so that adding a column is a rebuild and never a
     # migration (architecture rule 1). Every row here is rebuilt from the derived tables
     # and the repositories; nothing in either table was written by a person.
@@ -142,7 +148,9 @@ def build(connection: sqlite3.Connection, repositories: list[Repository]) -> Att
     rows: list[tuple] = []
     attributed: set[str] = set()
 
+    progress.start(len(repositories), "repositories")
     for repository in repositories:
+        progress.advance(label=f"Attributing {repository.name}")
         matched = _line_match(connection, repository.repo_key)
         for commit_hash, ranked in matched.items():
             runner_up = ranked[1][1] if len(ranked) > 1 else None

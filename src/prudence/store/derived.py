@@ -72,6 +72,7 @@ from prudence.store import archive, repos
 from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
+from prudence.store import progress as progress_module
 
 PARSER_VERSION = 5
 
@@ -281,10 +282,12 @@ def build(
     connection: sqlite3.Connection,
     levels: dict[str, str],
     resolver: repos.Resolver | None = None,
+    progress: progress_module.Step | None = None,
 ) -> BuildStats:
     """Rebuild every derived table from the archive. Idempotent; safe to run at any time."""
     started = time.monotonic()
     stats = BuildStats()
+    progress = progress or progress_module.silent()
     _create_new_tables(connection)
     resolver = resolver if resolver is not None else repos.resolver(connection)
     adapter = sources.source()
@@ -297,9 +300,11 @@ def build(
     # outlive the loop because two forks of one deleted parent each carry part of it.
     orphans: dict[str, _Session] = {}
 
+    progress.start(len(transcripts), "sessions")
     for row, head in transcripts:
         match = resolver.resolve(head.cwd, head.git_branch)
         repo_key = match.repo_key or row["repo_key"]
+        progress.advance(label=f"Parsing {_project(resolver, repo_key)}")
         stats.mapping_methods[match.method] += 1
         if repo_key is None:
             stats.unassigned_sessions += 1
@@ -334,6 +339,12 @@ def build(
 def _session_id(row: sqlite3.Row) -> str:
     """A transcript's session, or its path when the file carries no session id at all."""
     return row["session_id"] or row["path"]
+
+
+def _project(resolver: repos.Resolver, repo_key: str | None) -> str:
+    """A repository's own name, for the progress label. Not every session has one."""
+    repository = resolver.repositories.get(repo_key) if repo_key else None
+    return repository.name if repository else "an unassigned session"
 
 
 @dataclass(frozen=True)

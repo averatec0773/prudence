@@ -48,7 +48,7 @@ src/prudence/
     transfer.py   the whole store as one .tar.gz, and back into an empty one
     sampling.py   the precision sample: the hard quarter, drawn, and every method's score
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
-    pipeline.py   the order the seven steps run in, so ingest and rebuild agree
+    pipeline.py   the order the eleven steps run in, so ingest and rebuild agree
     meta.py       the one key/value table a rebuild does not touch; holds the contract
                    version the app checks before it renders anything
     app_views.py  the `app_*` SQL views, the only thing a surface other than the CLI

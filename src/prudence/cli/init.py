@@ -10,7 +10,9 @@ and the `--enable` form is how a test or a script does it.
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 import click
 
@@ -21,6 +23,12 @@ from prudence.scan import NO_REPOSITORY, ProjectGroup, ScanResult, scan
 
 @click.command()
 @click.option("--scan", "scan_only", is_flag=True, help="List the history found; change nothing.")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Print the same scan as JSON and change nothing. Implies --scan.",
+)
 @click.option(
     "--enable",
     "enable_tokens",
@@ -43,14 +51,23 @@ from prudence.scan import NO_REPOSITORY, ProjectGroup, ScanResult, scan
     help="How much to derive from an enabled repository.",
 )
 def init(
-    scan_only: bool, enable_tokens: tuple[str, ...], disable_tokens: tuple[str, ...], level: str
+    scan_only: bool,
+    as_json: bool,
+    enable_tokens: tuple[str, ...],
+    disable_tokens: tuple[str, ...],
+    level: str,
 ) -> None:
     """Choose which repositories Prudence records. Nothing is enabled until you say so."""
     config = config_module.load()
+    if as_json and (enable_tokens or disable_tokens):
+        raise click.UsageError("--json lists the scan; it cannot enable or disable anything.")
     if enable_tokens or disable_tokens:
         _apply(config, enable_tokens, disable_tokens, level)
         return
     result = scan()
+    if as_json:
+        click.echo(json.dumps(as_objects(result, config), indent=2))
+        return
     click.echo(render(result, config))
     if scan_only:
         return
@@ -90,6 +107,31 @@ def render(result: ScanResult, config: config_module.Config | None = None) -> st
     else:
         lines.append("Nothing is enabled yet. Nothing was written.")
     return "\n".join(lines)
+
+
+def as_objects(result: ScanResult, config: config_module.Config) -> list[dict]:
+    """The rows `render` prints, for a surface that draws its own list.
+
+    The same groups in the same order, so a person and a program are looking at one
+    scan. `path` is the repository's working tree, which is what a person recognises; the
+    sessions whose directory belongs to no repository are one group with no path, and
+    `exists` says so rather than leaving the caller to guess from a null.
+    """
+    return [_as_object(group, config) for group in result.groups]
+
+
+def _as_object(group: ProjectGroup, config: config_module.Config) -> dict:
+    path = group.identity.toplevel if group.identity else None
+    return {
+        "path": path,
+        "repo_key": group.key,
+        "sessions": group.sessions,
+        "first_at": group.first_at.isoformat() if group.first_at else None,
+        "last_at": group.last_at.isoformat() if group.last_at else None,
+        "enabled": group.key in config.levels,
+        "level": config.levels.get(group.key),
+        "exists": path is not None and Path(path).is_dir(),
+    }
 
 
 def _apply(
