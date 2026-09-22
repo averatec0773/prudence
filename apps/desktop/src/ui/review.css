@@ -7,3 +7,228 @@
  *
  * No design token may be declared here. A test asserts it.
  */
+
+/* The screen's own controls: which review, and the one action the page has. They sit
+   above the cards rather than in the window's head row, because the head row belongs to
+   the window shell and a screen may not write in it. */
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+/* What the action says while the engine wiring is not there yet. Quiet, and only after
+   the button is pressed: an explanation nobody asked for is noise. */
+.screen-note {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* A card's body: the parts of one section, stacked. The card is a flex column already;
+   this holds a section's own pieces together inside it. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* What the review rests on, as four short pairs under its title. */
+.meta-row {
+  display: flex;
+  gap: var(--s6);
+  flex-wrap: wrap;
+  margin-top: var(--s4);
+}
+
+.meta-row .meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meta-row .meta .k {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+}
+
+.meta-row .meta .v {
+  font-size: var(--t-footnote);
+  font-weight: 560;
+}
+
+/* A purpose's colour, in the first column of the activity table, the same colour the
+   composition bar above it gives that purpose. */
+table.data td .swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+/* --- the horizontal bars -------------------------------------------------------------
+ *
+ * One row per figure: what it is, how long it is, and what it says. The value is always
+ * printed to the right of the track, because a screenshot has no pointer. */
+
+.bar-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 168px) minmax(0, 1fr) auto;
+  gap: var(--s3);
+  align-items: center;
+  font-size: var(--t-footnote);
+}
+
+.bar-row .label {
+  color: var(--text-2);
+}
+
+.bar-row .track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+/* The coverage behind the figure: context for the bar, never a series to read against
+   it, which is why it is wide and pale and sits underneath. */
+.bar-row .track .underlay {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--coverage);
+}
+
+.bar-row .track .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+}
+
+.bar-row .figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  justify-content: flex-end;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* What the figure is over, or how far it reaches: quieter than the figure itself, and
+   its own element rather than a string joined to it in JavaScript. */
+.bar-row .figure .qualifier {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+/* --- observations --------------------------------------------------------------------- */
+
+.obs-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding-top: var(--s4);
+  border-top: 0.5px solid var(--separator);
+}
+
+.obs-block:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.obs-block .obs-sentence {
+  font-size: var(--t-footnote);
+  line-height: 1.5;
+}
+
+.obs-block .chart {
+  align-self: stretch;
+}
+
+/* --- compared with the previous period -------------------------------------------------- */
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--s3);
+}
+
+.compare-card {
+  border: 0.5px solid var(--separator);
+  border-radius: var(--r-card);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.compare-card .k {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+.compare-card .v {
+  font-size: var(--t-title3);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+}
+
+.compare-card .prev {
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+}
+
+/* The two periods side by side. Ink is which period, never which is better. */
+.twin {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 22px;
+  margin-top: var(--s1);
+}
+
+.twin i {
+  width: 14px;
+  border-radius: 2px 2px 0 0;
+  display: block;
+}
+
+/* --- the model segment ------------------------------------------------------------------ */
+
+.card.segment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  background: var(--surface-2);
+}
+
+.card.segment p {
+  font-size: var(--t-footnote);
+  line-height: 1.6;
+}
+
+.segment-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: var(--t-caption2);
+  color: var(--text-3);
+}
+
+/* The closing line: how many figures the page rests on, and how to re-derive them. */
+.provenance {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.5;
+}
