@@ -129,7 +129,7 @@ def _client(api_key: str | None, timeout: float):
     except ImportError as error:  # pragma: no cover - exercised by the extra being absent
         raise ModelUnavailable(
             "the `anthropic` package is not installed. Install the extra: "
-            f"`pip install 'prudence-dev[model]'` (needs anthropic>={MINIMUM_SDK})."
+            f"`pip install 'prudence-core[model]'` (needs anthropic>={MINIMUM_SDK})."
         ) from error
     key = api_key or os.environ.get(DEFAULT_KEY_ENV)
     if not key:

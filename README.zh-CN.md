@@ -8,12 +8,14 @@
 <h1 align="center">Prudence</h1>
 
 <p align="center">
-  记录你和 AI 编码代理的开发过程，看清代码后来怎么样了，<br>
-  把有效的做法带进下一轮。
+  Prudence 把你和 AI 编码代理的每一次合作变成一个成长的正循环：<br>
+  看懂代理写的代码，看清时间和 token 花在了哪里、换来的代码后来怎么样了，<br>
+  从中学到哪些做法有效，再把它交给下一轮的代理，<br>
+  同时留下一份属于你的记录。
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/prudence-dev/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-dev?label=prudence-dev"></a>
+  <a href="https://pypi.org/project/prudence-core/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-core?label=prudence-core"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/averatec0773/prudence/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml"><img alt="Desktop app" src="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
@@ -38,30 +40,29 @@
 
 ## 正循环
 
-Prudence 把 AI 辅助开发变成一个反馈回路。
+你和代理的每一次合作，都成为下一次的依据。
 
 ```
-   记录 ──► 关联 ──► 提炼 ──► 调整
-    ▲                          │
-    └────────── 下一轮 ◄────────┘
+   看懂 ──► 看清 ──► 学到 ──► 交给下一轮
+    ▲                            │
+    └────── 属于你的记录 ◄────────┘
 ```
 
-- **记录。** 读取 AI 编码代理本来就存在磁盘上的会话，原样归档。
-- **关联。** 把这些会话产出的每一行代码沿着 git 追踪下去：7、30、90 天后哪些还活着，哪些被重写，token 和时间花在了什么上。
-- **提炼。** 把工作方式和结果对上：在你自己的项目里，你自己的哪些习惯和哪些结果同时出现，每个数字都带覆盖率。
-- **调整。** 每个周期一份回顾，说明变了什么、可以试什么；下一份回顾告诉你有没有用。有效的留下，无效的丢掉。
-
-每一轮都让下一轮更有依据。记录属于你，留在你的机器上。
+- **看懂代理写的代码。** `prudence ask` 用你自己的会话回答关于你自己工作的问题，并引用会话；回顾说明每个周期的会话做了什么、被要求做什么。把代理的工作讲回给你听，是愿景里的第二个承诺，这里是它的起点。
+- **看清时间和 token 花在了哪里，换来的代码后来怎么样了。** 每个会话按用途统计 token 和活跃小时；每一行代码沿着 git 追踪：7、30、90 天后是否还活着，是否被你自己后来的提交返工，每个数字都带覆盖率。
+- **学到哪些做法有效。** 同一项目内，有某个行为的会话和没有的会话对比，只在你自己的数据同时过样本下限和差距下限时才报告。
+- **交给下一轮的代理。** 每个周期一份回顾，说明变了什么、可以试什么，下一份回顾告诉你有没有用；Claude Code 插件和 MCP 服务把这份记录放到代理下一次会话的面前。
+- **留下一份属于你的记录。** 每个会话逐字节归档在你的机器上，`show`、`forget`、`export` 覆盖全部内容，不由任何厂商保管。
 
 ## 你会得到什么
 
-- **属于你的记录。** 每个会话逐字节归档在本地，`show`、`forget`、`export` 覆盖全部内容。
+- **提问。** `prudence ask "为什么我在这个项目上的重构总被撤回"` 从检索到的证据里作答，并引用会话 id。
+- **回顾。** `prudence review` 把一段时间变成一份存储的回顾，每个数字都是算出来的；可选的模型段落只能引用这些数字，编造数字或做评价会被拒绝。
 - **结果，而不是印象。** 每个会话：7、30、90 天后仍存活的代码行，被你自己后来的提交返工的行，每个数字都带覆盖率和归因方法。
 - **按用途统计的用量。** 每个会话的 token 和活跃小时，分成开发、调研、调试、对话，产出零代码的会话不再看起来像一个空洞。
 - **观察。** 同一项目内，有某个行为的会话和没有的会话对比："你压缩过上下文的 16 个会话返工了 28% 的代码行，没压缩的 33 个是 6%。" 只在你自己的数据同时过样本下限和差距下限时才报告。
-- **回顾。** `prudence review` 把一段时间变成一份存储的回顾，每个数字都是算出来的；可选的模型段落只能引用这些数字，编造数字或做评价会被拒绝。
-- **提问。** `prudence ask "为什么我在这个项目上的重构总被撤回"` 从检索到的证据里作答，并引用会话 id。
-- **三个入口。** 命令行；带技能和 MCP 服务的 Claude Code 插件；带图表的 macOS 原生菜单栏应用。
+- **三个入口。** 命令行；带技能和 MCP 服务的 Claude Code 插件；一套代码同时面向 macOS 和 Windows 的带图表的桌面菜单栏应用。
+- **属于你的记录。** 每个会话逐字节归档在本地，`show`、`forget`、`export` 覆盖全部内容。
 
 ## 愿景
 
@@ -85,7 +86,7 @@ Prudence 把 AI 辅助开发变成一个反馈回路。
 需要 Python 3.12 或更高版本和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。
 
 ```
-uv tool install --python 3.12 "prudence-dev[mcp,model]"
+uv tool install --python 3.12 "prudence-core[mcp,model]"
 ```
 
 可选组件：`mcp` 提供 Claude Code 插件用的 MCP 服务；`model` 提供 Anthropic SDK，用于 `review --explain` 和 `ask` 的文字回答。不装 `model` 时其余功能照常工作，且永远不会调用模型。
@@ -148,7 +149,7 @@ AI 编码代理的记录和钩子 ──► 一个本地 SQLite 库（原始归�
 
 ## 状态
 
-0.4.0。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。Windows 未测试。见 [RELEASES.md](RELEASES.md)。
+0.1.0，以 `prudence-core` 名义的第一个版本（引擎此前以 `prudence-dev` 发布的版本在 [RELEASES.md](RELEASES.md) 末尾有概述）。已支持的代理数据源：Claude Code（数据源层按代理一个模块设计）。桌面应用目前只构建了 macOS 版；Windows 未测试。
 
 ## 参与贡献
 

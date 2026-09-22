@@ -8,12 +8,14 @@
 <h1 align="center">Prudence</h1>
 
 <p align="center">
-  Record how you build with AI coding agents. See what became of the code.<br>
-  Carry what worked into the next round.
+  Prudence turns every session with your AI coding agents into a loop of growth:<br>
+  understand the code they wrote, see where your time and tokens went and what became of the code they bought,<br>
+  learn which ways of working pay off, hand that back to your agents for the next round,<br>
+  and keep the record as your own.
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/prudence-dev/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-dev?label=prudence-dev"></a>
+  <a href="https://pypi.org/project/prudence-core/"><img alt="PyPI" src="https://img.shields.io/pypi/v/prudence-core?label=prudence-core"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/averatec0773/prudence/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml"><img alt="Desktop app" src="https://github.com/averatec0773/prudence/actions/workflows/desktop-ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
@@ -38,30 +40,29 @@ Developers who build with AI agents ship faster than ever, and many of them are 
 
 ## The loop
 
-Prudence turns AI-assisted development into a feedback loop.
+Every session with your agents feeds the next one.
 
 ```
-   record ──► link ──► learn ──► adjust
-     ▲                              │
-     └────────── next round ◄───────┘
+   understand ──► see ──► learn ──► hand back
+        ▲                               │
+        └──── your record, next round ◄─┘
 ```
 
-- **Record.** It reads the sessions your AI coding agent already keeps on disk and archives them unmodified.
-- **Link.** It follows every line those sessions produced through git: what survived at 7, 30 and 90 days, what was rewritten, where the tokens and hours went.
-- **Learn.** It joins how you worked to what happened: which of your own habits went with which outcomes, in your own projects, with the coverage behind every number.
-- **Adjust.** A review each period says what changed and what to try; the next review says whether it helped. What works stays, what does not is dropped.
-
-Each round makes the next one better informed. The record is yours and stays on your machine.
+- **Understand the code they wrote.** `prudence ask` answers a question about your own work from your own sessions and cites them; a review says what each period's sessions did and what they were asked for. Reading the agent's work back to you is the roadmap's second promise, and this is where it starts.
+- **See where the time and tokens went, and what became of the code.** Tokens and active hours by purpose per session; every line followed through git: alive at 7, 30 and 90 days, reworked by your own later commits, with the coverage behind every number.
+- **Learn which ways of working pay off.** Your sessions with a behaviour against your sessions without it, inside one project, reported only when your own data clears a sample floor and a gap floor.
+- **Hand it back to your agents for the next round.** A review each period says what changed and what to try, and the next review says whether it helped; the Claude Code plugin and the MCP server put the record in front of the agent in its next session.
+- **Keep the record as your own.** Every session archived on your machine, byte for byte, with `show`, `forget` and `export` for all of it; no vendor holds it.
 
 ## What you get
 
-- **A record you own.** Every session archived locally, byte for byte, with `show`, `forget` and `export` for all of it.
+- **Ask.** `prudence ask "why do my refactors on this project keep getting reverted"` answers from retrieved evidence and cites session ids.
+- **Reviews.** `prudence review` turns a period into a stored review whose every figure is computed; an optional model-written paragraph on top may only quote those figures and is refused if it invents one or grades you.
 - **Outcomes, not impressions.** For each session: lines still alive at 7, 30 and 90 days, lines reworked by your own later commits, with the coverage and the attribution method behind every number.
 - **Usage by purpose.** Tokens and active hours per session, classified into development, research, debugging, conversation, so a session that produced no code stops looking like a gap.
 - **Observations.** Your sessions with a behaviour against your sessions without it, inside one project: "your 16 sessions that compacted their context reworked 28% of their lines; the 33 that did not, 6%." Reported only when your own data clears a sample floor and a gap floor.
-- **Reviews.** `prudence review` turns a period into a stored review whose every figure is computed; an optional model-written paragraph on top may only quote those figures and is refused if it invents one or grades you.
-- **Ask.** `prudence ask "why do my refactors on this project keep getting reverted"` answers from retrieved evidence and cites session ids.
-- **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a native macOS menu-bar app with charts.
+- **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a desktop menu-bar app with charts for macOS and Windows from one codebase.
+- **A record you own.** Every session archived locally, byte for byte, with `show`, `forget` and `export` for all of it.
 
 ## Where it is going
 
@@ -85,7 +86,7 @@ The tools will keep changing; the record is built so that a new agent is a new s
 Prudence needs Python 3.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```
-uv tool install --python 3.12 "prudence-dev[mcp,model]"
+uv tool install --python 3.12 "prudence-core[mcp,model]"
 ```
 
 Extras: `mcp` adds the MCP server the Claude Code plugin uses; `model` adds the Anthropic SDK for `review --explain` and the prose half of `ask`. Without `model`, everything else works and no model is ever called.
@@ -148,7 +149,7 @@ AI coding-agent transcripts and hooks ──► one local SQLite store (raw arch
 
 ## Status
 
-0.4.0. Supported agent source: Claude Code (the source layer is one module per agent). Windows is untested. See [RELEASES.md](RELEASES.md).
+0.1.0, the first release as `prudence-core` (the engine's earlier releases as `prudence-dev` are summarised in [RELEASES.md](RELEASES.md)). Supported agent source: Claude Code (the source layer is one module per agent). The desktop app is built for macOS today; Windows is untested.
 
 ## Contributing
 

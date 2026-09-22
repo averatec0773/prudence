@@ -16,6 +16,6 @@ def mcp() -> None:
     try:
         from prudence.mcp.server import run
     except ImportError:
-        click.echo("mcp is not installed. Install with: uv tool install 'prudence-dev[mcp]'")
+        click.echo("mcp is not installed. Install with: uv tool install 'prudence-core[mcp]'")
         return
     run()

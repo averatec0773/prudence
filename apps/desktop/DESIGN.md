@@ -8,7 +8,8 @@ in batch 1 with the rules and the decisions already made, and every batch that a
 component, a chart or a screen adds its row. Where this document and a screen disagree,
 the screen is wrong.
 
-The Swift app's `DESIGN.md` (branch `mac`, `apps/mac/DESIGN.md` there) is the same document
+The Swift app's `DESIGN.md` (`apps/mac/DESIGN.md` at commit `133a074`, the last before the
+Swift app was retired from master) is the same document
 for the app this one replaced and is still the fuller description of the tokens and the
 seven chart shapes. Everything in it that is about SwiftUI is not about this app;
 everything in it that is about the product is, and belongs here.
@@ -433,7 +434,7 @@ Two files, `src/text/strings.en.json` and `strings.zh-Hans.json`, one key set. *
 the source of truth**, edited by hand; `test/strings.test.mjs` holds them to each other
 (same keys, placeholders in each language's own order, plurals, no accidental duplicate
 text). They were first generated from the Swift app's String Catalog on 2026-09-21, before
-that app was retired to the `mac` branch.
+that app was retired from master (commit `7fd8f60`; its history stays).
 
 - **A missing key is a bug, not a fallback.** `Str.t` returns the key itself so a screen
   still draws, and the suite fails on it.

@@ -2,7 +2,7 @@
 
 One codebase for macOS and Windows: a Rust shell around the design system's own HTML.
 
-**0.5.0.** A menu bar panel and a four-screen window, in English and Simplified Chinese,
+**0.1.0.** A menu bar panel and a four-screen window, in English and Simplified Chinese,
 on real Liquid Glass where the system has it:
 
 - **Overview**: the three totals, tokens by purpose per week, what became of each week's
@@ -24,8 +24,8 @@ arrive on their own.
 No updater and no signing yet. What each batch proved and what it did not is in
 `docs/reports/desktop/` (local files, not in git).
 
-The Swift app that preceded this one (v0.3.0 and v0.4.0) is kept on the `mac` branch and
-is not built or changed.
+The Swift app that preceded this one was retired from master in commit `7fd8f60`; its last
+state is `apps/mac/` at `133a074`, in the history, not built or changed.
 
 ## Build and run
 
@@ -193,5 +193,5 @@ end up in the page, which is what closes the door on Windows.
 [DESIGN.md](DESIGN.md), written along the way rather than at the end. It carries the four
 rules, the material decision per surface, the bridge rule, the no-build-step reason, the
 component list and the two process rules for working on the founder's machine.
-The Swift app's `DESIGN.md` on the `mac` branch is the earlier, fuller description of the
+The Swift app's `DESIGN.md` (`apps/mac/DESIGN.md` at `133a074`) is the earlier, fuller description of the
 tokens and the seven chart shapes, where this file is still shorter.

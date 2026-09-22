@@ -33,7 +33,8 @@ from prudence.cli.usage import usage
 @click.group()
 @click.version_option(__version__, prog_name="prudence")
 def main() -> None:
-    """Prudence: a feedback loop for building with AI coding agents."""
+    """Prudence: a loop of growth with your AI coding agents. Understand the code, see what
+    it cost and what became of it, learn what pays off, hand it back, keep the record."""
 
 
 main.add_command(init)

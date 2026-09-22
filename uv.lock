@@ -495,8 +495,8 @@ wheels = [
 ]
 
 [[package]]
-name = "prudence-dev"
-version = "0.4.0"
+name = "prudence-core"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

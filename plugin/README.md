@@ -18,7 +18,7 @@ the engine's number and tone guards applied to it.
 ## Requirements
 
 The Prudence CLI must already be installed and on `PATH` before this plugin is any
-use: `uv tool install prudence-dev`. This plugin does not install or bundle the CLI;
+use: `uv tool install prudence-core`. This plugin does not install or bundle the CLI;
 `.mcp.json` runs the `prudence mcp` command by name, so if `prudence` is not found on
 `PATH`, the MCP server will not start. Also run `prudence init` and `prudence ingest`
 at least once, so there is something to show.
@@ -42,7 +42,7 @@ real.
 - `hooks/hooks.json` and `hooks/prudence-hook.sh`: the same six hook entries
   `prudence hooks install` writes into `~/.claude/settings.json` directly, but scoped to
   this plugin, so a plugin user needs no separate settings edit. **The two copies of
-  `prudence-hook.sh`** (here, and in the `prudence-dev` package at
+  `prudence-hook.sh`** (here, and in the `prudence-core` package at
   `src/prudence/hooks/prudence-hook.sh`) **must stay byte-identical.** A test
   (`tests/test_plugin_files.py`) checks this on every change; if you edit one, copy it
   to the other.

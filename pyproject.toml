@@ -1,7 +1,7 @@
 [project]
-name = "prudence-dev"
-version = "0.4.0"
-description = "Turns AI-assisted development into a feedback loop: records agent sessions, follows the code through git, distils what worked into the next round"
+name = "prudence-core"
+version = "0.1.0"
+description = "Turns every session with your AI coding agents into a loop of growth: understand the code, see what it cost and what became of it, learn what pays off, hand it back to the next round, keep the record"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
