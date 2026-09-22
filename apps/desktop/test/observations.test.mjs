@@ -297,6 +297,29 @@ test("nothing on the screen says undefined, on either contract", () => {
   }
 });
 
+/* --- the short label ----------------------------------------------------------------------- */
+
+test("a behaviour is named in the words a bar has room for, in both languages", () => {
+  Str.setLang("en");
+  assert.equal(shortLabel("commit_attempts_per_commit"), "3+ commit attempts");
+  Str.setLang("zh-Hans");
+  assert.equal(shortLabel("commit_attempts_per_commit"), "提交尝试 3 次以上");
+  Str.setLang("en");
+});
+
+test("a purpose used as a split is named as a purpose, not as a raw label", () => {
+  assert.equal(shortLabel("purpose:research"), "labelled research");
+  // `unknown` is "other" everywhere the reader sees it. Neither store on this machine
+  // has a purpose observation yet, so nothing but this test covers the branch.
+  assert.equal(shortLabel("purpose:unknown"), "labelled other");
+});
+
+test("a behaviour this build has never heard of falls back to the engine's key", () => {
+  // Ugly and readable, never blank: the engine may grow a thirteenth split before this
+  // app learns a word for it.
+  assert.equal(shortLabel("some_new_fact"), "some_new_fact");
+});
+
 /* --- the chart -------------------------------------------------------------------------- */
 
 test("the axis top is a quarter, a half, three quarters or the whole", () => {
