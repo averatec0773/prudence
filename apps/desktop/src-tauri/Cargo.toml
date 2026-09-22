@@ -23,6 +23,10 @@ tauri-build = { version = "2", features = ["config-json"] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
 tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+# The file picker, for when the search cannot find `prudence`. Opened from Rust rather
+# than from the page, so the chosen path is verified and remembered on the side that can
+# look at a filesystem, and so no webview capability has to be granted for it.
+tauri-plugin-dialog = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

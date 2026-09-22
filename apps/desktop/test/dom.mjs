@@ -124,5 +124,9 @@ export function installDom() {
     createElementNS: (ns, tag) => new Node_(tag, ns),
     createTextNode: (value) => new Text_(value),
     documentElement: new Node_("html", null),
+    // The engine's activity strip is put on the page rather than inside a screen,
+    // because a run outlives the screen it was started on, so the wiring has a body to
+    // append to. Nothing else in the frontend touches it.
+    body: new Node_("body", null),
   };
 }

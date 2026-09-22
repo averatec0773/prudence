@@ -274,6 +274,84 @@ DESKTOP_ONLY = {
         "en": "observation fact version %1$@, app contract %2$@",
         "zh-Hans": "观察事实版本 %1$@，应用契约 %2$@",
     },
+    # --- the engine ------------------------------------------------------------------
+    # The catalog has the dropdown's words for the engine (`menu.engineMissing`,
+    # `menu.engineChecking`, `settings.enginePath` and its note) and the review's
+    # readiness panel, because the Swift app had both. What it has nothing for is the
+    # desktop's own engine block: a third way the executable can be found, the two
+    # versions side by side, and a failure said in a word rather than a raw exit code.
+    #
+    # Where an executable came from. The catalog has "from Settings" and "found
+    # automatically"; the login-shell probe is the third answer the search can give and a
+    # reader should be told when it was needed, because it is the slow one.
+    "engine.source.loginShell": {
+        "en": "found through your login shell",
+        "zh-Hans": "通过登录 shell 找到",
+    },
+    # The version and where the file came from, on one line. One key rather than two
+    # joined with a comma in JavaScript: the order and the punctuation belong to the
+    # language.
+    "engine.versionAndSource": {
+        "en": "version %1$@, %2$@",
+        "zh-Hans": "版本 %1$@，%2$@",
+    },
+    # The CLI on this machine and the engine that wrote the store are two different
+    # installations and can be two different versions. Said calmly: both are readable,
+    # and the app supports more than one store contract, so this is worth knowing rather
+    # than worth stopping for.
+    "engine.versionMismatch": {
+        "en": "The engine on this machine is version %1$@, and the store was last written by %2$@. Both still read; the next ingest will be written by %1$@.",
+        "zh-Hans": "这台机器上的引擎是 %1$@ 版，而这个库上次是由 %2$@ 写入的。两者都还能读；下一次采集会由 %1$@ 写入。",
+    },
+    # Nothing was found. The title is the dropdown's `menu.engineMissing`; this is the
+    # line under it, and it has to say what stops working and what to do about it.
+    "engine.notFound.detail": {
+        "en": "Nothing can be ingested or reviewed until it is found. Choose the file yourself if it is installed somewhere this search does not look.",
+        "zh-Hans": "找不到它，就没法采集，也没法写回顾。如果它装在这些位置之外，可以自己选择那个文件。",
+    },
+    # After an ingest. `menu.ingestFinishedSessions` reads as "this run ingested N
+    # sessions", which is not what the figure is: `parsed.sessions` is how many sessions
+    # the store holds once the run is done. This says that instead of implying the other.
+    "engine.ingestFinished.sessions": {
+        "en": "Ingest finished. The store now holds %1$@.",
+        "zh-Hans": "采集完成。这个库现在有 %1$@。",
+    },
+    # A run that failed. The title, then one line naming which kind of failure it was,
+    # then the engine's own words underneath it. The engine's words are English, as the
+    # store's own errors are.
+    "engine.failed.title": {"en": "The engine did not finish", "zh-Hans": "引擎没有跑完"},
+    "engine.error.launch": {
+        "en": "It could not be started.",
+        "zh-Hans": "它没能启动。",
+    },
+    "engine.error.failed": {
+        "en": "It ran and stopped with an error.",
+        "zh-Hans": "它跑起来了，但中途报错停下。",
+    },
+    # "not found" means two different things: nothing anywhere (which the dropdown's
+    # `menu.engineMissing` already says) and "the file you chose is not something this
+    # app can run". Only the second one needs words of its own.
+    "engine.error.notExecutable": {
+        "en": "That file is not something this app can run.",
+        "zh-Hans": "那个文件不是这个应用能运行的程序。",
+    },
+    "engine.error.noVersion": {
+        "en": "That file does not answer `--version` as the Prudence engine.",
+        "zh-Hans": "那个文件对 `--version` 的回答不像是 Prudence 引擎。",
+    },
+    # Two surfaces can both ask for a run, and the engine takes an ingest lock of its
+    # own, so the second one has to be told rather than queued behind the first.
+    "engine.busy": {
+        "en": "A run is already going. Wait for it to finish.",
+        "zh-Hans": "已经有一次在跑了，等它跑完。",
+    },
+    # The picker, when what was chosen is not an engine. A chosen path is verified before
+    # it is remembered, so this is what the user sees instead of a path that is kept and
+    # then fails at every action.
+    "engine.rejected": {
+        "en": "That file was not kept: %1$@",
+        "zh-Hans": "那个文件没有被采用：%1$@",
+    },
 }
 
 # Keys the catalog has wrong. Each one needs a reason, and each one is a divergence from

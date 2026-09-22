@@ -5,6 +5,7 @@
 //! is whether the compositor holds. See `docs/reports/desktop/02-window-shell.md`.
 
 mod contract;
+mod engine;
 mod panel;
 mod platform;
 mod store;
@@ -141,6 +142,71 @@ fn section_set(shell: State<'_, Shell>, section: String) {
     shell.memory.set_section(&section);
 }
 
+/* --- the engine ---------------------------------------------------------------------- */
+
+/// Where the `prudence` executable is and what version it is.
+///
+/// `async` because it runs a login shell and a process: `engine.rs` states the order and
+/// why a shell is needed at all. Not cached here, so that a user who has just installed
+/// the engine or just chosen a path gets the new answer without a relaunch; the one thing
+/// that is cached is the login-shell probe, inside the locator.
+#[tauri::command(async)]
+fn engine_status(shell: State<'_, Shell>) -> engine::EngineStatus {
+    engine::shared().status(shell.memory.read().usable_engine())
+}
+
+/// Run `prudence ingest` or `prudence review`, and answer with what the engine said.
+///
+/// The page waits on this promise, which is how it knows a run is still going. Nothing is
+/// plumbed into the screens: `watcher.rs` already refreshes every page when the store
+/// changes, so a successful run's new figures arrive on their own.
+#[tauri::command(async)]
+fn engine_run(
+    shell: State<'_, Shell>,
+    action: String,
+    force: bool,
+) -> Result<engine::RunOutcome, String> {
+    let Some(action) = engine::Action::parse(&action) else {
+        // Not a user-visible sentence: the page can only send one of two words, so
+        // anything else is a defect in the bridge rather than something to translate.
+        return Err(format!("no such engine action: {action}"));
+    };
+    Ok(engine::shared().run(shell.memory.read().usable_engine(), action, force))
+}
+
+/// The user picks the executable, and it is verified before it is trusted.
+///
+/// Opened from the shell rather than from the page, because everything that makes the
+/// choice safe is on this side: whether the file is executable, whether it answers
+/// `--version`, and where the answer is remembered.
+#[tauri::command(async)]
+fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> engine::Choice {
+    // A picker takes the focus, and the panel dismisses itself when it loses focus. The
+    // guard is held for as long as the dialog is up and clears itself on every path out,
+    // cancellation included.
+    let _dialog = engine::DialogGuard::open();
+    let Some(chosen) = engine::pick_file(&app) else {
+        return engine::Choice::cancelled();
+    };
+    match engine::shared().verify(&chosen) {
+        Ok(version) => {
+            shell.memory.set_engine(Some(&chosen.display().to_string()));
+            // Written now rather than at quit: a path the user just chose and then lost
+            // to a crash is a path they have to find again.
+            shell.memory.save();
+            engine::Choice::accepted(chosen, version)
+        }
+        Err(error) => engine::Choice::rejected(chosen, &error),
+    }
+}
+
+/// Forget the chosen path and put the search back in charge.
+#[tauri::command]
+fn engine_forget(shell: State<'_, Shell>) {
+    shell.memory.set_engine(None);
+    shell.memory.save();
+}
+
 /// The page's own report of what it ended up drawing, on the shell's standard error.
 /// An agent cannot open the web inspector of a window it did not click, and a spike that
 /// cannot say what the page computed is a spike that guesses.
@@ -179,6 +245,16 @@ fn forced_appearance(window: &WebviewWindow) {
     let _ = window.set_theme(theme);
 }
 
+/// May the panel dismiss itself because it lost the focus?
+///
+/// Not while something else is legitimately holding it. Two things do: a script driving
+/// the app, which is absent from a release build, and a file picker, which is not, because
+/// a user can open one. Without this the panel disappears the instant the picker appears,
+/// taking the interface that asked for the file with it.
+fn may_dismiss_on_focus_loss() -> bool {
+    !scripted() && !engine::dialog_is_open()
+}
+
 /// True while a script is driving the app, so the panel does not dismiss itself out from
 /// under a screenshot. Always false in a release build.
 fn scripted() -> bool {
@@ -203,6 +279,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             store_read,
             shell_info,
@@ -212,6 +289,10 @@ pub fn run() {
             window_open,
             window_close,
             section_set,
+            engine_status,
+            engine_run,
+            engine_choose,
+            engine_forget,
             app_quit
         ])
         .setup(move |app| {
@@ -312,7 +393,7 @@ pub fn run() {
             match (window.label(), event) {
                 // Not `Focused(false)` alone: a script driving the app needs a panel
                 // that stays put while something else has the focus.
-                (PANEL, tauri::WindowEvent::Focused(false)) if !scripted() => {
+                (PANEL, tauri::WindowEvent::Focused(false)) if may_dismiss_on_focus_loss() => {
                     panel::hide(app);
                 }
                 (MAIN, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) => {

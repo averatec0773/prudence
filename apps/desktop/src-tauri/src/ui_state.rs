@@ -35,6 +35,11 @@ pub struct UiState {
     pub window: Option<Frame>,
     #[serde(default)]
     pub section: Option<String>,
+    /// Where the user said the `prudence` executable is, when the search could not find
+    /// it. Remembered here and not beside the store, like everything else on this page:
+    /// which engine this machine has is the app's business, not the engine's.
+    #[serde(default)]
+    pub engine: Option<String>,
 }
 
 impl UiState {
@@ -58,6 +63,19 @@ impl UiState {
     pub fn usable_section(&self) -> Option<&str> {
         let section = self.section.as_deref()?;
         SECTIONS.contains(&section).then_some(section)
+    }
+
+    /// The remembered engine path, or nothing.
+    ///
+    /// Trimmed, and a blank value is nothing: a remembered empty string would be offered
+    /// to the locator as an override and silently shadow the search. Whether the path is
+    /// still an engine is not asked here, because the answer can change between launches;
+    /// `engine.rs` verifies it every time it is used.
+    pub fn usable_engine(&self) -> Option<&str> {
+        self.engine
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
     }
 }
 
@@ -121,6 +139,15 @@ impl Memory {
         self.state.lock().unwrap().window = Some(frame);
     }
 
+    /// Remember, or forget, where the engine is. `None` forgets, which puts the search
+    /// back in charge.
+    pub fn set_engine(&self, path: Option<&str>) {
+        self.state.lock().unwrap().engine = path
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+
     pub fn set_section(&self, section: &str) {
         if SECTIONS.contains(&section) {
             self.state.lock().unwrap().section = Some(section.to_string());
@@ -158,6 +185,7 @@ mod tests {
                 height,
             }),
             section: None,
+            engine: None,
         }
     }
 
@@ -185,6 +213,23 @@ mod tests {
         assert!(UiState::default().usable_section().is_none());
     }
 
+    #[test]
+    fn a_remembered_engine_path_comes_back_trimmed_and_a_blank_one_does_not() {
+        let remembered = |value: Option<&str>| UiState {
+            window: None,
+            section: None,
+            engine: value.map(str::to_string),
+        };
+        assert_eq!(
+            remembered(Some("  /opt/homebrew/bin/prudence  ")).usable_engine(),
+            Some("/opt/homebrew/bin/prudence")
+        );
+        // A blank value offered to the locator would shadow the search with nothing.
+        assert_eq!(remembered(Some("   ")).usable_engine(), None);
+        assert_eq!(remembered(Some("")).usable_engine(), None);
+        assert_eq!(remembered(None).usable_engine(), None);
+    }
+
     /// The rule the Swift app states as "a remembered value this build no longer
     /// understands is ignored rather than forced".
     #[test]
@@ -192,6 +237,7 @@ mod tests {
         let state = UiState {
             window: None,
             section: Some("suggestions".into()),
+            engine: None,
         };
         assert!(state.usable_section().is_none());
     }
@@ -202,6 +248,7 @@ mod tests {
             let state = UiState {
                 window: None,
                 section: Some((*section).to_string()),
+                engine: None,
             };
             assert_eq!(state.usable_section(), Some(*section));
         }
