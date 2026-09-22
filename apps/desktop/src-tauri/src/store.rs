@@ -94,17 +94,10 @@ fn env_path(key: &str) -> Option<PathBuf> {
         .map(expand_tilde)
 }
 
+/// One rule, in one place: `engine.rs` needs the same expansion for the path a user
+/// chooses for the executable and for the directories it searches.
 fn expand_tilde(path: PathBuf) -> PathBuf {
-    let Some(text) = path.to_str() else {
-        return path;
-    };
-    if text == "~" {
-        return raw_home();
-    }
-    match text.strip_prefix("~/") {
-        Some(rest) => raw_home().join(rest),
-        None => path,
-    }
+    crate::engine::expand_tilde(path, &raw_home())
 }
 
 /// The home directory, read without going back through [`env_path`], which would recurse.
