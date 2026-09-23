@@ -88,6 +88,7 @@ from prudence.store.views.usage import (
     usage_of_session,
     usage_summary,
     usage_totals,
+    waste_totals,
 )
 
 __all__ = [
@@ -154,4 +155,5 @@ __all__ = [
     "usage_of_session",
     "usage_summary",
     "usage_totals",
+    "waste_totals",
 ]

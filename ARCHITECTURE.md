@@ -47,7 +47,8 @@ src/prudence/
     outcomes.py   what became of each attributed line: presence at 7, 30, 90 days and at
                    HEAD, blame as the check, and rework by the author's own later commit
     observations.py  the join: for one behaviour and one threshold, the median outcome of
-                   the sessions above it against the sessions below, inside one project
+                   the sessions above it against the sessions below, inside one project;
+                   a fact with no threshold is named in `NOT_SPLIT` on purpose
     spool.py      what the hooks saw, folded from the archived spool into hook_event
     erase.py      taking a session or a repository back out, archive included
     transfer.py   the whole store as one .tar.gz, and back into an empty one
@@ -77,7 +78,11 @@ src/prudence/
                   explicit lists and the `session_fact` plus `session_label` build step,
                   last in the pipeline), one module per fact reading only the derived
                   tables and carrying its own `CASES`; purpose.py is the one label,
-                  a word per session from its tool mix, never a number
+                  a word per session from its tool mix, never a number.
+                  test_fix_loops.py, reread_files.py, giant_turns.py and
+                  changes_after_compaction.py are the waste facts over `response`
+                  (docs/reference/usage-buckets.md): counts of what tokens went into,
+                  which overlap and are never summed with each other
   cli/            one file per command; thin, calls the engine
   mcp/            the MCP server: server.py (FastMCP, stdio), the only place `mcp` is
                    imported; started by `cli/mcp.py`

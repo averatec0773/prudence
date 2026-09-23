@@ -399,3 +399,41 @@ def bucket_shares_map(
         if grand:
             shares[session_id] = {bucket: by_bucket.get(bucket, 0) / grand for bucket in BUCKETS}
     return shares
+
+
+# --- where the tokens went: the waste facts, summed -------------------------------------
+
+# The facts `waste_totals` sums, as `session_fact` names them.
+WASTE_FACTS = (
+    "test_fix_loops",
+    "test_fix_loop_tokens",
+    "reread_files",
+    "giant_turns",
+    "giant_turn_tokens",
+    "changes_after_compaction",
+)
+
+
+def waste_totals(connection: sqlite3.Connection, ids: list[str]) -> dict[str, Any]:
+    """The waste facts of the sessions asked about, summed, beside their tokens.
+
+    `tokens` is the total `usage_map` gives for the same sessions, so
+    `test_fix_loop_tokens / tokens` is a share of exactly the set it was summed over; a
+    session that reported no usage adds to neither side. A fact no session of the set has
+    (all of them at `metadata-only` capture, for `reread_files`) is None, not zero.
+    """
+    found: dict[str, float | None] = dict.fromkeys(WASTE_FACTS)
+    names = ", ".join(f"'{name}'" for name in WASTE_FACTS)
+    query = f"SELECT fact, SUM(value) AS total FROM session_fact WHERE fact IN ({names})"
+    try:
+        for row in _batched(connection, query, ids, " GROUP BY fact"):
+            found[row["fact"]] = (found[row["fact"]] or 0) + row["total"]
+    except sqlite3.OperationalError:
+        pass
+    tokens = usage_map(connection, ids)
+    return {
+        "sessions": len(ids),
+        "measured": len(tokens),
+        "tokens": sum(tokens.values()),
+        **found,
+    }

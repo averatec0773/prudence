@@ -175,7 +175,63 @@ def _did(context: Context) -> Section:
         "The purpose label comes from rules over the tool mix (purpose rule version "
         f"{summary['purpose_rule_version']}); no message text is read to produce it.",
     ]
+    sentence, numbers = _waste(context, ids)
+    section.notes.append(sentence)
+    section.numbers += numbers
     return section
+
+
+def _waste(context: Context, ids: list[str]) -> tuple[str, list[Number]]:
+    """Where the tokens went, in one sentence: the share inside test-fix loops against the
+    previous period's, the giant turns and the rereads, each a sum of `session_fact`.
+
+    The sessions are the ones this section counts, and the previous period's are chosen
+    the same way over `Window.previous`, so the two shares are over like sets.
+    """
+    here = views.waste_totals(context.connection, ids)
+    previous = context.window.previous()
+    there = views.waste_totals(context.connection, _ids_in(context.connection, previous))
+    share = _loop_share(here)
+    previous_share = _loop_share(there)
+    giant = here["giant_turns"]
+    reread = here["reread_files"]
+    loops = here["test_fix_loops"]
+    share_text = _percent(share)
+    previous_text = _percent(previous_share)
+    loops_text = _count(loops)
+    giant_text = _count(giant)
+    reread_text = _count(reread)
+    sentence = (
+        f"{share_text} of this period's tokens were spent inside test-fix loops "
+        f"({loops_text} loops), against {previous_text} in the previous period; "
+        f"{giant_text} turns went above five million tokens, and a file was read "
+        f"three times or more in one turn {reread_text} times. These overlap and are not "
+        "added together; a dash is a figure these sessions could not measure."
+    )
+    numbers = [
+        Number(
+            "did.loop_token_share",
+            "share of the period's tokens inside test-fix loops",
+            share_text,
+            share,
+            previous_value=previous_share,
+        ),
+        Number(
+            "did.loop_token_share.previous",
+            "share of the previous period's tokens inside test-fix loops",
+            previous_text,
+            previous_share,
+        ),
+        Number("did.test_fix_loops", "test-fix loops in the range", loops_text, loops),
+        Number("did.giant_turns", "turns above five million tokens", giant_text, giant),
+        Number(
+            "did.reread_files",
+            "files read three or more times in one turn",
+            reread_text,
+            reread,
+        ),
+    ]
+    return sentence, numbers
 
 
 def _became(context: Context) -> Section:
@@ -662,13 +718,18 @@ def _commits_between(
 
 
 def _session_ids(context: Context) -> list[str]:
+    return _ids_in(context.connection, context.window)
+
+
+def _ids_in(connection: sqlite3.Connection, window: Window) -> list[str]:
+    """The sessions that started in a window, the same set `usage_summary` counts."""
     query = "SELECT session_id FROM session WHERE first_at >= ? AND first_at < ?"
-    parameters = [context.window.start, context.window.end]
-    if context.window.project is not None:
+    parameters = [window.start, window.end]
+    if window.project is not None:
         query += " AND repo_key = ?"
-        parameters.append(context.window.project)
+        parameters.append(window.project)
     try:
-        return [row["session_id"] for row in context.connection.execute(query, parameters)]
+        return [row["session_id"] for row in connection.execute(query, parameters)]
     except sqlite3.OperationalError:
         return []
 
@@ -749,3 +810,15 @@ def _points_value(here: float | None, there: float | None) -> int | None:
 
 def _day(value: str) -> str:
     return value[:10]
+
+
+def _count(value: float | None) -> str:
+    """A summed count, or a dash when no session of the set could measure it."""
+    return NOT_MEASURED if value is None else str(int(value))
+
+
+def _loop_share(totals: dict[str, Any]) -> float | None:
+    """The share of the set's tokens inside test-fix loops, None when nothing measured."""
+    if not totals["tokens"] or totals["test_fix_loop_tokens"] is None:
+        return None
+    return totals["test_fix_loop_tokens"] / totals["tokens"]

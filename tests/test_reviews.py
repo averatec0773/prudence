@@ -403,6 +403,81 @@ def _as_version_one(payload: dict) -> dict:
     return older
 
 
+def _tokens(
+    connection: sqlite3.Connection, session_id: str, total: int, facts: dict[str, float]
+) -> None:
+    """A session's token total and its facts, for a session `_session` gave no commit."""
+    for name, value in facts.items():
+        connection.execute(
+            f"INSERT INTO {facts_registry.TABLE} VALUES (?, ?, ?, 'high', 1)",
+            (session_id, name, value),
+        )
+    connection.execute(
+        "INSERT INTO usage (record_id, session_id, input_tokens, output_tokens,"
+        " cache_read_tokens, cache_creation_tokens, parser_version) VALUES (?, ?, ?, 0, 0, 0, 6)",
+        (f"{session_id}-u", session_id, total),
+    )
+
+
+def test_what_you_did_says_where_the_tokens_went_against_the_previous_period() -> None:
+    """The loop share of this period and the last, the giant turns and the rereads, in one
+    sentence whose every figure is in the numbers inventory."""
+    connection = _store()
+    for index in range(4):
+        _session(connection, f"now-{index}", days_ago=3)
+        _tokens(
+            connection,
+            f"now-{index}",
+            1000,
+            {
+                "test_fix_loops": 2.0,
+                "test_fix_loop_tokens": 300.0,
+                "giant_turns": 1.0 if index < 2 else 0.0,
+                "reread_files": 1.0,
+            },
+        )
+        _session(connection, f"then-{index}", days_ago=10)
+        _tokens(
+            connection,
+            f"then-{index}",
+            1000,
+            {"test_fix_loops": 1.0, "test_fix_loop_tokens": 180.0},
+        )
+    window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)
+    payload = build.build(connection, window, now=NOW)
+    connection.close()
+
+    did = _section(payload, "did")
+    assert (
+        "30% of this period's tokens were spent inside test-fix loops (8 loops), against 18% "
+        "in the previous period; 2 turns went above five million tokens, and a file was read "
+        "three times or more in one turn 4 times."
+    ) in did["notes"][-1]
+    assert len(did["notes"]) == 4, "the section's earlier sentences are kept"
+    numbers = {number["key"]: number for number in payload["numbers"]}
+    assert numbers["did.loop_token_share"]["text"] == "30%"
+    assert numbers["did.loop_token_share"]["value"] == 0.3
+    assert numbers["did.loop_token_share"]["previous_value"] == 0.18
+    assert numbers["did.loop_token_share.previous"]["text"] == "18%"
+    assert numbers["did.test_fix_loops"]["text"] == "8"
+    assert numbers["did.giant_turns"]["text"] == "2"
+    assert numbers["did.reread_files"]["text"] == "4"
+
+
+def test_a_period_without_waste_facts_prints_dashes_not_zeroes() -> None:
+    """Facts built before the waste facts existed: nothing to sum, so nothing is claimed."""
+    connection = _store()
+    _session(connection, "bare", days_ago=3)
+    window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)
+    payload = build.build(connection, window, now=NOW)
+    connection.close()
+    sentence = _section(payload, "did")["notes"][-1]
+    assert sentence.startswith(
+        "- of this period's tokens were spent inside test-fix loops (- loops)"
+    )
+    assert "- turns went above five million tokens" in sentence
+
+
 def test_every_number_in_the_list_appears_in_the_markdown() -> None:
     connection = _populated()
     window = ranges.resolve(connection, last="7d", project=ALPHA, now=NOW)

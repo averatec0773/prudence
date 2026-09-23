@@ -26,17 +26,21 @@ import time
 from dataclasses import dataclass
 
 from prudence.facts import (
+    changes_after_compaction,
     commit_attempts_per_commit,
     compactions,
     context_resets,
     files_edited_unread,
     formatter_runs,
+    giant_turns,
     hand_edits_between_turns,
     prompts_per_active_hour,
     purpose,
     repeated_errors,
+    reread_files,
     sittings,
     subagent_used,
+    test_fix_loops,
     test_runs,
     tests_before_commit,
 )
@@ -86,6 +90,14 @@ FACTS: tuple[Fact, ...] = (
     context_resets.FACT,
     prompts_per_active_hour.FACT,
     hand_edits_between_turns.FACT,
+    # What the tokens went into (docs/reference/usage-buckets.md, "Waste signatures").
+    # They overlap and are never summed with each other.
+    test_fix_loops.FACT,
+    test_fix_loops.TOKENS_FACT,
+    reread_files.FACT,
+    giant_turns.FACT,
+    giant_turns.TOKENS_FACT,
+    changes_after_compaction.FACT,
 )
 
 # Classifications, in the same explicit form. One so far.

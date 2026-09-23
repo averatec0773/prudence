@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS observation(
 """
 
 
+# The waste facts' lines: a session at or above one is on the with-side. Five loops is a
+# session that iterated rather than one that ran its tests twice; one giant turn is enough
+# because a single turn above the line already holds millions of tokens.
+TEST_FIX_LOOPS_AT_LEAST = 5
+GIANT_TURNS_AT_LEAST = 1
+
+
 @dataclass(frozen=True)
 class Split:
     """One behaviour fact, the line that divides the sessions, and the words for it.
@@ -109,7 +116,8 @@ class Split:
     did_not: str = "that did not"
 
 
-# One entry per fact in `facts/registry.FACTS`, in the same order. A test pins that.
+# One entry per fact in `facts/registry.FACTS`, in the same order, except the facts in
+# `NOT_SPLIT`. A test pins that.
 SPLITS: tuple[Split, ...] = (
     Split("sittings", "at_least", 3, "that ran over three or more sittings"),
     Split(
@@ -148,6 +156,29 @@ SPLITS: tuple[Split, ...] = (
         0,
         "that changed the tree by hand between two turns the hooks saw",
     ),
+    Split(
+        "test_fix_loops",
+        "at_least",
+        TEST_FIX_LOOPS_AT_LEAST,
+        "that went through five or more test-fix loops",
+    ),
+    Split(
+        "giant_turns",
+        "at_least",
+        GIANT_TURNS_AT_LEAST,
+        "that had a turn above five million tokens",
+    ),
+)
+
+# Facts compared against nothing, on purpose. The two token sums measure how big a session
+# was more than what it did; `changes_after_compaction` is above zero in two sessions of
+# the founder's store, too few for the sample floor. `reread_files` (above zero in 35 of
+# 96 full-capture sessions there) could carry a split and has none yet.
+NOT_SPLIT: tuple[str, ...] = (
+    "test_fix_loop_tokens",
+    "reread_files",
+    "giant_turn_tokens",
+    "changes_after_compaction",
 )
 
 _BY_FACT = {split.fact: split for split in SPLITS}

@@ -126,10 +126,41 @@ def _rows(connection: sqlite3.Connection) -> list[dict]:
 
 
 def test_every_behaviour_fact_has_a_documented_threshold() -> None:
-    """A fact with no entry in SPLITS would silently never be joined against anything."""
+    """A fact with no entry in SPLITS would silently never be joined against anything,
+    so every fact is either split, in registry order, or named in NOT_SPLIT on purpose."""
     assert [split.fact for split in observations.SPLITS] == [
-        fact.name for fact in facts_registry.FACTS
+        fact.name for fact in facts_registry.FACTS if fact.name not in observations.NOT_SPLIT
     ]
+    names = {fact.name for fact in facts_registry.FACTS}
+    assert set(observations.NOT_SPLIT) <= names, "NOT_SPLIT names a fact that does not exist"
+
+
+def test_the_waste_splits_read_as_sentences() -> None:
+    """The two waste splits in the words `prudence observations` and the app print."""
+    for fact, did in (
+        ("test_fix_loops", "that went through five or more test-fix loops"),
+        ("giant_turns", "that had a turn above five million tokens"),
+    ):
+        row = {
+            "repo_key": "r1",
+            "fact": fact,
+            "outcome": "rework",
+            "with_n": 6,
+            "without_n": 9,
+            "with_value": 0.3,
+            "without_value": 0.12,
+            "threshold_text": f"{fact} >= 1",
+        }
+        assert observations.sentence(row, "beatos") == (
+            f"In beatos, your 6 sessions {did} reworked 30% of their lines (median); "
+            "the 9 that did not, 12%."
+        )
+    assert observations.threshold_of(
+        {"fact": "test_fix_loops", "threshold_text": "test_fix_loops >= 5"}
+    ) == (5.0, ">=")
+    assert observations.threshold_of(
+        {"fact": "giant_turns", "threshold_text": "giant_turns >= 1"}
+    ) == (1.0, ">=")
 
 
 def test_a_clear_gap_becomes_an_observation_with_both_counts() -> None:

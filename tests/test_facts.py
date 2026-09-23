@@ -70,6 +70,89 @@ def test_fact_case(fact: Fact | Label, case: Case) -> None:
         assert got == pytest.approx(case.expected)
 
 
+def _collapsed(rows: dict[str, list[dict]], session_id: str) -> dict[str, list[dict]]:
+    """The same rows with every turn id replaced by `<session>:0`, which is where parser
+    version 5 put every assistant record and so every tool call."""
+    return {
+        table: [
+            {**row, "turn_id": f"{session_id}:0"} if "turn_id" in row else dict(row)
+            for row in table_rows
+        ]
+        for table, table_rows in rows.items()
+    }
+
+
+def _compute(fact: Fact, rows: dict[str, list[dict]], session_id: str) -> float | None:
+    connection = _facts_db()
+    try:
+        for table, table_rows in rows.items():
+            _insert(connection, table, table_rows)
+        return fact.compute(connection, session_id)
+    finally:
+        connection.close()
+
+
+def _by_name(name: str) -> Fact:
+    return next(fact for fact in registry.FACTS if fact.name == name)
+
+
+_SPREAD_ERRORS = {
+    "session": [{"session_id": "s1", "capture_level": "full"}],
+    "tool_call": [
+        {"tool_use_id": f"t{n}", "session_id": "s1", "turn_id": f"p{n}", "error_hash": "h1"}
+        for n in range(3)
+    ],
+}
+
+_SPREAD_MARKERS = {
+    "record": [
+        {
+            "record_id": f"r{n}",
+            "session_id": "s1",
+            "type": "system",
+            "subtype": "compact_boundary",
+            "prompt_id": f"p{n}",
+        }
+        for n in range(2)
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "name,rows,expected",
+    [
+        pytest.param("repeated_errors", _SPREAD_ERRORS, 1, id="repeated_errors"),
+        pytest.param("compactions", _SPREAD_MARKERS, 2, id="compactions"),
+    ],
+)
+def test_session_wide_facts_do_not_depend_on_turn_ids(
+    name: str, rows: dict[str, list[dict]], expected: int
+) -> None:
+    """`repeated_errors` and `compactions` count over the whole session and read no turn
+    id, so parser version 6's fix of the `<session>:0` collapse cannot move them: errors
+    and markers spread over several turns give the same answer with the turns kept apart
+    and with them collapsed. No test of these two could have failed on the collapse; the
+    turn facts built on the fix carry their own collapse cases in `CASES`."""
+    fact = _by_name(name)
+    assert _compute(fact, rows, "s1") == expected
+    assert _compute(fact, _collapsed(rows, "s1"), "s1") == expected
+
+
+def test_turn_facts_have_a_case_the_collapse_would_break() -> None:
+    """Each fact that groups by turn has at least one case whose answer changes when every
+    turn id is collapsed to `<session>:0`, so a regression to that link fails here."""
+    for name in ("test_fix_loops", "reread_files", "giant_turns"):
+        fact = _by_name(name)
+        broken = [
+            case
+            for case in fact.cases
+            if case.expected is not None
+            and _compute(fact, _collapsed(case.rows, case.session_id), case.session_id)
+            != pytest.approx(case.expected)
+        ]
+        assert broken, f"{name}: no case notices the turn ids collapsing"
+
+
 def test_every_fact_has_cases_and_a_unique_name() -> None:
     names = [fact.name for fact in registry.FACTS + registry.LABELS]
     assert len(names) == len(set(names)), "two facts share a name"
@@ -115,6 +198,35 @@ def test_facts_cli_renders_a_table_with_a_trust_footer(lab: Workspace) -> None:
     assert "trust:" in output
     assert "high" in output and "medium" in output
     assert "sessions in the last 90d" in output
+
+
+def test_facts_cli_shows_the_waste_columns_and_json_has_raw_values(lab: Workspace) -> None:
+    record_one_session(lab)
+    table = CliRunner().invoke(main, ["facts", "--last", "90d"])
+    assert table.exit_code == 0, table.output
+    header = table.output.splitlines()[0].split()
+    for column in ("loops", "loop_tok", "reread", "giant", "chg_cmp"):
+        assert column in header, column
+    assert "giant_tok" not in header, "giant_turn_tokens is left to --json"
+
+    raw = CliRunner().invoke(main, ["facts", "--last", "90d", "--json"])
+    assert raw.exit_code == 0, raw.output
+    data = json.loads(raw.output)
+    (session,) = [row for row in data["sessions"] if row["session_id"] == SAMPLE_SESSION]
+    # The sample session wrote no usage fields: its loops are a real count and every
+    # token fact is absent rather than zero, as is its token total.
+    assert session["facts"]["test_fix_loops"] == 0
+    assert "giant_turn_tokens" not in session["facts"]
+    assert "test_fix_loop_tokens" not in session["facts"]
+    assert session["total_tokens"] is None
+    assert data["trust"]["giant_turns"] == "high"
+
+
+def test_loop_tokens_print_as_a_share_of_the_session() -> None:
+    from prudence.cli.facts import _format
+
+    assert _format("test_fix_loop_tokens", 250.0, 1000) == "25%"
+    assert _format("test_fix_loop_tokens", 0.0, None) == "-"
 
 
 def test_show_session_lists_behaviour_facts_with_trust(lab: Workspace) -> None:

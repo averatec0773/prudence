@@ -123,6 +123,14 @@ Engine changes in the same release:
   A subagent's `meta.json` and a workflow's journal are no longer parsed as transcripts.
   On the founder's store the buckets come out at change 23.2%, run 33.1%, read 26.7% and
   talk 17.1% of 9.93B tokens, with nothing resting on a guess and nothing unread.
+- **Where the tokens went, as facts.** Four new behaviour facts over the `response` table
+  count test-fix loops (a test run, a change, then a test run again in one turn) and the
+  tokens inside them, files read three or more times in one turn, turns above five
+  million tokens with their subagents, and changes made after a compaction before the
+  next turn; `prudence facts` shows them and `prudence facts --json` carries every raw
+  value. A review's "What you did" now says what share of the period's tokens went into
+  test-fix loops against the previous period's, and observations split on five or more
+  loops and on a turn above five million tokens.
 
 ## Before 0.1.0
 
