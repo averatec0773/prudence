@@ -161,8 +161,8 @@ function observationBlock(data) {
  *
  * The panel's Ingest now and Review now printed "arrives with the engine wiring, in batch
  * 7" until this batch, and batch 7 shipped. The wiring was written and placed on the
- * **window**: `ui/engine-section.js` owns the run and the report, and `window.html` calls
- * the wiring. Nothing calls it for `index.html`, so the panel kept the note.
+ * **window**: `ui/engine-section.js` owned the run and the report then (`ui/activity.js`
+ * does now), and `window.html` calls the wiring. Nothing calls it for `index.html`, so the panel kept the note.
  *
  * It survived because every check the batch had was a check of the window. The Rust tests
  * spawn the engine, the bridge test pins the command names, and the harness can press a
@@ -193,9 +193,9 @@ function observationBlock(data) {
  *
  * `port` is null in the app and is the bridge by default; a test sets it to a fake shell,
  * which is the only way to press these two buttons under `node --test`. The panel does
- * **not** use the engine block's runner: that one reports on a strip appended to the
- * document body, and the panel measures its own content to size its window, so a strip in
- * it would be measured into its height.
+ * **not** use the window's runner (`ui/activity.js`): that one reports in a toolbar, a
+ * sidebar and a card appended to the document body, and the panel measures its own
+ * content to size its window, so a card in it would be measured into its height.
  *
  * @typedef {{
  *   run: (action: "ingest"|"review") => Promise<any>,
@@ -245,7 +245,7 @@ function note(text) {
 /**
  * What the engine is doing, in the place the note occupies.
  *
- * The bar itself is `design/components.js`'s, the same one the Engine tab draws, and the
+ * The bar itself is `design/components.js`'s, the same one the window's toolbar draws, and the
  * event is the engine's own: this function chooses nothing and computes nothing.
  *
  * @param {any} progress one `engine-progress` payload
@@ -275,9 +275,9 @@ function setRunning(action) {
 /**
  * Start a run from the panel, and report it in the panel.
  *
- * The same two engine actions the window's Engine tab runs, through the same shell
+ * The same two engine actions the window's toolbar runs, through the same shell
  * command. The outcome sentence is the engine's own answer, said in the reader's
- * language, which is the same set of sentences `engine-section.js` prints.
+ * language, which is the same set of sentences `ui/activity.js` says.
  *
  * @param {"ingest"|"review"} action
  */

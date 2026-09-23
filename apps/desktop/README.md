@@ -2,8 +2,11 @@
 
 One codebase for macOS and Windows: a Rust shell around the design system's own HTML.
 
-A menu bar panel and a four-screen window, in English and Simplified Chinese,
-on real Liquid Glass where the system has it:
+A menu bar panel and a five-screen window, in English and Simplified Chinese,
+on real Liquid Glass where the system has it. The window's toolbar carries the panel's two
+actions, `Review now` and `Ingest now`, on every screen, and the foot of its sidebar says
+when the store was last ingested; while a run goes, wherever it was started (the toolbar,
+the panel, the timer or a terminal), both show it instead.
 
 - **Overview**: one sentence saying what the screen is over, the three totals as a strip,
   tokens by what each reply did (change, run, read, talk) per day or week, one card each
@@ -12,26 +15,32 @@ on real Liquid Glass where the system has it:
   week beyond; the two outcome cards stay
   weekly under every range, because the engine measures an outcome per week. Each card's
   full table is behind its "how this is measured" drawer and is built when the drawer is
-  first opened.
+  first opened. While an ingest runs, its first sentence says the figures will update.
+- **Repositories**: which repositories the engine found on this machine and which of them
+  it records, with the capture level per repository: recording is opt-in, which is the
+  answer to "why are only three repositories recorded?". Each row carries its sessions and
+  source, its first and last day, its tokens by bucket as one bar and what was still there
+  after thirty days, both over all time, and clicking a recorded row filters every screen
+  to it.
 - **Review**: one stored review as the engine wrote it, keeping the period reviewed and
   the outcome window apart, with the engine's own figures and its notes behind a
   disclosure.
 - **Observations**: one card per behaviour, paired bars on a single axis, each share over
   the number of sessions it is over, with the coverage and the commit mix beside it.
-- **Settings**: five tabs. **General** is the app's own four settings (language,
+- **Settings**: four tabs. **General** is the app's own four settings (language,
   appearance, open at login, timed ingest), each a segmented control that writes through
-  the shell. **Engine** is where `prudence` is, the actions, the Install or Update button,
-  and where the store is kept with what produced it. **Model** is what
-  `prudence config model` prints, with the one field this app may set; it never calls a
-  model. **Repositories** is which repositories the engine found on this machine and which
-  of them it records, with the capture level per repository: recording is opt-in, which is
-  the answer to "why are only three repositories recorded?". **About** is what is running,
-  on what, under what licence, with links to the project, the developer and what is
-  recorded.
+  the shell. **Engine** is configuration only: where `prudence` is, its version, the
+  Install or Update button, and where the store is kept with what produced it. **Model** is
+  what `prudence config model` prints, with the one field this app may set; it never calls
+  a model. **About** is what is running, on what, under what licence, with links to the
+  project, the developer and what is recorded.
 
 A run says what it is doing: `ingest --progress` writes one JSON line per step on its
 standard error, the shell reads them as they arrive and announces them, and the panel and
-the Engine tab draw the same determinate bar until the engine's own outcome replaces it.
+the window's toolbar draw the same determinate bar until the engine's own outcome replaces
+it. The shell also keeps whether a run is going at all (`src-tauri/src/activity.rs`), and
+sees one started in a terminal by the engine's own lock on `ingest.lock`, which it asks
+about without taking.
 
 It can also **find the `prudence` executable and run it**: ingest and review, from the
 window or from the panel, with a picker when the executable cannot be found, uv to install
@@ -126,7 +135,7 @@ here. None of them is reachable by anything a user does.
 | `PRUDENCE_FORCE_APPEARANCE=dark` | pins the windows to dark (or `light`) |
 | `PRUDENCE_FORCE_LANGUAGE=zh-Hans` | draws the pages in Chinese (or `en`) |
 | `PRUDENCE_GLASS_OPAQUE=0` | glass with nothing behind it. The panel defaults to a filled backing and the window to clear; this overrides both |
-| `PRUDENCE_PRESS=Engine` | presses the button with that exact label once the page has drawn, on whichever surface is open. It is how a Settings tab, an Overview range or a run started from the panel gets into a picture. `Scripts/shot.py --press` sets it. Several labels separated by `>` are pressed in order, each one waiting for its own button: `PRUDENCE_PRESS="Repositories > Metadata only"` reaches a control inside a tab. A button inside a pane that is not open is skipped, because the Settings tabs are all built and only one is shown, so `Off` exists four times over on a screen showing one of them. The panel takes one label, because everything it draws exists at its first draw |
+| `PRUDENCE_PRESS=Engine` | presses the button with that exact label once the page has drawn, on whichever surface is open. It is how a Settings tab, an Overview range or a run started from the panel gets into a picture. `Scripts/shot.py --press` sets it. Several labels separated by `>` are pressed in order, each one waiting for its own button: `PRUDENCE_PRESS="Engine > Choose"` reaches a control inside a tab, and `PRUDENCE_PRESS="Ingest now"` starts a run from the window's toolbar. A button inside a pane that is not open is skipped, because the Settings tabs are all built and only one is shown, so one label can exist on several panes of a screen showing one of them. The panel takes one label, because everything it draws exists at its first draw |
 
 There is no store override beyond `PRUDENCE_DATA_DIR` and `PRUDENCE_CONFIG_DIR`. The spike
 had a `PRUDENCE_DB`; it is gone, because the engine does not honour that name and a guessed
@@ -186,6 +195,7 @@ apps/desktop/
       installer.rs     installing or updating it with uv, and the manual route
       model.rs         what `prudence config model` prints, read
       timer.rs         the timed ingest: one thread, outliving every window
+      activity.rs      whether a run is going and how the last one ended, whoever started it
       ui_state.rs      what the window remembers between launches
       harness.rs       the automation, behind `--features harness`, absent from a release
       platform/        everything true of one operating system and not the other
@@ -201,8 +211,8 @@ version outside `contract::SUPPORTED` (4, and only 4), and selects from `app_*` 
 view columns into a bucket and take the ratio of two columns of the same row; a median, a
 threshold or an attribution is a new view in `src/prudence/store/app_views.py`.
 
-**2. The frontend talks to the shell through `bridge.js` and nothing else.** Nine
-commands, and `test/bridge.test.mjs` asserts both that nothing else in `src/` touches a
+**2. The frontend talks to the shell through `bridge.js` and nothing else.** Every
+command and event, and `test/bridge.test.mjs` asserts both that nothing else in `src/` touches a
 Tauri API and that every command's **argument names** match `lib.rs`. If the webview under
 this frontend ever has to change, the shell and that one file are rewritten and everything
 else moves unchanged. That is the way out if Tauri fails on a later macOS, and it only

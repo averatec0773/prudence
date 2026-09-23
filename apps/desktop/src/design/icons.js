@@ -1,4 +1,4 @@
-/* The sidebar's four icons.
+/* The sidebar's five icons.
  *
  * SF Symbols are not reachable from a webview: they are a font and an API, and a web
  * page gets neither. So these are drawn, once, to the same brief as the symbols the
@@ -16,6 +16,12 @@ import { svgEl } from "./dom.js";
 const PATHS = {
   // Three bars of different heights: what the Overview draws.
   overview: ["M3 13.5V9", "M8 13.5V4", "M13 13.5v-6"],
+  // A folder with its tab: what a repository is on disk. The symbol the Swift sidebar
+  // would have used is `folder`, drawn to the same brief as the other four.
+  repositories: [
+    "M2.5 12V4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z",
+    "M2.5 7h11",
+  ],
   // A page with two lines of writing on it.
   review: ["M4 2.5h5.5L12 5v8.5H4z", "M6 8h4", "M6 10.5h4"],
   // A bulb with its base: a thing noticed.

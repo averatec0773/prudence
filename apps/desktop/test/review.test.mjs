@@ -511,29 +511,14 @@ test("the page closes with the count of figures the engine says it rests on", ()
 
 /* --- the action ------------------------------------------------------------------------- */
 
-test("Review now says where the action is until the wiring sets it", () => {
-  REVIEW_NOW.run = null;
+/* The action is on the window's toolbar, on every screen, with the panel's words. A second
+   button with the same label on this screen would be one too many. */
+test("the screen carries no Review now of its own: the toolbar does", () => {
   const screen = review(state());
-  const note = screen.find(".screen-note");
-  assert.equal(note.hidden, true, "it says nothing until it is pressed");
-  screen.find("button").fire("click");
-  assert.equal(note.hidden, false);
-  assert.equal(note.textContent, Str.t("review.notWired"));
-});
-
-test("Review now calls the wiring once it is there, and says nothing itself", () => {
-  let ran = 0;
-  REVIEW_NOW.run = () => {
-    ran += 1;
-  };
-  try {
-    const screen = review(state());
-    screen.find("button").fire("click");
-    assert.equal(ran, 1);
-    assert.equal(screen.find(".screen-note").hidden, true);
-  } finally {
-    REVIEW_NOW.run = null;
-  }
+  assert.equal(
+    screen.findAll("button").some((node) => node.textContent === Str.t("menu.reviewNow")),
+    false
+  );
 });
 
 /* --- whether writing one now would produce anything ---------------------------------------

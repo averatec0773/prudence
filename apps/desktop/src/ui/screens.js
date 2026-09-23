@@ -1,6 +1,6 @@
 /* The route table: every screen the window can show, and nothing about how it looks.
  *
- * **This file is the seam that lets four screens be built at once.** A screen is a module
+ * **This file is the seam that lets several screens be built at once.** A screen is a module
  * that exports one function and owns one stylesheet, registered here by one line. Nothing
  * else in the app names a screen, so two people adding two screens touch two new files
  * and this table, and never the same line of anything.
@@ -16,17 +16,24 @@ import { day as formatDay } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 import { observations } from "./observations.js";
 import { overview } from "./overview.js";
+import { repositories } from "./repositories.js";
 import { review } from "./review.js";
 import { settings } from "./settings.js";
 
 /**
+ * `ingesting` is whether an ingest is going anywhere, from the shell's own answer
+ * (`ui/activity.js`); `onProject` sets the one project filter every screen reads, which is
+ * how the Repositories screen's rows do what the picker does.
+ *
  * @typedef {{
  *   data: any,
  *   info: any,
  *   project: string|null,
  *   range: string,
  *   bucket: string|null,
+ *   ingesting: boolean,
  *   onBucket: (bucket: string|null) => void,
+ *   onProject: (project: string|null) => void,
  *   redraw: () => void,
  * }} ScreenState
  */
@@ -58,6 +65,9 @@ export const SCREENS = [
   // line in the window's head was the only place the window was named and every figure
   // below it had lost its time frame.
   { key: "overview", label: "section.overview", scope: ["project", "range"], render: overview },
+  // No pickers: the rows are the project picker here, and a repository's figures are over
+  // all time because the screen is about the repository, not about a window.
+  { key: "repositories", label: "section.repositories", scope: [], render: repositories },
   {
     key: "review",
     label: "section.review",

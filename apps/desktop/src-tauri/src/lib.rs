@@ -4,6 +4,7 @@
 //! Phase 1, batch 1. The window's screens are placeholders; what this batch is really for
 //! is whether the compositor holds. See `docs/reports/desktop/02-window-shell.md`.
 
+mod activity;
 mod contract;
 mod engine;
 mod installer;
@@ -292,12 +293,44 @@ pub fn announce_progress(app: &AppHandle, progress: &engine::Progress) {
     }
 }
 
+/// Whether a run is going and how the last one ended, whoever started it.
+///
+/// Carries its payload, unlike `store-changed`: the window's toolbar and status row draw
+/// straight from it, and `engine_activity` answers the same thing for a page drawn in the
+/// middle of a run. `activity.rs` holds the answer and says when it changes.
+const ENGINE_ACTIVITY: &str = "engine-activity";
+
+/// Tell both pages what the engine is doing now, and say so on standard error: a run from
+/// a terminal is otherwise invisible to anybody reading the shell's log.
+pub fn announce_activity(app: &AppHandle, activity: &activity::Activity) {
+    eprintln!(
+        "[engine] activity: running={} outside={} outcome={}",
+        activity.running.as_deref().unwrap_or("none"),
+        activity.outside,
+        activity
+            .outcome
+            .as_ref()
+            .map(|outcome| outcome.error_kind.as_deref().unwrap_or("ok"))
+            .unwrap_or("none")
+    );
+    if let Err(error) = app.emit(ENGINE_ACTIVITY, activity) {
+        eprintln!("[engine] could not report activity: {error}");
+    }
+}
+
+/// What the engine is doing right now, for a page that has just been drawn.
+#[tauri::command]
+fn engine_activity() -> activity::Activity {
+    activity::now()
+}
+
 /// Run `prudence ingest` or `prudence review`, and answer with what the engine said.
 ///
-/// The page waits on this promise, which is how it knows a run is still going, and every
-/// progress line the engine writes on the way is announced over [`ENGINE_PROGRESS`].
-/// Nothing else is plumbed into the screens: `watcher.rs` already refreshes every page
-/// when the store changes, so a successful run's new figures arrive on their own.
+/// The page waits on this promise for the answer it reports in detail; what a run is doing
+/// meanwhile reaches both pages over [`ENGINE_ACTIVITY`] and [`ENGINE_PROGRESS`], through
+/// `activity::run`, which the timed ingest goes through as well. Nothing else is plumbed
+/// into the screens: `watcher.rs` already refreshes every page when the store changes, so
+/// a successful run's new figures arrive on their own.
 #[tauri::command]
 async fn engine_run(
     app: AppHandle,
@@ -312,12 +345,8 @@ async fn engine_run(
     };
     let remembered = shell.memory.read().usable_engine().map(str::to_string);
     let timer = shell.timer.clone();
-    let outcome = scheduled(move || {
-        engine::shared().run(remembered.as_deref(), action, force, &|progress| {
-            announce_progress(&app, progress)
-        })
-    })
-    .await;
+    let outcome =
+        scheduled(move || activity::run(&app, remembered.as_deref(), action, force)).await;
     // The timed ingest's clock starts again from any run, not only from its own. Without
     // this a reader who presses Ingest now a minute before the interval is up gets a
     // second ingest a minute later, for nothing.
@@ -796,6 +825,7 @@ pub fn run() {
             window_close,
             section_set,
             engine_status,
+            engine_activity,
             engine_run,
             engine_choose,
             engine_forget,

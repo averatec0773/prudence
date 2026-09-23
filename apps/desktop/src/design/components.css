@@ -72,6 +72,37 @@
   gap: var(--s3);
 }
 
+/* What the whole screen is over, said once, above everything it frames. It is prose and
+   is set as prose: the measure is held short so the sentence is read rather than scanned
+   across the window. The Overview and the Repositories screen open with one. */
+.screen-summary {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+  max-width: 68ch;
+}
+
+/* A block inside a card with its own caption and its own note: the fact versions and the
+   platform pairs on Settings, the two groups of the Repositories screen. */
+.subhead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--s2);
+}
+
+.subhead h3 {
+  font-size: var(--t-footnote);
+  font-weight: 590;
+  color: var(--text-2);
+}
+
+.subhead p {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
 .filter-note {
   display: flex;
   align-items: center;

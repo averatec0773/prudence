@@ -145,7 +145,7 @@ function methodAndTable(method, table, rows) {
  * figures in the same breath, so that a reader four screens down has still been told what
  * the numbers are over.
  */
-function summaryLine(totals, { project, range }) {
+function summaryLine(totals, { project, range, ingesting }) {
   const scope = project ?? t("scope.allProjects");
   const window =
     rangeOf(range).days === null
@@ -159,7 +159,14 @@ function summaryLine(totals, { project, range }) {
     ...(totals.hours === null ? [] : [t("overview.activeHoursPhrase", formatHours(totals.hours))]),
     commitPhrase(totals.commits),
   ]);
-  return el("p", { class: "screen-summary", text: t("overview.summary", scope, window, figures) });
+  const said = t("overview.summary", scope, window, figures);
+  // An ingest going anywhere is about to move every figure in the sentence, so the
+  // sentence says so rather than letting them change under the reader unannounced. One
+  // key wraps the whole sentence, so each language puts the clause where it goes.
+  return el("p", {
+    class: "screen-summary",
+    text: ingesting ? t("overview.summary.ingesting", said) : said,
+  });
 }
 
 /**
@@ -204,7 +211,7 @@ function figureStrip(totals) {
 
 /**
  * @param {{ data: any, project: string|null, range: string, bucket: string|null,
- *           onBucket: (bucket: string|null) => void }} state
+ *           ingesting?: boolean, onBucket: (bucket: string|null) => void }} state
  */
 export function overview(state) {
   const { data, project, range, bucket } = state;
@@ -219,7 +226,7 @@ export function overview(state) {
   const whole = readCards(data, { project, range });
   const totals = bucket ? readCards(data, { project, range, bucket }) : whole;
   const buckets = readBuckets(data, { project, range });
-  screen.appendChild(summaryLine(whole, { project, range }));
+  screen.appendChild(summaryLine(whole, { project, range, ingesting: Boolean(state.ingesting) }));
   screen.appendChild(figureStrip(totals));
 
   // Clicking a bucket filters the three figures, and says so, with one way back. The

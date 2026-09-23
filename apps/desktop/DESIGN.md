@@ -213,30 +213,30 @@ This is load bearing, not tidiness. If the webview under this frontend ever has 
 the shell and that one file are rewritten and everything else moves unchanged. That is the
 way out if Tauri fails on a later macOS, and it stays open only while the rule holds.
 
-The surface is twenty-one commands: read the store, ask the shell about itself, log a
-line, fit the panel to its content, hide the panel, open and close the window, remember
-the section, quit; the five the engine needs (where it is, run an action, choose the
-executable, forget the choice, install or update it); two for the model settings (read
-them, set the prose language); five for the app's own settings (read them, and one per
-setting); and one that opens a link **by name**, because the shell owns the addresses and
-a command that took a URL would open whatever it was handed.
-`test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts that the names and
-the **argument names** match, because renaming a Rust parameter breaks the page at runtime
-with no error on either side.
+The surface is the commands `lib.rs` hands `generate_handler!`: read the store, ask the
+shell about itself, log a line, fit the panel to its content, hide the panel, open and
+close the window, remember the section, quit; the ones the engine needs (where it is, what
+it is doing now, run an action, choose the executable, forget the choice, install or
+update it, the repositories it records and a change to one, whether a review is ready);
+two for the model settings (read them, set the prose language); five for the app's own
+settings (read them, and one per setting); and one that opens a link **by name**, because
+the shell owns the addresses and a command that took a URL would open whatever it was
+handed. `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts that the
+names and the **argument names** match, because renaming a Rust parameter breaks the page
+at runtime with no error on either side.
 
-**Three events go the other way**, and each is a string on both sides with nothing else to
-catch a rename, so the same test asserts them too: `store-changed`, `settings-changed` and
-`engine-install`. The first two carry no payload, on purpose: there is one way to get the
-store's contents and one way to get the settings, and both are a command. The third
-carries uv's lines, because they are the whole point and the process has moved on by the
-time anything could ask again.
+**Five events go the other way**, and each is a string on both sides with nothing else to
+catch a rename, so the same test asserts them too: `store-changed`, `settings-changed`,
+`engine-install`, `engine-progress` and `engine-activity`. The first two carry no payload,
+on purpose: there is one way to get the store's contents and one way to get the settings,
+and both are a command. The other three carry theirs, because each is true for a moment:
+uv's lines, a run's step, and whether a run is going (`src-tauri/src/activity.rs`, below).
 
 **`src/ui/wiring.js` is the one file under `src/ui/` that calls the bridge.** A screen may
-not, and two pieces of the window need to: the engine block and the Settings screen's
-controls. Both declare a port and `wiring.js` fills it in, which is also what lets each be
-driven against a fake shell in a test. It was inside `engine-section.js` while the engine
-block was the only thing that needed it; Settings arriving with four controls of its own
-made that the second file importing the bridge, which is one more than the rule allows.
+not, and several pieces of the window need to: the toolbar and the status row
+(`ui/activity.js`), the engine block, the Repositories screen and the Settings screen's
+controls. Each declares a port and `wiring.js` fills it in, which is also what lets each
+be driven against a fake shell in a test.
 The panel is the exception and says so in its own file: it talks to `bridge.js` directly,
 because it has no wiring file of its own and its port exists only so a test can press its
 two engine buttons.
@@ -304,17 +304,21 @@ That is the whole surface. Nothing else in the app names a screen.
 ### What a screen may and may not do
 
 **It is handed everything and reaches for nothing.** The one argument carries `data` (the
-whole store payload), `info` (`shell_info`), the scope (`project`, `range`, `bucket`), and
-two callbacks (`onBucket`, `redraw`). A screen does not import the bridge, does not read
+whole store payload), `info` (`shell_info`), the scope (`project`, `range`, `bucket`),
+whether an ingest is going anywhere (`ingesting`), and three callbacks (`onBucket`,
+`onProject`, `redraw`). `onProject` sets the window's one project filter, which is how the
+Repositories screen's rows do what the picker does. A screen does not import the bridge, does not read
 the store, does not touch `document` outside the tree it is building, and keeps no state
 between renders: it is called again from scratch whenever anything changes.
 
 **One exception, and only one: a screen may remember its own navigation.** The Settings
-screen keeps which of its five tabs is open in a module-level variable. Which tab is open
+screen keeps which of its four tabs is open in a module-level variable. Which tab is open
 is navigation, not data, and a screen rebuilt because an ingest landed must not throw the
 reader back to the first tab while they are half way through changing a setting. Nothing
-about the data may be kept this way, and the five panes are built together and shown by a
-flag, so choosing a tab redraws nothing at all.
+about the data may be kept this way, and the four panes are built together and shown by a
+flag, so choosing a tab redraws nothing at all. (A batch of level changes on the
+Repositories screen outlives the screen it was started on, and is kept in `BATCH` for the
+reason `store/asked.js` keeps the engine's answers: it is a process in flight, not data.)
 
 An answer from the engine is **data**, so a screen does not keep one either. The two the
 Settings screen asks for live in `store/asked.js`, which is also where the rule about how
@@ -359,8 +363,11 @@ implementations (`macos`, `windows`, and a do-nothing fallback). The page never 
 system it is on. A difference that cannot be held in that folder is a difference that will
 end up in the page, which is what closes the door on Windows.
 
-Today that interface is five functions: apply the material, find the tray anchor, set the
-status item's highlight, show or hide the Dock icon, describe the platform.
+Today that interface is eight functions: apply the material, find the tray anchor, set the
+status item's highlight, show or hide the Dock icon, hide the app, the line that installs
+uv, describe the platform, and whether another process holds the engine's ingest lock
+(`lock_held`, which on macOS asks `F_GETLK` and never takes the lock; see Known
+compromises).
 
 Two things macOS 26 does that cost us a day, written down so they cost nobody else one.
 
@@ -573,11 +580,47 @@ founder's 830 MB store or on somebody's laptop. So the app waits for the process
 which is the actual event.
 
 - **Assumes:** `prudence` always exits.
-- **When it breaks:** the strip reads "Ingesting..." for as long as the app is open and
-  both actions stay refused, because the shell holds the one-run-at-a-time flag. Nothing
-  is lost and nothing is wrong with the store; a relaunch clears it.
-- **Removed when:** the run can be cancelled from the strip, which is the honest fix and
+- **When it breaks:** the toolbar and the status row show the run for as long as the app
+  is open and both actions stay refused, because the shell holds the one-run-at-a-time
+  flag. Nothing is lost and nothing is wrong with the store; a relaunch clears it.
+- **Removed when:** the run can be cancelled from the toolbar, which is the honest fix and
   is a design question (what a half-finished ingest leaves behind) rather than a timeout.
+
+### A run started outside the app is seen by its lock, and its end is looked for every two seconds
+
+`src-tauri/src/activity.rs` and `watcher.rs`, `LOCK_POLL`. The toolbar and the status row
+show a run from a terminal (or the plugin) as well as one this app started. The engine holds
+an advisory `flock` on `ingest.lock` beside the store for as long as an ingest or a rebuild
+runs, so the watcher asks who holds it (`platform::lock_held`, `fcntl(F_GETLK)`, which never
+takes it) whenever the store's files move. The end of such a run makes no file event of its
+own, so while the lock is held it is asked again every two seconds.
+
+- **Assumes:** the engine keeps taking that lock under that name for exactly the length of
+  a run (`src/prudence/store/db.py`, `ingest_lock`), and macOS keeps reporting a `flock`
+  through `F_GETLK`, which is a property of the BSD lock manager: measured on 2026-09-23 and
+  pinned by `platform::macos::lock_tests`.
+- **When it breaks:** a run from outside shows as idle, and the window catches up only when
+  the watcher announces the store, which is what happened before this. On Windows and Linux
+  it is always that: neither can ask without taking. A `prudence rebuild` reads as an
+  ingest, because the two hold the same lock. The toolbar says "started outside the app" and
+  draws no bar, because the engine writes progress lines only to the process that asked.
+- **Removed when:** the engine announces a run's start and end itself, which is also the
+  removal condition of the watcher's own entry above.
+
+### The Repositories screen's survival carries its lines, not its coverage
+
+`ui/repositories.js`, `aliveCell`. Every share on this app's screens carries the number it
+is over, and here that is the lines measured at thirty days (`measured_30d`, summed). The
+attribution coverage `prudence outcomes` prints beside it is a mean over commits, and
+`app_outcomes_by_week.coverage` is already a mean per week: averaging those means is a
+different number from the engine's, and a weighted one would need a count the view does
+not carry.
+
+- **Assumes:** the lines measured are the context a reader needs to trust a share of them.
+- **When it breaks:** a repository whose sessions wrote little of what was committed shows a
+  survival share with no hint of that.
+- **Removed when:** the engine publishes a per-repository coverage in a view; the column
+  then carries it under the share, the way the Overview's card draws its band.
 
 ### The engine's own error text is English on a Chinese interface
 
@@ -662,7 +705,8 @@ exactly the two files `watcher.rs` fingerprints. Measured on 2026-09-22 against 
 the founder's store: 270 runs of `prudence status` in three minutes with nothing else
 happening, and separately, with the window left on Settings during one 230-second ingest,
 fourteen extra processes, because an ingest announces itself about eight times as it works
-and all five Settings panes are built whichever tab is open.
+and all five Settings panes (the repositories were one of them then) were built whichever
+tab was open.
 
 - **Assumes:** nothing changes any of the three answers except an ingest, a review, or a
   command this app itself ran. The third is why the memo takes a `keep`:
@@ -716,7 +760,7 @@ is not checked, so a token could be declared there.
 
 ### The Sources column draws a constant
 
-`ui/settings.js`, `sourcesOf`. Recording is per repository and covers every AI coding
+`ui/repositories.js`, `sourcesOf`. Recording is per repository and covers every AI coding
 agent that worked in it, so the repository is where the list of agents belongs. The
 engine's `init --scan --json` does not print one yet, so the column answers with the one
 source Prudence reads today.
@@ -730,7 +774,7 @@ source Prudence reads today.
 
 ### An agent's display name is a constant, not a catalogue key
 
-`ui/settings.js`, `SOURCE_NAMES`. "Claude Code" is the same in both languages, and
+`ui/repositories.js`, `SOURCE_NAMES`. "Claude Code" is the same in both languages, and
 `test/strings.test.mjs` refuses a key whose two values are identical, for the same reason
 `LANGUAGE_NAMES` is a constant here.
 
@@ -740,20 +784,9 @@ source Prudence reads today.
 - **Removed when:** a source needs a name that differs between the two languages, which is
   the point at which it is a translation and belongs in the tables.
 
-### A compact day is composed in `ui/settings.js`
-
-`scanDay`. The Repositories rows want `2026-05-14` in both languages, and `text/fmt.js`
-has `day` (the reader's own order) and `shortDay` (no year) and nothing in between.
-
-- **Assumes:** no second screen wants a compact day before this moves.
-- **When it breaks:** a second screen writes its own and the app has two of them, which is
-  exactly what the page contract says must not happen.
-- **Removed when:** the batch that owns `text/fmt.js` lands; it moves there beside `day`,
-  and `test/fmt.test.mjs` takes the case that is in `test/settings.test.mjs` today.
-
 ### A batch is one run of the engine per repository
 
-`ui/settings.js`, `runBatch`. `prudence init --enable` takes one repository, so setting
+`ui/repositories.js`, `startBatch`. `prudence init --enable` takes one repository, so setting
 twelve of them is twelve subprocesses, sequentially because they all write `config.toml`.
 
 - **Assumes:** a run is fast enough that a counter is enough of a report, which held for
@@ -843,32 +876,45 @@ Grown by each batch. Batch 1 adds the window shell only.
 | Component | What it is | Where |
 |---|---|---|
 | The panel | 360 pt, one column, a caption above every block, the action grid at the foot | `src/ui/panel.js` |
-| The window shell | The system's titlebar overlaid, a sidebar with four entries, the heading and the screen's controls on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
+| The window shell | The system's titlebar overlaid as the toolbar, a sidebar with five entries and the status row at its foot, the heading and the screen's pickers on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
+| The toolbar's actions | `Review now` (flat) and `Ingest now` (accent), the panel's words, on the right of the titlebar row. While any run goes, wherever it was started, the run takes their place in its compact form; then how it ended for four seconds; then the buttons. **One declared box** (248 by 26 pt) in every state, so nothing beside it moves and nothing under it grows | `src/ui/activity.js`, `ui/activity.css` |
+| The status row | The foot of the sidebar card: "Last ingest 13h ago" (the narrow relative form, the full stamp on the pointer, said again every minute), the same run in its compact form without its count, or the same outcome line. Reserved height, never grows | same files |
+| The run report | A card at the foot of the window for the two outcomes a line cannot carry: a failure in the engine's own words, and a review the engine declined, with Write anyway. Content, so opaque, and it waits for the reader. Only runs this window started report here | same files |
 | `miniStack` | One row of a stacked bar: the composition of a whole, in a single line. It takes its parts in the caller's fixed order with their colours (the purposes on the Review screen, the buckets on the panel), and a `total` when the whole holds something none of the parts names | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
-| The engine block | Where `prudence` is, its version against the store's, the actions, the picker, and the Install or Update button with uv's own output under it | `src/ui/engine-section.js`, `ui/engine-section.css` |
-| The activity strip | One report at the foot of the window: what a run is doing, and how it ended | same file |
-| The tab strip | The Settings screen's five tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
+| The engine block | Configuration only: where `prudence` is and whether it was found or chosen, with the picker, its version against the store's, and the Install or Update button with uv's own output under it. Install and Update are disabled while any run goes | `src/ui/engine-section.js`, `ui/engine-section.css` |
+| The tab strip | The Settings screen's four tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
 | A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
 | `shareBars` | Shares, as horizontal bars on one axis: what each row is, how far it reaches, and the figure printed beside it. Drawn by the Review screen and the Observations screen, which had one each until this sheet | `src/design/charts.js` |
-| `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel and on the activity strip | `src/design/components.js` |
-| The repositories list | Which repositories the engine found and which of them it records, split into the two, with a level control per row. Content, so it is opaque. **Every column is declared**: `table-layout: fixed` and a `<colgroup>`, because an automatic table sized from its contents wrapped the count, both days and the segment labels at Chinese widths. The path is the only value allowed an ellipsis | `src/ui/settings.js`, `ui/settings.css` |
+| `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel, in the toolbar and the status row (`is-compact`, no step line), and in the batch bar | `src/design/components.js` |
+| `segmented`, `subhead` | The one row of choices every setting and every repository's level is, and the caption-and-note heading of a block inside a card. Moved out of `ui/settings.js` when the Repositories screen wanted both | `src/design/components.js`, `design/components.css` |
+| The repositories list | The Repositories screen: which repositories the engine found and which of them it records, split into the two, one row each with the name and the end of its path, sessions and source, first and last day, tokens by bucket as one bar, alive at thirty days over its lines, and the level. Content, so it is opaque. **Every column is declared**: `table-layout: fixed` and a `<colgroup>` adding to 504 pt, which fits the window's narrowest; the path and a long name are the only values allowed an ellipsis. A recorded row is the project picker: clicking it sets the window's filter, a quiet fill marks it, and clicking again clears it | `src/ui/repositories.js`, `ui/repositories.css`, `store/repositories.js` |
 | The batch bar | What to do with the ticked rows: how many they are, the three levels, and what the engine refused. At the foot of the card, sticky, and only while something is ticked. **Control layer**, so it takes the frost while the list above it stays opaque | same file |
 | `disclosure` | A drawer with the line that says what is in it. The card builds one out of its `method` string; a caller with more to fold away builds its own, and `deferred` is content built the first time it is opened | `src/design/components.js` |
 | The figure strip | The Overview's three figures on one row, each carrying its own unit, with the words the engine lends the screen glossed in the strip's own drawer. It was three cards taking a full row above charts starved of width | `src/ui/overview.js`, `ui/overview.css` |
-| The summary line | One sentence at the top of a screen saying what everything under it is over: the scope, the window, and the figures. Composed per language, and it replaces the head's grey subtitle rather than joining it | same file |
+| The summary line | One sentence at the top of a screen saying what everything under it is over: the scope, the window, and the figures. Composed per language, and it replaces the head's grey subtitle rather than joining it. While an ingest goes anywhere, one key wraps it with "Ingesting; the figures will update when it finishes." | same file, and `design/components.css` for `.screen-summary`, which the Repositories screen opens with too |
 | The heat strip | One cell per local day, seven rows Monday first, **with its axis**: the weekday down the left and the month under the first column it starts in. The geometry is below | `src/design/charts.js` |
 
 **The engine block is placed, not owned, by a screen.** The Settings screen puts it where
-it goes and the block says what is in it, so the two can be written at the same time. It
-is also the one thing under `src/ui/` that talks to `bridge.js`: it is not a screen, and a
-screen may not, which is why `ui/review.js` exports a `REVIEW_NOW` seam and the wiring in
-`window.html` fills it in rather than the screen calling the shell itself.
+it goes and the block says what is in it, so the two can be written at the same time. Its
+port is filled by `ui/wiring.js`, like every other piece that reaches the shell, and
+`ui/review.js` exports a `REVIEW_NOW` seam for its readiness line on the same rule.
 
-**The strip is on the page, not in a screen.** A run outlives the screen it was started
+**What a run is doing is the shell's answer, not a page's.** A run can start in the
+toolbar, the panel, the timer or a terminal, so `src-tauri/src/activity.rs` keeps one
+answer (is a run going, which, started outside or not, its last progress line, how the last
+one ended), announces every change over `engine-activity`, and answers `engine_activity`
+for a window drawn mid-run. The engine tells `activity::run` it has started only once it
+holds its one-run-at-a-time flag, so a click turned away as busy never overwrites the
+running one's record. The toolbar and the status row draw from that answer and nothing
+else; the report card is the only piece that waits on a button's own promise, because the
+two outcomes it carries need the reader. An ingest starting or ending redraws the current
+screen, because `ingesting` is part of what a screen is handed; a progress line redraws
+only the two places that show it.
+
+**The report is on the page, not in a screen.** A run outlives the screen it was started
 on: the Review screen is rebuilt whenever the store changes, and the store changing is
-exactly what a successful run causes. So it is appended to the body once, by the same
-wiring, and it is the only place a run reports whichever button began it.
+exactly what a successful run causes. So it is appended to the body once, by the wiring.
 
 **There is one chart.** The mockups' module had seven builders and 598 lines; six drew
 screens that do not exist yet and none had been read to a product standard. They are not
@@ -911,7 +957,7 @@ is what every screenshot run uses.
 
 | Key | Does |
 |---|---|
-| Cmd-1 / 2 / 3 / 4 | Overview, Review, Observations, Settings |
+| Cmd-1 / 2 / 3 / 4 / 5 | Overview, Repositories, Review, Observations, Settings: the route table's order, which the shell's own list of sections (`ui_state.rs`) is held to by a test |
 | Cmd-, | Settings. It opens the screen, not a particular tab: the screen remembers which one was last open |
-| Cmd-R | Goes to the Review screen. Its button now runs the engine; the shortcut still only navigates |
+| Cmd-R | Goes to the Review screen. Review now is the toolbar's; the shortcut still only navigates |
 | Esc | Closes the panel |

@@ -159,11 +159,20 @@ export function stamp(value, language) {
  *
  * Truncated rather than rounded, so thirteen and a half hours reads as thirteen.
  *
+ * `style` is `Intl`'s own: `long` everywhere there is room, and `narrow` (`13h ago`) in the
+ * window's status row, which has a sidebar's width for the whole line. Chinese writes the
+ * same characters in all three.
+ *
  * **Known limit:** the unit boundaries are fixed seconds, so "1 month ago" means thirty
  * days rather than a calendar month. Registered in `DESIGN.md`; it shows only for
  * timestamps months old, and the only one the app prints is the last ingest.
+ *
+ * @param {any} value
+ * @param {any} [now]
+ * @param {Language} [language]
+ * @param {"long"|"short"|"narrow"} [style]
  */
-export function relative(value, now, language) {
+export function relative(value, now, language, style = "long") {
   const date = asDate(value);
   if (!date) return tIn(langOf(language), "menu.never");
   const reference = asDate(now) ?? new Date();
@@ -172,7 +181,7 @@ export function relative(value, now, language) {
 
   const formatter = new Intl.RelativeTimeFormat(langOf(language), {
     numeric: "auto",
-    style: "long",
+    style,
   });
   /** @type {[Intl.RelativeTimeFormatUnit, number][]} */
   const units = [
@@ -214,6 +223,26 @@ export function shortDay(value, language) {
 }
 
 /**
+ * A day as `2026-05-14` in both languages, for a column of days read against each other.
+ *
+ * Numeric and fixed width, not the reader's own order. `2026年5月14日` is eleven characters
+ * that break anywhere, which put two dates on two lines each in the founder's screenshot
+ * of the repositories list, and a column of days being compared reads better aligned than
+ * idiomatic. The engine writes its timestamps in this order already, so the day is its own
+ * first ten characters, checked through `fromDay` so that something that is not a day is a
+ * dash rather than ten characters of anything.
+ */
+export function isoDay(value, language) {
+  if (value === null || value === undefined || value === "") {
+    return tIn(langOf(language), "common.dash");
+  }
+  const date = fromDay(String(value).slice(0, 10));
+  if (!date) return tIn(langOf(language), "common.dash");
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
  * A month on its own, for the band under the heat strip: `Sep`, `9月`.
  *
  * The strip's columns are weeks and its band names the month each one starts in, so the
@@ -228,7 +257,7 @@ export function monthName(value, language) {
 
 /* --- phrases built from a count ----------------------------------------------------- */
 
-/** The four that carry a count go through the catalog's plural entries. */
+/** The ones that carry a count go through the catalog's plural entries. */
 export function sessions(value, language) {
   return plural("unit.sessions", value, count(value, language), language);
 }
@@ -238,6 +267,10 @@ export function commits(value, language) {
 /** What a surface is over, where it is over all of them: `3 projects`. */
 export function projects(value, language) {
   return plural("unit.projects", value, count(value, language), language);
+}
+/** What a survival share is over: `1,204 lines`. */
+export function lines(value, language) {
+  return plural("unit.lines", value, count(value, language), language);
 }
 
 /** These two carry a measure rather than a count: `6.2k tokens`, `0.1 hours`. A plural

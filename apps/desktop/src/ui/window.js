@@ -1,8 +1,12 @@
-/* The window: a sidebar, a head row, and one screen at a time.
+/* The window: a toolbar, a sidebar, a head row, and one screen at a time.
  *
- * The screens are placeholders until batches 5 to 8. They are deliberately the shape wry
- * issue 1848 reports the compositor giving up on: a tall scroll container per screen,
- * switched between by the sidebar. `Scripts/stress.py` drives exactly that.
+ * The toolbar is the titlebar's own row: the product's mark on the left, and on the right
+ * the two actions that run the engine with what a run is doing in their place while one
+ * goes (`ui/activity.js`). The sidebar is the five screens and, at its foot, when the store
+ * was last ingested. Both are the navigation layer and sit on the window's material.
+ *
+ * Each screen is a tall scroll container switched between by the sidebar, which is the
+ * shape wry issue 1848 reports the compositor giving up on; `Scripts/stress.py` drives it.
  */
 
 import * as Bridge from "../bridge.js";
@@ -13,11 +17,11 @@ import { mark } from "../design/brand.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
 import { rangeName } from "../text/fmt.js";
 import { DEFAULT_RANGE, RANGES } from "../store/overview.js";
+import { ACTIVITY, CLOCK, ingesting, runActions, statusRow, tick } from "./activity.js";
 import { SCREENS, screenExists, screenFor } from "./screens.js";
 
-/** The four entries, in the order the sidebar shows them and Cmd-1 to Cmd-4 follow.
- *  The keys are what the shell remembers, so they are not display strings. */
-/** The sidebar's rows, and the keyboard's order, are the route table's order. */
+/** The sidebar's rows, and the keyboard's order, are the route table's order. The keys
+ *  are what the shell remembers, so they are not display strings. */
 export const SECTIONS = SCREENS;
 
 const state = {
@@ -92,8 +96,15 @@ function screenState() {
     project: state.project,
     range: state.range,
     bucket: state.bucket,
+    ingesting: ingesting(),
     onBucket: (bucket) => {
       state.bucket = bucket;
+      redraw();
+    },
+    onProject: (project) => {
+      state.project = project;
+      // A bucket selected in one project's chart means nothing in another's.
+      state.bucket = null;
       redraw();
     },
     redraw,
@@ -117,6 +128,9 @@ function sidebar() {
     card.appendChild(button);
     return button;
   });
+  // At the foot of the card: when the store was last ingested, or the run that is
+  // ingesting it now, from wherever it was started.
+  card.appendChild(statusRow(state.data));
   return el("aside", { class: "sidebar" }, [card]);
 }
 
@@ -171,8 +185,8 @@ function contentHead() {
 
   nodes.scope = el("div", { class: "scope" });
 
-  // No Review now button here. The Review screen owns one, wired to its own seam, and
-  // two buttons with one label that do different things is worse than one in one place.
+  // The pickers only. The engine's two actions are on the toolbar above, where they are
+  // on every screen and where a screen's own controls cannot push them around.
   return el("div", { class: "content-head" }, [
     titles,
     el("div", { class: "toolbar" }, [nodes.scope]),
@@ -187,12 +201,15 @@ function fillScope() {
   if (wanted.includes("range")) nodes.scope.appendChild(rangePicker());
 }
 
+/** The window's toolbar: the mark and the name, and the engine's two actions on the right
+ *  with the same words the panel uses. */
 function titlebar() {
   const brand = mark(14);
   brand.classList.add("brand-mark");
   return el("div", { class: "titlebar" }, [
     brand,
     el("span", { class: "name", text: PRODUCT_NAME }),
+    runActions(),
   ]);
 }
 
@@ -210,7 +227,7 @@ function keyboard() {
   listening = true;
   document.addEventListener("keydown", (event) => {
     if (!event.metaKey) return;
-    const index = ["1", "2", "3", "4"].indexOf(event.key);
+    const index = SECTIONS.map((_, at) => String(at + 1)).indexOf(event.key);
     if (index >= 0) {
       event.preventDefault();
       show(SECTIONS[index].key);
@@ -228,6 +245,28 @@ function keyboard() {
       show("review");
     }
   });
+}
+
+/**
+ * The screen follows the engine where a screen says so, and the status row follows the
+ * clock. Once per page, like the keyboard.
+ *
+ * An ingest starting or ending anywhere redraws the screen, because `ingesting` is part of
+ * what a screen is handed and the Overview's summary line says it. A progress line does
+ * not: it changes the toolbar and the status row, which draw themselves, and nothing a
+ * screen shows.
+ */
+let followed = false;
+
+function following() {
+  if (followed) return;
+  followed = true;
+  ACTIVITY.mounts.set("screen", (kind, before) => {
+    if (kind !== "state") return;
+    if ((before.running === "ingest") === ingesting()) return;
+    redraw();
+  });
+  setInterval(tick, CLOCK);
 }
 
 /** Driven by the shell through `window.eval`, and only in a build with the `harness`
@@ -254,7 +293,7 @@ const PRESS_DEADLINE = 30_000;
  * Press one label, then the next.
  *
  * A sequence, not a button, because a control inside a tab takes two presses to reach:
- * the tab, then the control. `PRUDENCE_PRESS="Repositories > Metadata only"` is how a
+ * the tab, then the control. `PRUDENCE_PRESS="Engine > Choose"` is how a
  * screenshot or a check gets at one. Each label waits for its own button, because the one
  * after a press usually does not exist until the press has been answered.
  *
@@ -282,7 +321,7 @@ export const Stress = {
    *
    * Every line goes to the shell's standard error through `measure.js`, which is the only
    * place a timing taken inside the page can be read from outside it. The moves are the
-   * ones the founder makes: the four screens, then the ranges and the projects on the
+   * ones the founder makes: every screen, then the ranges and the projects on the
    * Overview, which are the two controls that redraw a screen without re-reading the
    * store.
    *
@@ -333,11 +372,11 @@ export const Stress = {
   press(label) {
     const wanted = String(label);
     for (const button of document.querySelectorAll("button")) {
-      // Not a button inside a pane that is not open. The five Settings tabs are all built
-      // and shown by a flag, so `Off` exists four times over on a screen showing one of
-      // them: a script asking for the Repositories tab's Off pressed the General tab's,
-      // on a pane nobody could see. A button that is not on screen is not a button a
-      // script may press.
+      // Not a button inside a pane that is not open. The Settings tabs are all built and
+      // shown by a flag, so one label can exist on several panes of a screen showing one
+      // of them: a script asking for one tab's Off once pressed the General tab's, on a
+      // pane nobody could see. A button that is not on screen is not a button a script
+      // may press.
       if (button.closest("[hidden]")) continue;
       if ((button.textContent ?? "").trim() === wanted) {
         button.click();
@@ -375,6 +414,7 @@ export const page = {
 
     fillScope();
     keyboard();
+    following();
     // Only on the first draw. `render` runs again on every store change with the same
     // `info` captured at boot, so this line used to throw the reader back to the section
     // the *previous* launch ended on, every time an ingest landed.

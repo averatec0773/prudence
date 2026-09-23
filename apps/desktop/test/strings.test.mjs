@@ -183,7 +183,7 @@ test("placeholders are the same set in each language, in each language's own ord
    the runtime asks, so it is what the test asks. */
 test("plurals choose a form in English and do not in Chinese", () => {
   const plural = Object.entries(strings.en).filter(([, v]) => typeof v !== "string");
-  assert.equal(plural.length, 7, "seven keys carry a count");
+  assert.equal(plural.length, 8, "eight keys carry a count");
 
   for (const [key, english] of plural) {
     assert.deepEqual(

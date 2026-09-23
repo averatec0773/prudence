@@ -25,6 +25,24 @@ for (const language of Str.LANGUAGES) {
 }
 Str.setLang("en");
 
+/* A compact day is ten characters in both languages, for a column of days read against
+   each other; it lived in `ui/settings.js` as `scanDay` until a second screen wanted it. */
+test("a compact day is the same ten characters in both languages, and a dash for none", () => {
+  for (const language of Str.LANGUAGES) {
+    assert.equal(Fmt.isoDay("2026-05-14T18:02:11.855000+00:00", language), "2026-05-14");
+    assert.equal(Fmt.isoDay("2026-05-14", language), "2026-05-14");
+    for (const nothing of [null, undefined, "", "not a day"]) {
+      assert.equal(Fmt.isoDay(nothing, language), Str.tIn(language, "common.dash"));
+    }
+  }
+});
+
+test("a line count takes the reader's plural", () => {
+  assert.equal(Fmt.lines(1, "en"), "1 line");
+  assert.equal(Fmt.lines(1204, "en"), "1,204 lines");
+  assert.equal(Fmt.lines(1204, "zh-Hans"), "1,204 行");
+});
+
 /* The share and the plain integer are the two values that do not go through the locale,
    because an observation sentence has to equal `app_observation.sentence` character for
    character. The engine writes them with Python's `%` operator, which rounds **half to

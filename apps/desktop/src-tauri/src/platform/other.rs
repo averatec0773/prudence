@@ -33,3 +33,9 @@ pub fn install_uv_command() -> &'static str {
 pub fn describe() -> Vec<(String, String)> {
     vec![("platform".into(), std::env::consts::OS.to_string())]
 }
+
+/// Linux keeps `flock` and `fcntl` locks apart, so the question cannot be asked without
+/// taking the lock. See `platform::lock_held`.
+pub fn lock_held(_lock: &std::path::Path) -> bool {
+    false
+}

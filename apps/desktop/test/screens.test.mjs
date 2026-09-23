@@ -8,8 +8,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import { installDom } from "./dom.mjs";
+
+const app = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 installDom();
 
@@ -44,6 +49,8 @@ test("every screen declares which pickers it reads, and nothing else", () => {
 test("only the Overview reads the range", () => {
   const reads = (key) => screenFor(key).scope;
   assert.deepEqual(reads("overview"), ["project", "range"]);
+  // Its rows are the project picker, and its figures are over all time.
+  assert.deepEqual(reads("repositories"), []);
   assert.deepEqual(reads("review"), ["project"]);
   assert.deepEqual(reads("observations"), ["project"]);
   assert.deepEqual(reads("settings"), []);
@@ -55,13 +62,22 @@ test("an unknown section falls back to the first screen rather than throwing", (
   assert.equal(screenFor(undefined).key, SCREENS[0].key);
 });
 
-/* Cmd-1 to Cmd-4 are the table's order, so the table's order is the sidebar's order and
-   a screen inserted in the middle moves the shortcuts with it. */
-test("the table is the order the sidebar and the keyboard use", () => {
-  assert.deepEqual(
-    SCREENS.map((screen) => screen.key),
-    ["overview", "review", "observations", "settings"]
-  );
+/* Cmd-1 to Cmd-5 are the table's order, so the table's order is the sidebar's order and
+   a screen inserted in the middle moves the shortcuts with it. The shell remembers the
+   section by the same keys, so its own list is the same list. */
+test("the table is the order the sidebar and the keyboard use, and the shell's", () => {
+  const keys = SCREENS.map((screen) => screen.key);
+  assert.deepEqual(keys, ["overview", "repositories", "review", "observations", "settings"]);
+  const shell = readFileSync(join(app, "src-tauri/src/ui_state.rs"), "utf8");
+  const listed = shell.slice(shell.indexOf("pub const SECTIONS"), shell.indexOf("];", shell.indexOf("pub const SECTIONS")));
+  assert.deepEqual([...listed.matchAll(/"([a-z]+)"/g)].map((match) => match[1]), keys);
+});
+
+/* The keyboard follows the table rather than a list of its own: Cmd-5 reached nothing when
+   the digits were written out as four. */
+test("every screen has a digit on the keyboard", () => {
+  const source = readFileSync(join(app, "src/ui/window.js"), "utf8");
+  assert.match(source, /SECTIONS\.map\(\(_, at\) => String\(at \+ 1\)\)/);
 });
 
 test("a screen that gives no subtitle gives none, rather than repeating its own name", () => {

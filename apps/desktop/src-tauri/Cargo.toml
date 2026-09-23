@@ -39,6 +39,9 @@ tauri-plugin-autostart = "2.5.1"
 tauri-plugin-opener = "2.5.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# `fcntl(F_GETLK)`, to see the engine's ingest lock without taking it (`platform::lock_held`).
+# Already in the tree through Tauri; named here because the shell now calls it directly.
+libc = "0.2"
 window-vibrancy = "0.8"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", features = [

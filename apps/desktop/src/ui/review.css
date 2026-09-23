@@ -8,9 +8,9 @@
  * No design token may be declared here. A test asserts it.
  */
 
-/* The screen's own controls: which review, and the one action the page has. They sit
-   above the cards rather than in the window's head row, because the head row belongs to
-   the window shell and a screen may not write in it. */
+/* The screen's own control: which review. It sits above the cards rather than in the
+   window's head row, because the head row belongs to the window shell and a screen may not
+   write in it. */
 .review-head {
   display: flex;
   align-items: center;
@@ -18,8 +18,7 @@
   flex-wrap: wrap;
 }
 
-/* What the action says while the engine wiring is not there yet. Quiet, and only after
-   the button is pressed: an explanation nobody asked for is noise. */
+/* Whether writing a review now would produce anything, above the one that is stored. */
 .screen-note {
   font-size: var(--t-caption);
   color: var(--text-2);

@@ -1,0 +1,133 @@
+/* What the engine is doing: the toolbar's actions, the sidebar's status row, and the
+ * report a run leaves when it needs the reader (`ui/activity.js`).
+ *
+ * The first two are the **control and navigation layer** and sit on the window's own
+ * material; the report is content and is opaque, which is design rule 1.
+ *
+ * **Both reserve their size.** A run replaces two buttons with a bar and then with a line,
+ * and a toolbar or a sidebar that changed size three times per run would move everything
+ * beside it three times per run. So each has one declared box in every state, and what it
+ * holds is fitted into that box rather than the box being fitted to it.
+ *
+ * No design token may be declared here. A test asserts it.
+ */
+
+/* --- the toolbar ---------------------------------------------------------------------- */
+
+/* The width is the widest of the three states: the compact bar with its step and its count
+   in either language ("Parsing sessions 1,204 of 1,380 sessions" is the longest), which is
+   also wide enough for both buttons with the gap between them. Idle, the buttons sit at
+   its right edge, where the primary always is, and the space to their left is the
+   titlebar's own. */
+.run-actions {
+  margin-left: auto;
+  width: 248px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  -webkit-app-region: no-drag;
+}
+
+/* --- the status row ------------------------------------------------------------------- */
+
+/* At the foot of the sidebar card, under the five sections, at the height of the compact
+   bar whatever it holds. Its text lines up with the sections' own labels. */
+.status-row {
+  margin-top: auto;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--s2);
+  min-width: 0;
+}
+
+/* --- what goes in them ---------------------------------------------------------------- */
+
+/* The compact bar: the step and the engine's count on one line and the track under it,
+   with no "step 3 of 11" line, because a toolbar has one line of room. The full form is
+   the panel's. */
+.progress.is-compact {
+  gap: 3px;
+  min-width: 0;
+}
+
+.progress.is-compact .progress-step {
+  display: none;
+}
+
+.progress.is-compact .progress-label,
+.progress.is-compact .progress-count {
+  font-size: var(--t-caption2);
+}
+
+.progress.is-compact .progress-label {
+  color: var(--text-2);
+}
+
+/* The sidebar has room for the step or for the count, not both: the step is what says what
+   is happening, the bar under it already draws the count, and the toolbar prints it. */
+.status-row .progress-count {
+  display: none;
+}
+
+/* One line: how a run ended, or when the store was last written. Cut with an ellipsis
+   rather than wrapped, and the whole sentence is on the element's title. */
+.run-outcome {
+  font-size: var(--t-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.run-actions .run-outcome {
+  text-align: right;
+  width: 100%;
+}
+
+.run-outcome.is-idle {
+  color: var(--text-3);
+}
+
+/* --- the report ------------------------------------------------------------------------
+ *
+ * On the page rather than in a screen, because a run outlives the screen it was started
+ * on. Raised above the content and centred at the foot of the window: it is the answer to
+ * something the reader did, and it waits for them. Opaque, like every piece of content. */
+.run-report {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s5);
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  max-width: min(640px, calc(100% - var(--s8)));
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.run-report[hidden] {
+  display: none;
+}
+
+.run-said {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+/* The first line of a report is what happened; the rest qualifies it. */
+.run-said:first-child {
+  color: var(--text);
+  font-weight: 590;
+}

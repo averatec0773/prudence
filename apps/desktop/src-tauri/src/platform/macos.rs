@@ -1,4 +1,5 @@
-//! macOS: the material, the status item's highlight, and hiding the app.
+//! macOS: the material, the status item's highlight, hiding the app, and who holds the
+//! engine's ingest lock.
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
@@ -321,6 +322,98 @@ pub fn describe() -> Vec<(String, String)> {
             format!("{APPKIT_MACOS_26} (macOS 26.0)"),
         ),
     ]
+}
+
+/// Who holds the engine's ingest lock, asked without taking it.
+///
+/// `F_GETLK` answers with the lock that *would* block the one described, and on macOS that
+/// includes a `flock` lock held by another process: measured on 2026-09-23 against a
+/// Python `fcntl.flock(LOCK_EX)`, which is exactly how the engine takes it, the probe read
+/// `F_WRLCK` while the holder lived and `F_UNLCK` once it had let go. A file that is not
+/// there, or that cannot be asked, is an ingest this probe cannot see, which is the same
+/// answer as none.
+pub fn lock_held(lock: &std::path::Path) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let Ok(file) = std::fs::File::open(lock) else {
+        return false;
+    };
+    let mut probe = libc::flock {
+        l_start: 0,
+        l_len: 0,
+        l_pid: 0,
+        l_type: libc::F_WRLCK as libc::c_short,
+        l_whence: libc::SEEK_SET as libc::c_short,
+    };
+    // SAFETY: `probe` is a valid `flock` for the duration of the call and the descriptor
+    // belongs to `file`, which outlives it.
+    let answered = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETLK, &mut probe) };
+    answered == 0 && probe.l_type != libc::F_UNLCK as libc::c_short
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::lock_held;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("prudence-lock-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("ingest.lock")
+    }
+
+    /// The engine's own way of taking it, from another process, held until its standard
+    /// input closes. Perl is on every Mac and its `flock` is the same call Python's is.
+    #[test]
+    fn a_lock_another_process_holds_is_seen_and_its_release_is_too() {
+        let lock = scratch("held");
+        std::fs::write(&lock, b"").unwrap();
+        let mut holder = Command::new("/usr/bin/perl")
+            .args([
+                "-e",
+                r#"use Fcntl qw(:flock); open(my $f, ">>", $ARGV[0]) or die; flock($f, LOCK_EX|LOCK_NB) or die; $|=1; print "held\n"; <STDIN>;"#,
+            ])
+            .arg(&lock)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("perl runs");
+        let mut said = String::new();
+        BufReader::new(holder.stdout.take().unwrap())
+            .read_line(&mut said)
+            .unwrap();
+        assert_eq!(said.trim(), "held");
+        assert!(lock_held(&lock), "a held lock was not seen");
+
+        drop(holder.stdin.take());
+        holder.wait().unwrap();
+        assert!(!lock_held(&lock), "a released lock still reads as held");
+    }
+
+    /// Asking must not take it: a second process can still take the lock right after.
+    #[test]
+    fn asking_never_takes_the_lock() {
+        let lock = scratch("asked");
+        std::fs::write(&lock, b"").unwrap();
+        assert!(!lock_held(&lock));
+        let taken = Command::new("/usr/bin/perl")
+            .args([
+                "-e",
+                r#"use Fcntl qw(:flock); open(my $f, ">>", $ARGV[0]) or die; flock($f, LOCK_EX|LOCK_NB) or exit 1;"#,
+            ])
+            .arg(&lock)
+            .status()
+            .unwrap();
+        assert!(taken.success(), "the probe left the lock taken");
+    }
+
+    #[test]
+    fn a_lock_file_that_is_not_there_is_no_run() {
+        assert!(!lock_held(
+            &scratch("absent").with_file_name("not-there.lock")
+        ));
+    }
 }
 
 #[cfg(test)]

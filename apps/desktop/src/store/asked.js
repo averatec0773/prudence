@@ -100,9 +100,9 @@ export function memo() {
   };
 }
 
-/* The two the Settings screen asks. They are here rather than in `ui/settings.js` because
-   the page contract lets a screen keep its **navigation** between renders and nothing
-   else, and an answer from the engine is data. */
+/* The two the Settings and Repositories screens ask. They are here rather than in either
+   screen because the page contract lets a screen keep its **navigation** between renders
+   and nothing else, and an answer from the engine is data. */
 
 /** What `prudence config model` prints. */
 export const MODEL_ANSWER = memo();

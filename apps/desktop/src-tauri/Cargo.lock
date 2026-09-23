@@ -2892,6 +2892,7 @@ dependencies = [
 name = "prudence-desktop"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "notify",
  "objc2",
  "objc2-app-kit",

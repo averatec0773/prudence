@@ -151,7 +151,9 @@ function screenFor(rows, project = null, status = { observation_fact_version: 1 
       project,
       range: "30d",
       bucket: null,
+      ingesting: false,
       onBucket() {},
+      onProject() {},
       redraw() {},
     })
   );

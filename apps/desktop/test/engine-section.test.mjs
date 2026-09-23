@@ -1,14 +1,12 @@
-/* The engine block, the activity strip, and the runner between them.
+/* The engine block on the Settings screen's Engine tab, and the wiring.
  *
  * Everything here is driven through a fake port, which is the only way to exercise the
- * states that matter: nothing found, a file found and refused, a review the engine
- * declines, and a run that fails. A machine in each of those states is not something a
- * test can arrange, and a test that only ever sees the happy one would pass on a build
- * where every failure draws a blank area.
+ * states that matter: nothing found, a file found and refused, an install that fails. A
+ * machine in each of those states is not something a test can arrange, and a test that
+ * only ever sees the happy one would pass on a build where every failure draws a blank
+ * area.
  *
- * The last test parses `src-tauri/src/engine.rs` for the words the shell can send as a
- * failure and insists each of them has a sentence. A new failure kind in Rust with no
- * string in the catalogue would otherwise reach the reader as `engine.error.somethingNew`.
+ * Running the engine is the toolbar's now, and its tests are `test/activity.test.mjs`.
  *
  *     pnpm test
  */
@@ -27,10 +25,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, "..");
 
 const Str = await import("../src/text/strings.js");
-const Fmt = await import("../src/text/fmt.js");
 // `any`, deliberately: the tree the block returns is the shim's, and asking it for
 // `find` is the whole point of the shim.
-const { ENGINE, engineSection, engineActivity, run } = /** @type {any} */ (
+const { ENGINE, engineSection } = /** @type {any} */ (
   await import("../src/ui/engine-section.js")
 );
 const { REVIEW_NOW } = /** @type {any} */ (await import("../src/ui/review.js"));
@@ -51,12 +48,11 @@ const settled = () => new Promise(setImmediate);
 /**
  * A shell that answers whatever the test says, and records what it was asked.
  *
- * @param {{ status?: any, run?: any, choose?: any, install?: any }} answers
+ * @param {{ status?: any, choose?: any, install?: any }} answers
  */
 function fakePort(answers = {}) {
   const asked = {
     status: 0,
-    runs: [],
     choose: 0,
     forget: 0,
     installs: [],
@@ -69,13 +65,6 @@ function fakePort(answers = {}) {
       asked.status += 1;
       const answer = answers.status;
       return Promise.resolve(typeof answer === "function" ? answer(asked.status) : answer);
-    },
-    run: (action, force) => {
-      asked.runs.push({ action, force });
-      const answer = answers.run;
-      return typeof answer === "function"
-        ? answer(action, force)
-        : Promise.resolve(answer ?? { action, ok: true });
     },
     choose: () => {
       asked.choose += 1;
@@ -97,14 +86,6 @@ function fakePort(answers = {}) {
       asked.progress = handler;
       return Promise.resolve(() => {
         asked.stopped = true;
-      });
-    },
-    // The same shape for a run's own progress: the handler comes back so a test can send
-    // it the events the shell would send.
-    onProgress: (handler) => {
-      asked.running = handler;
-      return Promise.resolve(() => {
-        asked.stoppedRunning = true;
       });
     },
     link: (name) => {
@@ -273,7 +254,6 @@ test("cancelling the picker changes nothing, and choosing a file asks the shell 
    redrawing the block without a word would leave them looking at what they tried to
    change with nothing said about their choice. */
 test("a file the shell refuses is reported, not swallowed", async () => {
-  const strip = engineActivity();
   const asked = fakePort({
     status: FOUND,
     choose: { path: "/Applications/Calculator.app", errorKind: "notFound" },
@@ -283,179 +263,15 @@ test("a file the shell refuses is reported, not swallowed", async () => {
   block.findAll("button").find((n) => n.textContent === Str.t("common.choose")).fire("click");
   await settled();
 
+  assert.equal(asked.status, 2, "the block is drawn again from the shell's answer");
+  // In the block the reader was changing, in the area under its actions, and in the block
+  // as it was drawn again: a line written into the old one would be seen by nobody.
+  const area = block.find(".engine-install");
+  assert.equal(area.hidden, false, "the refusal is not on the block");
   assert.equal(
-    strip.find(".engine-said").textContent,
+    area.find(".engine-said").textContent,
     Str.t("engine.rejected", Str.t("engine.error.notExecutable"))
   );
-  assert.equal(asked.status, 2, "and the block is drawn again from the shell's answer");
-});
-
-/* --- the runner and the strip -------------------------------------------------------- */
-
-test("a run says it is going, then says what the engine said", async () => {
-  const strip = engineActivity();
-  let release = () => {};
-  fakePort({
-    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true, sessions: 151 }))),
-  });
-
-  const going = run("ingest");
-  assert.equal(strip.hidden, false);
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.ingesting"));
-
-  release();
-  await going;
-  assert.equal(
-    strip.find(".engine-said").textContent,
-    Str.t("engine.ingestFinished.sessions", Fmt.sessions(151))
-  );
-});
-
-/* The strip carries the same bar the panel does, and the engine's own outcome replaces it
-   when the run ends. The component itself is asserted in `test/progress.test.mjs`, against
-   a recorded run; what matters here is that the strip draws one and then stops. */
-test("a run draws its progress on the strip, and the outcome replaces it", async () => {
-  const strip = engineActivity();
-  let release = () => {};
-  const asked = fakePort({
-    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true, sessions: 151 }))),
-  });
-
-  const going = run("ingest");
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.ingesting"));
-
-  asked.running({
-    step: "archive",
-    stepIndex: 2,
-    steps: 11,
-    current: 17,
-    total: 494,
-    unit: "files",
-    label: "Archiving beatos",
-  });
-  const bar = strip.find(".progress");
-  assert.ok(bar, "the strip drew no progress bar");
-  assert.equal(bar.find(".progress-label").textContent, Str.t("engine.step.archive"));
-  assert.equal(bar.find(".progress-fill").style.width, `${(17 / 494) * 100}%`);
-
-  release();
-  await going;
-  assert.equal(strip.find(".progress"), null, "the bar outlived the run");
-  assert.equal(
-    strip.find(".engine-said").textContent,
-    Str.t("engine.ingestFinished.sessions", Fmt.sessions(151))
-  );
-  assert.equal(asked.stoppedRunning, true, "the page went on listening after the run ended");
-});
-
-test("the session count is the engine's own figure, and its absence is not a zero", async () => {
-  const strip = engineActivity();
-  fakePort({ run: Promise.resolve({ action: "ingest", ok: true, sessions: null }) });
-  await run("ingest");
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.ingestFinished"));
-});
-
-test("a written review is reported with the id the engine gave it", async () => {
-  const strip = engineActivity();
-  fakePort({ run: Promise.resolve({ action: "review", ok: true, reviewId: 2 }) });
-  await run("review");
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.reviewWrittenId", "2"));
-});
-
-/* The readiness rule belongs to the engine. The app shows its sentence and offers the one
-   way past it, which is the reader's decision and not the app's. */
-test("a review the engine declines shows its reason and offers to write anyway", async () => {
-  const strip = engineActivity();
-  const reason = "not ready: 2 new sessions since 2026-09-14 (needs 5).";
-  const asked = fakePort({
-    run: (action, force) =>
-      Promise.resolve(
-        force
-          ? { action: "review", ok: true, reviewId: 3 }
-          : { action: "review", ok: false, notReady: true, reason }
-      ),
-  });
-
-  await run("review");
-  const said = strip.findAll(".engine-said").map((node) => node.textContent);
-  assert.equal(said[0], Str.t("review.notReady.title"));
-  assert.equal(said[1], reason, "the engine's own sentence, printed as it came");
-  assert.deepEqual(
-    strip.findAll("button").map((node) => node.textContent),
-    [Str.t("review.writeAnyway"), Str.t("common.cancel")]
-  );
-
-  const write = strip.findAll("button")[0];
-  write.fire("click");
-  await settled();
-  assert.deepEqual(asked.runs, [
-    { action: "review", force: false },
-    { action: "review", force: true },
-  ]);
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.reviewWrittenId", "3"));
-});
-
-test("a review with no reason still says the engine declined", async () => {
-  const strip = engineActivity();
-  fakePort({ run: Promise.resolve({ action: "review", notReady: true, reason: null }) });
-  await run("review");
-  const said = strip.findAll(".engine-said").map((node) => node.textContent);
-  assert.deepEqual(said, [Str.t("review.notReady.title"), Str.t("menu.reviewNotReady")]);
-});
-
-test("a run that fails says so with the reason, and never silently does nothing", async () => {
-  const strip = engineActivity();
-  fakePort({
-    run: Promise.resolve({
-      action: "ingest",
-      ok: false,
-      errorKind: "failed",
-      error: "No repository is enabled. Run `prudence init`.",
-    }),
-  });
-  await run("ingest");
-  const said = strip.findAll(".engine-said").map((node) => node.textContent);
-  assert.equal(said[0], Str.t("engine.failed.title"));
-  assert.equal(said[1], Str.t("engine.error.failed"));
-  assert.equal(said[2], "No repository is enabled. Run `prudence init`.");
-  assert.equal(strip.hidden, false);
-});
-
-/* The case a swallowed rejection turns into a strip that reads "Ingesting..." for ever. */
-test("a shell that does not answer at all is reported too", async () => {
-  const strip = engineActivity();
-  fakePort({ run: Promise.reject(new Error("the shell went away")) });
-  await run("ingest");
-  const said = strip.findAll(".engine-said").map((node) => node.textContent);
-  assert.equal(said[0], Str.t("engine.failed.title"));
-  assert.equal(said[1], "the shell went away");
-});
-
-test("a second run while one is going is refused rather than started", async () => {
-  const strip = engineActivity();
-  let release = () => {};
-  const asked = fakePort({
-    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true }))),
-  });
-
-  const going = run("ingest");
-  await run("review");
-
-  // Both lines. The refusal used to *replace* the strip, so it wiped the only thing on
-  // screen saying a run was going, and dismissing it left nothing about the run at all.
-  const said = strip.findAll(".engine-said").map((node) => node.textContent);
-  assert.deepEqual(said, [Str.t("menu.ingesting"), Str.t("engine.busy")]);
-  assert.deepEqual(asked.runs, [{ action: "ingest", force: false }]);
-
-  release();
-  await going;
-});
-
-test("with no shell at all the strip says the engine is not there", async () => {
-  const strip = engineActivity();
-  ENGINE.port = null;
-  await run("review");
-  assert.equal(strip.find(".engine-said").textContent, Str.t("menu.engineMissing"));
 });
 
 /* --- the install button ---------------------------------------------------------------
@@ -561,61 +377,42 @@ test("uv missing altogether says so, and still gives the way out", async () => {
 
 /* --- the wiring ---------------------------------------------------------------------- */
 
-test("the wiring fills in both ports, the Review seam, and puts the strip on the page", async () => {
+test("the wiring fills in every port, the Review seam, and puts the run report on the page", async () => {
   const { SETTINGS } = /** @type {any} */ (await import("../src/ui/settings.js"));
+  const { REPOSITORIES } = /** @type {any} */ (await import("../src/ui/repositories.js"));
+  const { ACTIVITY } = /** @type {any} */ (await import("../src/ui/activity.js"));
   const before = document.body.children.length;
   try {
     wireWindow();
-    assert.equal(typeof REVIEW_NOW.run, "function", "the Review now button is live");
-    // Both ports, because `wiring.js` is the only file under `src/ui/` that may call the
+    assert.equal(typeof REVIEW_NOW.readiness, "function", "the readiness line has no engine behind it");
+    // Every port, because `wiring.js` is the only file under `src/ui/` that may call the
     // bridge and a port left null is a screen full of controls that do nothing.
     assert.ok(ENGINE.port, "the engine block has no shell behind it");
     assert.ok(SETTINGS.port, "the settings tabs have no shell behind them");
     for (const name of ["read", "language", "appearance", "openAtLogin", "timedIngest", "model", "modelLanguage", "link"]) {
       assert.equal(typeof SETTINGS.port[name], "function", `the settings port has no ${name}`);
     }
-    for (const name of ["status", "run", "choose", "forget", "install", "onInstallProgress", "link"]) {
+    for (const name of ["status", "choose", "forget", "install", "onInstallProgress", "link"]) {
       assert.equal(typeof ENGINE.port[name], "function", `the engine port has no ${name}`);
     }
+    for (const name of ["scan", "level"]) {
+      assert.equal(typeof REPOSITORIES.port[name], "function", `the repositories port has no ${name}`);
+    }
+    for (const name of ["read", "onActivity", "onProgress", "run"]) {
+      assert.equal(typeof ACTIVITY.port[name], "function", `the toolbar's port has no ${name}`);
+    }
     assert.equal(document.body.children.length, before + 1);
-    assert.equal(document.body.children[before].className, "engine-activity");
+    assert.equal(document.body.children[before].className, "run-report");
   } finally {
-    REVIEW_NOW.run = null;
+    REVIEW_NOW.readiness = null;
     ENGINE.port = null;
     SETTINGS.port = null;
+    REPOSITORIES.port = null;
+    ACTIVITY.port = null;
   }
 });
 
 /* --- the strings --------------------------------------------------------------------- */
-
-/** Every word `EngineError::kind` can send, read out of the Rust rather than listed here:
- *  a new failure kind with no sentence would otherwise reach the reader as a key. */
-function failureKinds() {
-  const source = readFileSync(join(app, "src-tauri/src/engine.rs"), "utf8");
-  const start = source.indexOf("pub fn kind(&self) -> &'static str {");
-  assert.ok(start > 0, "engine.rs no longer has EngineError::kind");
-  const body = source.slice(start, source.indexOf("\n    }\n", start));
-  return [...body.matchAll(/=>\s*"([A-Za-z]+)"/g)].map((match) => match[1]);
-}
-
-test("every failure the shell can report has a sentence in both languages", () => {
-  // The two kinds that do not follow `engine.error.<kind>`, each because the word means
-  // two things: "not found" is either nothing anywhere or a file that cannot be run, and
-  // "busy" is about this app rather than about the engine.
-  const otherwise = {
-    notFound: ["menu.engineMissing", "engine.error.notExecutable"],
-    busy: ["engine.busy"],
-  };
-  const kinds = failureKinds();
-  assert.ok(kinds.length >= 4, `only found ${kinds.length} failure kinds in engine.rs`);
-  for (const kind of kinds) {
-    for (const key of otherwise[kind] ?? [`engine.error.${kind}`]) {
-      for (const language of Str.LANGUAGES) {
-        assert.notEqual(Str.tIn(language, key), key, `${language} has no ${key} (kind ${kind})`);
-      }
-    }
-  }
-});
 
 test("every key this block asks for is in both tables", () => {
   const source = readFileSync(join(app, "src/ui/engine-section.js"), "utf8");
@@ -643,83 +440,35 @@ test("the block draws in Chinese without falling back to a key", async () => {
   }
 });
 
-/* Every failure kind the shell can send reaches a sentence, not an identifier.
- *
- * The previous version of this listed the keys it expected and asserted those exist in
- * the catalogue. It never asked what key the code builds, so it passed while a run that
- * failed with `notFound` printed the literal string "engine.error.notFound" on screen:
- * there is no such key. This drives the real path for every kind, in both languages, and
- * fails on anything that looks like a key rather than a sentence. */
-test("every failure the shell can send is a sentence on screen, never a key", async () => {
-  // Read out of the Rust, not typed here: a list I wrote from memory included `read`,
-  // which the shell cannot send, so the test demanded a sentence for a kind that does not
-  // exist. A new kind in `EngineError::kind()` with no sentence now fails this.
-  const source = readFileSync(join(app, "src-tauri/src/engine.rs"), "utf8");
-  const kinds = [...source.matchAll(/Self::\w+(?:\([^)]*\)|\s*\{[^}]*\})?\s*=>\s*"(\w+)"/g)].map(
-    (m) => m[1]
-  );
-  assert.ok(kinds.length >= 5, `only found ${kinds.length} failure kinds in engine.rs`);
-  // Plus the one `refusal` uses, which is a sentence rather than a kind.
-  kinds.push("notExecutable");
-  for (const language of Str.LANGUAGES) {
-    Str.setLang(language);
-    for (const kind of [...kinds, "somethingFromAFutureBuild"]) {
-      const strip = engineActivity();
-      fakePort({ run: () => Promise.resolve({ action: "ingest", errorKind: kind }) });
-      await run("ingest");
-
-      const said = strip.findAll(".engine-said").map((node) => node.textContent);
-      assert.ok(said.length > 0, `${language} ${kind}: the strip said nothing`);
-      for (const text of said) {
-        assert.doesNotMatch(
-          text,
-          /^[a-z]+(\.[a-zA-Z]+)+$/,
-          `${language} ${kind}: an unresolved key reached the screen: ${text}`
-        );
-      }
-    }
-  }
-  Str.setLang("en");
-});
-
-/* The buttons. `if (running) button.disabled = true` was evaluated once, at build time,
- * so the tree that started a run disabled nothing, and a tree built during a run stayed
- * disabled for ever because nothing redrew the block when the run ended. */
-test("a run disables the actions it starts, and finishing brings them back", async () => {
-  engineActivity();
-  let release = () => {};
-  fakePort({
-    status: FOUND,
-    run: () => new Promise((resolve) => (release = () => resolve({ action: "ingest", ok: true }))),
-  });
-
+/* Replacing the executable under an ingest that is using it is not something to offer,
+ * wherever the ingest was started. Install and Update follow the shell's own answer about
+ * what is running; Choose, Clear and Try again start nothing and stay. */
+test("a run going anywhere disables Update, and its end brings it back", async () => {
+  const { ACTIVITY, take } = /** @type {any} */ (await import("../src/ui/activity.js"));
+  fakePort({ status: FOUND });
   const block = /** @type {any} */ (engineSection(state("0.4.0")));
   await settled();
   const labels = () =>
     block.findAll("button").map((node) => [node.textContent, Boolean(node.disabled)]);
 
-  assert.deepEqual(
-    labels().filter(([, off]) => off),
-    [],
-    "something was disabled before any run started"
-  );
+  assert.deepEqual(labels().filter(([, off]) => off), [], "something was disabled before any run");
 
-  const going = run("ingest");
-  const during = labels();
-  assert.ok(
-    during.some(([label, off]) => label === Str.t("menu.ingestNow") && off),
-    `Ingest now was not disabled during a run: ${JSON.stringify(during)}`
-  );
-  assert.ok(
-    during.some(([label, off]) => label === Str.t("common.choose") && !off),
-    "Choose was disabled, though it starts no run and is the way out"
-  );
+  try {
+    take({ running: "ingest", outside: true });
+    const during = labels();
+    assert.ok(
+      during.some(([label, off]) => label === Str.t("engine.install.update") && off),
+      `Update was not disabled during a run: ${JSON.stringify(during)}`
+    );
+    assert.ok(
+      during.some(([label, off]) => label === Str.t("common.choose") && !off),
+      "Choose was disabled, though it starts no run and is the way out"
+    );
 
-  release();
-  await going;
-  assert.deepEqual(
-    labels().filter(([, off]) => off),
-    [],
-    "the actions never came back after the run ended"
-  );
+    take({ running: null, outside: false });
+    assert.deepEqual(labels().filter(([, off]) => off), [], "Update never came back after the run");
+  } finally {
+    ACTIVITY.now = { running: null, outside: false, progress: null, outcome: null };
+    ACTIVITY.mounts.clear();
+  }
 });

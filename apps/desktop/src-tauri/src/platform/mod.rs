@@ -115,3 +115,16 @@ pub fn install_uv_command() -> &'static str {
 pub fn describe() -> Vec<(String, String)> {
     imp::describe()
 }
+
+/// Whether another process holds the engine's ingest lock, **without taking it**.
+///
+/// The engine takes `ingest.lock` with `flock` for as long as an ingest runs. Taking it
+/// here, even for a moment, would be a window in which an ingest started in a terminal is
+/// refused as "already running", so the question is asked in a form that cannot acquire:
+/// on macOS `fcntl(F_GETLK)` reports a `flock` lock held by another process, which is a
+/// property of the BSD lock manager and not of POSIX (Linux keeps the two apart). Where
+/// the platform has no such question the answer is false, and a run started outside the
+/// app is then seen only through the store it writes.
+pub fn lock_held(lock: &std::path::Path) -> bool {
+    imp::lock_held(lock)
+}

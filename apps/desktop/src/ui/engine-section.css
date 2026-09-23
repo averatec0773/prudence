@@ -1,4 +1,4 @@
-/* Rules only the engine block and its activity strip need.
+/* Rules only the engine block on the Settings screen's Engine tab needs.
  *
  * Shared pieces (card, empty state, buttons) live in `design/components.css` and
  * `app.css`. Put a rule here only when this block is the only thing that wants it; if a
@@ -57,9 +57,8 @@
 
 /* What uv is doing, and what it did.
  *
- * Under the actions rather than on the activity strip: an install is a thing a reader
- * watches, and the strip is a one-line report that can be dismissed. Opaque, like every
- * other piece of content. */
+ * Under the actions rather than in the toolbar's one line: an install is a thing a reader
+ * watches. Opaque, like every other piece of content. */
 .engine-install {
   display: flex;
   flex-direction: column;
@@ -101,48 +100,10 @@
   gap: var(--s2);
 }
 
-/* The activity strip.
- *
- * It sits on the page rather than in a screen, because a run outlives the screen it was
- * started on. Raised above the content and centred at the foot: it is a report of
- * something in progress, not part of what is being read, and the four rules put the
- * frost on the control layer only, so this is opaque. */
-.engine-activity {
-  position: fixed;
-  left: 50%;
-  bottom: var(--s5);
-  transform: translateX(-50%);
-  z-index: 40;
-  display: flex;
-  align-items: baseline;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  max-width: min(640px, calc(100% - var(--s8)));
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  box-shadow: var(--shadow-popover);
-}
-
-.engine-activity[hidden] {
-  display: none;
-}
-
-/* The progress bar takes the strip's whole width, and holds it open: a bar is read by its
-   length, and one sized to the two words above it would be shorter than the label. */
-.engine-activity .progress {
-  flex: 1 1 100%;
-  min-width: min(420px, 100%);
-}
-
+/* One line of what the area under the actions has to say: uv running, uv done, a chosen
+   file the shell refused. */
 .engine-said {
   font-size: var(--t-footnote);
   color: var(--text-2);
   line-height: 1.45;
-}
-
-/* The first line of a report is what happened; the rest qualifies it. */
-.engine-said:first-child {
-  color: var(--text);
-  font-weight: 590;
 }

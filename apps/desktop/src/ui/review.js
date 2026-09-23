@@ -51,23 +51,19 @@ import { t } from "../text/strings.js";
 const POOLED = "*";
 
 /**
- * What the Review now button does, and what the engine says about pressing it.
+ * What the engine says about pressing Review now: whether writing one now would produce
+ * anything, said above the review that is stored.
  *
- * Running the engine is the CLI wiring's job, not a screen's: a screen is handed
- * everything and reaches for nothing, and `bridge.js` is the only place in the frontend
- * a Tauri call may live. The button is real now; until `run` is set it says where the
- * action is rather than pretending to have started one. The wiring sets `run` to a
- * function that starts the run, and the store watcher already redraws every page when a
- * review lands.
+ * The button itself is on the window's toolbar, on every screen (`ui/activity.js`); this
+ * screen had its own until then, and two buttons with one label on one screen is one too
+ * many. Asking the engine is the wiring's job, not a screen's, so this is a seam
+ * `ui/wiring.js` fills in. **When** it is asked is `store/readiness.js`'s decision: the
+ * answer follows an ingest, and asking on every draw closes a loop with the store watcher
+ * that the file describes in full.
  *
- * `readiness` is the same seam for the line above the review: whether writing one now
- * would produce anything. **When** it is asked is `store/readiness.js`'s decision, not
- * this screen's: the answer follows an ingest, and asking on every draw closes a loop with
- * the store watcher that the file describes in full.
- *
- * @type {{ run: null | (() => void), readiness: null | (() => Promise<any>) }}
+ * @type {{ readiness: null | (() => Promise<any>) }}
  */
-export const REVIEW_NOW = { run: null, readiness: null };
+export const REVIEW_NOW = { readiness: null };
 
 
 /** A section that found nothing says so in the engine's own sentence, and no more. */
@@ -550,19 +546,6 @@ export function review(state) {
   // back would hide the record rather than filter it.
   const stored = reviewsFor(data, { project });
 
-  const note = el("div", { class: "screen-note" });
-  note.hidden = true;
-  const button = el("button", { class: "btn primary", type: "button", text: t("menu.reviewNow") });
-  button.addEventListener("click", () => {
-    if (REVIEW_NOW.run) {
-      REVIEW_NOW.run();
-      return;
-    }
-    note.textContent = t("review.notWired");
-    note.hidden = false;
-  });
-
-  const head = el("div", { class: "review-head" });
   const body = el("div", { class: "stack" });
 
   // Which review is shown is this screen's own business and lives in the tree it is
@@ -588,11 +571,8 @@ export function review(state) {
     }
     select.value = String(stored[0].id);
     select.addEventListener("change", () => draw(select.value));
-    head.appendChild(select);
+    screen.appendChild(el("div", { class: "review-head" }, [select]));
   }
-  head.appendChild(button);
-  screen.appendChild(head);
-  screen.appendChild(note);
 
   /* Whether writing one now would produce anything, above the one that is stored.
      Hidden until the engine answers: it is a subprocess, and an empty line reserving

@@ -77,7 +77,7 @@ function mondayOf(day) {
   ).padStart(2, "0")}`;
 }
 
-function overviewFor(range, now, { days = [1], weeks = 0, guessed = 0 } = {}) {
+function overviewFor(range, now, { days = [1], weeks = 0, guessed = 0, ingesting = false } = {}) {
   const outcomeRows = [];
   for (let week = 0; week < weeks; week += 1) {
     outcomeRows.push([
@@ -113,9 +113,29 @@ function overviewFor(range, now, { days = [1], weeks = 0, guessed = 0 } = {}) {
     projects: [{ key: "root:p", name: "p" }],
   });
   return /** @type {any} */ (
-    overview(/** @type {any} */ ({ data, project: null, range, bucket: null, onBucket() {} }))
+    overview(/** @type {any} */ ({ data, project: null, range, bucket: null, ingesting, onBucket() {} }))
   );
 }
+
+/**
+ * An ingest going anywhere is about to move every figure in the summary line, and the line
+ * says so, in each language's own order, and says nothing of the kind when none is.
+ */
+test("the summary line says an ingest is under way, and only while one is", () => {
+  const now = new Date();
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      const quiet = overviewFor("30d", now).find(".screen-summary").textContent;
+      const busy = overviewFor("30d", now, { ingesting: true }).find(".screen-summary").textContent;
+      assert.equal(busy, Str.t("overview.summary.ingesting", quiet), `${language}: ${busy}`);
+      assert.notEqual(quiet, busy);
+      assert.ok(busy.startsWith(quiet), `${language}: the figures' own sentence is not first`);
+    } finally {
+      Str.setLang("en");
+    }
+  }
+});
 
 /**
  * A chart drawn per day must not be described per week.
@@ -381,7 +401,9 @@ function observationsFor(rows) {
       project: null,
       range: "30d",
       bucket: null,
+      ingesting: false,
       onBucket() {},
+      onProject() {},
       redraw() {},
     })
   );

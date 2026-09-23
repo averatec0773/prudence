@@ -84,10 +84,17 @@ export function engineStatus() {
   return core().invoke("engine_status");
 }
 
-/** Run `ingest` or `review`. The promise settles when the engine exits, which is how the
- *  page knows a run is still going; `force` is the review's `--force`. */
+/** Run `ingest` or `review`. The promise settles when the engine exits with the engine's
+ *  answer; `force` is the review's `--force`. Whether a run is going is not this promise
+ *  but `engineActivity`, because a run can start somewhere this page did not press. */
 export function runEngine(action, force) {
   return core().invoke("engine_run", { action: String(action), force: Boolean(force) });
+}
+
+/** What the engine is doing now, whoever started it, with the last progress line and how
+ *  the last run the app started ended. `src-tauri/src/activity.rs` keeps it. */
+export function engineActivity() {
+  return core().invoke("engine_activity");
 }
 
 /** The user picks the executable. The shell opens the picker, verifies what came back
@@ -222,6 +229,23 @@ export function onEngineProgress(handler) {
   const tauri = /** @type {any} */ (globalThis).__TAURI__;
   if (!tauri?.event) return Promise.resolve(() => {});
   return tauri.event.listen("engine-progress", (event) => {
+    const payload = /** @type {any} */ (event)?.payload;
+    if (payload) handler(payload);
+  });
+}
+
+/**
+ * A run started or ended, from the toolbar, the panel, the timer or a terminal. It carries
+ * the whole answer `engineActivity` gives, for the same reason the progress event carries
+ * its line: the window's toolbar and status row draw straight from it.
+ *
+ * @param {(activity: any) => void} handler
+ * @returns {Promise<() => void>}
+ */
+export function onEngineActivity(handler) {
+  const tauri = /** @type {any} */ (globalThis).__TAURI__;
+  if (!tauri?.event) return Promise.resolve(() => {});
+  return tauri.event.listen("engine-activity", (event) => {
     const payload = /** @type {any} */ (event)?.payload;
     if (payload) handler(payload);
   });

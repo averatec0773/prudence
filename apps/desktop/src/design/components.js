@@ -91,9 +91,11 @@ export function panel({ title, note, body, extra, method }) {
 
 /* --- what a run is doing ---------------------------------------------------------------
  *
- * One component, drawn on the panel and on the Engine tab: the same run can be started
- * from either, and two bars would be two things to keep in step. It is fluid, so the tab's
- * strip gets a wide one and the panel gets a narrow one with no second rule anywhere.
+ * One component, drawn on the panel, in the window's toolbar and status row, and in the
+ * Repositories screen's batch bar: the same run can be watched from any of them, and two
+ * bars would be two things to keep in step. It is fluid, so each place gets the width it
+ * has with no second rule anywhere, and `is-compact` drops the step line where a place has
+ * one line of room.
  *
  * **Determinate per step, and never smoother than the engine is.** The engine walks eleven
  * steps and counts within each one; the bar fills for the step it is on and starts again
@@ -171,6 +173,47 @@ export function runProgress(progress) {
     );
   }
   return node;
+}
+
+/**
+ * One row of choices, one of them ticked.
+ *
+ * The Settings screen's General and Model tabs set the app's own settings with it, and
+ * the Repositories screen puts one in a table cell for each repository's level. Whatever
+ * holds it, the ticked choice is the one the shell answered with.
+ *
+ * `disabled` is for a control whose answer is still on its way: a second click before the
+ * first one has landed is how a control ends up disagreeing with what it controls.
+ *
+ * A choice may carry a `title`: the Repositories table shows "Meta" where the General tab
+ * would have room for "Metadata only", and a label shortened to fit a column still has to
+ * say what it means to a pointer and to a screen reader.
+ *
+ * @param {{ label: string, choices: {value: any, label: string, title?: string}[], chosen: any,
+ *           onChoose: (value: any) => void, disabled?: boolean }} options
+ * @returns {HTMLElement}
+ */
+export function segmented({ label, choices, chosen, onChoose, disabled }) {
+  const group = el("div", { class: "segmented", role: "radiogroup", "aria-label": label });
+  for (const choice of choices) {
+    const button = el("button", { type: "button", role: "radio", text: choice.label });
+    button.setAttribute("aria-checked", String(choice.value === chosen));
+    if (choice.title) {
+      button.setAttribute("title", choice.title);
+      button.setAttribute("aria-label", choice.title);
+    }
+    if (disabled) /** @type {any} */ (button).disabled = true;
+    button.addEventListener("click", () => onChoose(choice.value));
+    group.appendChild(button);
+  }
+  return group;
+}
+
+/** A sub-heading inside a card, for a block with its own caption and its own note: the
+ *  fact versions on the Engine tab, the platform on About, and the two groups of the
+ *  Repositories screen. */
+export function subhead(title, note) {
+  return el("div", { class: "subhead" }, [el("h3", { text: title }), el("p", { text: note })]);
 }
 
 /** Nothing to show, and why. Never a blank area: an empty screen is a question. */

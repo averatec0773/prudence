@@ -195,10 +195,21 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
         let _ = crate::store::readable(&database);
         let mut last = fingerprint(&database);
 
+        // A run this app did not start, seen by the engine's own lock (`activity.rs`). The
+        // store moving is when to look; once a run from outside has been seen, its end
+        // makes no file event, so it is looked at again every `LOCK_POLL` until it is gone.
+        let lock = crate::activity::lock_file(&database);
+        let mut outside = crate::activity::observe_lock(&app, &lock);
+
         loop {
-            let timeout = due
+            let wait = due
                 .map(|at| at.saturating_duration_since(Instant::now()))
                 .unwrap_or(Duration::from_secs(3600));
+            let timeout = if outside {
+                wait.min(crate::activity::LOCK_POLL)
+            } else {
+                wait
+            };
 
             match rx.recv_timeout(timeout) {
                 Ok(Ok(event)) => {
@@ -207,10 +218,20 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                     if concerns_the_store(&event.paths, name.to_str().unwrap_or("")) {
                         debounce.touched();
                         due = Some(Instant::now() + QUIET);
+                        outside = crate::activity::observe_lock(&app, &lock);
                     }
                 }
                 Ok(Err(error)) => eprintln!("[watch] {error}"),
                 Err(RecvTimeoutError::Timeout) => {
+                    if outside {
+                        outside = crate::activity::observe_lock(&app, &lock);
+                    }
+                    // The wait may have been cut short for the lock rather than ended by
+                    // the quiet period, and a quiet period read early is a read of a store
+                    // still being written.
+                    if due.is_some_and(|at| Instant::now() < at) {
+                        continue;
+                    }
                     due = None;
                     if !debounce.pending() {
                         continue;

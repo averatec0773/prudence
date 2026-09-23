@@ -11,13 +11,17 @@
     <!-- One per screen, in the sidebar's order. A screen owns its own file and nothing
          else writes in it, which is what lets several be built at the same time. -->
     <link rel="stylesheet" href="ui/overview.css" />
+    <link rel="stylesheet" href="ui/repositories.css" />
     <link rel="stylesheet" href="ui/review.css" />
     <link rel="stylesheet" href="ui/observations.css" />
     <link rel="stylesheet" href="ui/settings.css" />
-    <!-- The engine block and its activity strip. Its own file because the Settings
-         screen places the block and the CLI wiring fills it in, and neither edits the
-         other's stylesheet. -->
+    <!-- The engine block on the Engine tab. Its own file because the Settings screen
+         places the block and the CLI wiring fills it in, and neither edits the other's
+         stylesheet. -->
     <link rel="stylesheet" href="ui/engine-section.css" />
+    <!-- The toolbar's actions, the sidebar's status row and the run report: the window's
+         own pieces that follow the engine, whichever screen is open. -->
+    <link rel="stylesheet" href="ui/activity.css" />
   </head>
   <body class="is-window">
     <div id="root"></div>
@@ -25,9 +29,9 @@
       import { boot } from "./boot.js";
       import { page } from "./ui/window.js";
       import { wireWindow } from "./ui/wiring.js";
-      // The window is the only page with the engine's actions and the settings controls
-      // on it, so the wiring is here and not in `boot.js`, which both pages share. Before
-      // `boot`, so the first Settings draw already has it.
+      // The window is the only page with the toolbar, the repositories and the settings
+      // controls on it, so the wiring is here and not in `boot.js`, which both pages
+      // share. Before `boot`, so the first draw already has it.
       wireWindow();
       boot(page);
     </script>

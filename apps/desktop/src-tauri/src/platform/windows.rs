@@ -85,3 +85,9 @@ pub fn install_uv_command() -> &'static str {
 pub fn describe() -> Vec<(String, String)> {
     vec![("platform".into(), "windows".into())]
 }
+
+/// The engine's lock is `fcntl.flock`, which Windows does not have. See
+/// `platform::lock_held`.
+pub fn lock_held(_lock: &std::path::Path) -> bool {
+    false
+}

@@ -116,13 +116,14 @@ test("every event the shell emits is an event the bridge listens for", () => {
   const listened = [...bridgeSource.matchAll(/event\.listen\(\s*"([^"]+)"/g)].map((m) => m[1]);
 
   // One row per event: where it is declared, what the constant is called, and where the
-  // shell emits it. Four events now, and each one is a string on both sides with nothing
+  // shell emits it. Five events now, and each one is a string on both sides with nothing
   // but this to catch a rename.
   const events = [
     ["watcher.rs", watcherSource, "STORE_CHANGED", watcherSource],
     ["lib.rs", shellSource, "SETTINGS_CHANGED", shellSource],
     ["installer.rs", installerSource, "INSTALL_PROGRESS", shellSource],
     ["lib.rs", shellSource, "ENGINE_PROGRESS", shellSource],
+    ["lib.rs", shellSource, "ENGINE_ACTIVITY", shellSource],
   ];
 
   for (const [file, declared, name, emitter] of events) {

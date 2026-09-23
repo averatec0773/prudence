@@ -14,8 +14,15 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-/// The four sections the window has. A stored value outside this list is dropped.
-pub const SECTIONS: &[&str] = &["overview", "review", "observations", "settings"];
+/// The five sections the window has, in the sidebar's order. A stored value outside this
+/// list is dropped.
+pub const SECTIONS: &[&str] = &[
+    "overview",
+    "repositories",
+    "review",
+    "observations",
+    "settings",
+];
 
 /// What the General tab may set the interface's language to. `system` is not a language:
 /// it means the page keeps following the machine's own.

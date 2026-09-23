@@ -784,7 +784,7 @@ impl Action {
 }
 
 /// What a run did, for the interface. Every figure in it is one the engine printed.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOutcome {
     pub action: String,
@@ -1002,14 +1002,18 @@ impl Engine {
     /// Run one action. Blocks until the engine is done, which is minutes for an ingest,
     /// so this is only ever called from an async command.
     ///
-    /// `report` is told about every progress line while the run is going. A review writes
-    /// none, and a caller with nothing to report to passes a closure that does nothing;
-    /// neither changes what is run.
+    /// `started` is called once this run holds the one-run-at-a-time flag, and never for
+    /// a run refused as busy: whoever keeps a record of what is running must not have the
+    /// running one's record overwritten by a click that was turned away. `report` is told
+    /// about every progress line while the run is going. A review writes none, and a caller
+    /// with nothing to report to passes a closure that does nothing; neither changes what
+    /// is run.
     pub fn run(
         &self,
         remembered: Option<&str>,
         action: Action,
         force: bool,
+        started: &dyn Fn(),
         report: &Reporter,
     ) -> RunOutcome {
         if self
@@ -1020,6 +1024,7 @@ impl Engine {
             return RunOutcome::failed(action, &EngineError::Busy);
         }
         let _guard = RunGuard(&self.running);
+        started();
 
         let Some(found) = self.locator.locate(remembered, SHELL_TIMEOUT) else {
             return RunOutcome::failed(action, &EngineError::NotFound);
@@ -1814,6 +1819,63 @@ mod tests {
         assert!(answer.stdout.len() > 1024, "nothing was kept at all");
     }
 
+    /// A click turned away because a run is already going must not be told it started:
+    /// `activity.rs` records what is running from this call, and a refused run that called
+    /// it would overwrite the running one's record with its own action.
+    #[test]
+    fn a_run_refused_as_busy_is_never_told_it_started() {
+        let engine = Engine {
+            locator: Locator::new(
+                Box::new(RealFiles),
+                Box::new(NoShell),
+                HashMap::new(),
+                scratch("busy"),
+            ),
+            running: AtomicBool::new(true),
+        };
+        let told = AtomicBool::new(false);
+        let outcome = engine.run(
+            None,
+            Action::Review,
+            false,
+            &|| told.store(true, Ordering::SeqCst),
+            &|_| {},
+        );
+        assert_eq!(outcome.error_kind.as_deref(), Some("busy"));
+        assert!(
+            !told.load(Ordering::SeqCst),
+            "a busy run was told it started"
+        );
+    }
+
+    /// A run that takes the flag is told so before anything else happens, even one that
+    /// then finds no engine: whoever was told it started is always told how it ended.
+    #[test]
+    fn a_run_that_takes_the_flag_is_told_it_started() {
+        let engine = Engine {
+            locator: Locator::new(
+                Box::new(RealFiles),
+                Box::new(NoShell),
+                HashMap::new(),
+                scratch("started"),
+            ),
+            running: AtomicBool::new(false),
+        };
+        let told = AtomicBool::new(false);
+        let outcome = engine.run(
+            Some("/nonexistent/prudence"),
+            Action::Ingest,
+            false,
+            &|| told.store(true, Ordering::SeqCst),
+            &|_| {},
+        );
+        assert!(
+            told.load(Ordering::SeqCst),
+            "a run that took the flag was not told"
+        );
+        assert!(!outcome.ok);
+    }
+
     /// The run path verifies, not only the status path.
     ///
     /// `locate` gates on the exec bit alone. A remembered path that is executable and is
@@ -1849,6 +1911,7 @@ mod tests {
             Some(&executable.display().to_string()),
             Action::Ingest,
             false,
+            &|| {},
             &|_| {},
         );
 
