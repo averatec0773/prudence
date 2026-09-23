@@ -77,7 +77,7 @@ function mondayOf(day) {
   ).padStart(2, "0")}`;
 }
 
-function overviewFor(range, now, { days = [1], weeks = 0 } = {}) {
+function overviewFor(range, now, { days = [1], weeks = 0, guessed = 0 } = {}) {
   const outcomeRows = [];
   for (let week = 0; week < weeks; week += 1) {
     outcomeRows.push([
@@ -92,17 +92,15 @@ function overviewFor(range, now, { days = [1], weeks = 0 } = {}) {
   }
   const data = readPayload({
     usage: {
-      columns: ["day", "project", "repo_key", "purpose", "total_tokens", "active_minutes", "measured_sessions", "sessions"],
-      rows: days.map((offset) => [
-        dayBefore(now, offset),
-        "p",
-        "root:p",
-        "development",
-        1000,
-        60,
-        1,
-        1,
+      columns: ["day", "project", "repo_key", "bucket", "total_tokens", "heuristic_tokens", "sessions"],
+      rows: days.flatMap((offset) => [
+        [dayBefore(now, offset), "p", "root:p", "change", 600, guessed, 1],
+        [dayBefore(now, offset), "p", "root:p", "talk", 400, 0, 1],
       ]),
+    },
+    activity: {
+      columns: ["day", "project", "repo_key", "active_minutes", "sessions", "measured_sessions"],
+      rows: days.map((offset) => [dayBefore(now, offset), "p", "root:p", 60, 1, 1]),
     },
     commits: { columns: ["day", "project", "commits", "commits_fact", "commits_inferred"], rows: [] },
     sessions: [],
@@ -131,7 +129,7 @@ test("a daily tokens chart is described in days, and a weekly one in weeks", () 
   const now = new Date(2026, 8, 21, 12, 0, 0);
 
   const daily = words(overviewFor("30d", now));
-  const dailyTitle = daily.findIndex((line) => line === "Tokens by purpose, per day");
+  const dailyTitle = daily.findIndex((line) => line === "Tokens by what each reply did, per day");
   assert.ok(dailyTitle >= 0, "the 30-day range no longer draws a daily chart");
   // The three sentences that belong to that chart: its note, and the two in its
   // disclosure. None of them may name a week.
@@ -145,12 +143,59 @@ test("a daily tokens chart is described in days, and a weekly one in weeks", () 
 
   const weekly = words(overviewFor("365d", now));
   assert.ok(
-    weekly.includes("Tokens by purpose, per week"),
+    weekly.includes("Tokens by what each reply did, per week"),
     "the 365-day range no longer draws a weekly chart"
   );
   assert.ok(
     weekly.some((line) => line.startsWith("What each week's tokens")),
     "the weekly chart lost its weekly note"
+  );
+});
+
+/**
+ * The per-day totals are behind the disclosure, not a paragraph under the chart.
+ *
+ * The chart's caption was printed: at thirty days, thirty dates and figures in a run of
+ * grey text between the bars and their legend, which the audit of 2026-09-22 read as the
+ * noisiest thing on the card. The same figures are the table behind "How this is
+ * measured", so the caption is kept for a screen reader and hidden from the page.
+ */
+test("the tokens chart prints no paragraph of totals, and its table carries them", () => {
+  const screen = overviewFor("30d", new Date(2026, 8, 21, 12, 0, 0), { days: [1, 2, 3] });
+  const chart = screen.findAll("svg").find((node) => node.getAttribute("class") === "bars");
+  assert.ok(chart, "no tokens chart");
+  const caption = screen
+    .findAll("figcaption")
+    .find((node) => node.textContent.includes("Sep 20, 2026"));
+  assert.ok(caption, "the chart lost its caption altogether");
+  assert.equal(caption.className, "sr", "the per-day totals are printed under the chart");
+
+  const drawer = screen
+    .findAll(".method")
+    .find((node) => node.find("summary").textContent.includes("in a table"));
+  drawer.fire("toggle");
+  const cells = drawer.findAll("td").map((node) => node.textContent);
+  assert.ok(cells.includes("Sep 20, 2026"), `the table has no row per day: ${cells.slice(0, 6)}`);
+  const heads = drawer.findAll("th").map((node) => node.textContent);
+  assert.deepEqual(heads.slice(1, 3), ["change", "talk"], "the table's columns are not the buckets");
+});
+
+/**
+ * Tokens whose bucket rests on a guess from a tool's name are said, quietly, when there are
+ * any, and nothing is said when there are none.
+ */
+test("the heuristic caption appears only when some tokens were bucketed by name", () => {
+  const now = new Date(2026, 8, 21, 12, 0, 0);
+  const guessed = words(overviewFor("30d", now, { days: [1], guessed: 250 }));
+  const line = guessed.find((one) => one.includes("guessed from a tool's name"));
+  assert.ok(line, "the guessed tokens are not mentioned");
+  assert.match(line, /^250 tokens here \(25%\)/, line);
+
+  const none = words(overviewFor("30d", now, { days: [1], guessed: 0 }));
+  assert.equal(
+    none.some((one) => one.includes("guessed from a tool's name")),
+    false,
+    "a caption about nothing being guessed"
   );
 });
 

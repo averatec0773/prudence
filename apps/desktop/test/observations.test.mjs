@@ -272,13 +272,7 @@ test("contract 3 words the threshold itself, in the reader's language", () => {
   Str.setLang("en");
 });
 
-test("a contract 2 row has neither column and prints the engine's own words", () => {
-  // What `store.rs` answers with on a contract 2 store: the two columns are absent from
-  // the block, so they arrive as `undefined` rather than as null.
-  const older = row();
-  delete older.threshold_op;
-  delete older.threshold_value;
-  assert.equal(thresholdLine(older), "compactions > 0");
+test("a row with no number for its split prints the engine's own words", () => {
   assert.equal(
     thresholdLine(row({ threshold_op: null, threshold_value: null })),
     "compactions > 0"
@@ -287,11 +281,9 @@ test("a contract 2 row has neither column and prints the engine's own words", ()
   assert.equal(thresholdLine(row({ threshold_op: "<", threshold_value: 4 })), "compactions > 0");
 });
 
-test("nothing on the screen says undefined, on either contract", () => {
-  const older = row();
-  delete older.threshold_op;
-  delete older.threshold_value;
-  for (const rows of [[row()], [older]]) {
+test("nothing on the screen says undefined, with or without the split's number", () => {
+  const bare = row({ threshold_op: null, threshold_value: null });
+  for (const rows of [[row()], [bare]]) {
     const text = screenFor(rows).textContent;
     assert.equal(text.includes("undefined"), false, text);
     assert.equal(text.includes("NaN"), false, text);

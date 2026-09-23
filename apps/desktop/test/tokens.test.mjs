@@ -145,6 +145,71 @@ test("no outcome colour is a purpose colour", () => {
   }
 });
 
+/** DESIGN.md, "Bucket palette". The order is the fixed stacking and legend order. */
+const BUCKET = [
+  ["change", "#c4501b", "#f06a36"],
+  ["run", "#0b7fa8", "#2aa3cf"],
+  ["read", "#856c00", "#c4a020"],
+  ["talk", "#8a4fc7", "#ad86ec"],
+];
+
+test("the bucket palette draws the values the document prints", () => {
+  for (const [bucket, lightHex, darkHex] of BUCKET) {
+    assert.equal(light[`--b-${bucket}`], lightHex, `light --b-${bucket}`);
+    assert.equal(dark[`--b-${bucket}`], darkHex, `dark --b-${bucket}`);
+  }
+});
+
+/* The four are their own. A bucket in a purpose's colour would carry that purpose's meaning
+   from the Review screen onto the Overview; in a project's, it would read as a project in
+   the outcome cards on the same screen; in the accent, as a control or as the heat strip. */
+test("no bucket colour is a purpose, project, outcome or accent colour, and no two share one", () => {
+  for (const [name, table] of [
+    ["light", light],
+    ["dark", dark],
+  ]) {
+    const taken = new Set([
+      ...PURPOSE.map(([purpose]) => table[`--p-${purpose}`]),
+      ...PROJECT_SCALE.map((_, index) => table[`--proj-${index}`]),
+      table["--o-alive"],
+      table["--o-rework"],
+      table["--accent"],
+    ]);
+    const seen = new Set();
+    for (const [bucket] of BUCKET) {
+      const colour = table[`--b-${bucket}`];
+      assert.equal(taken.has(colour), false, `${name} --b-${bucket} (${colour}) is taken`);
+      assert.equal(seen.has(colour), false, `${name} ${colour} is two buckets`);
+      seen.add(colour);
+    }
+  }
+});
+
+/* The panel colours the bucket words themselves, so each colour is text as well as a mark:
+   4.5:1 against the surface it is read on, in both appearances. */
+test("every bucket colour reads as text on the surface", () => {
+  const luminance = (hex) => {
+    const channel = (at) => {
+      const value = parseInt(hex.slice(at, at + 2), 16) / 255;
+      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  };
+  const ratio = (a, b) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  for (const [name, table] of [
+    ["light", light],
+    ["dark", dark],
+  ]) {
+    for (const [bucket] of BUCKET) {
+      const contrast = ratio(table[`--b-${bucket}`], table["--surface"]);
+      assert.ok(contrast >= 4.5, `${name} --b-${bucket} is ${contrast.toFixed(2)}:1`);
+    }
+  }
+});
+
 /* Design decisions live in the design system, not in any other stylesheet. A stylesheet
    may say where a surface goes and what a control's *token* is; the moment it declares a
    token of its own, two files disagree about what the product's blue is.

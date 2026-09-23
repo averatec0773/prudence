@@ -538,9 +538,10 @@ test("Review now calls the wiring once it is there, and says nothing itself", ()
 
 /* --- whether writing one now would produce anything ---------------------------------------
  *
- * The line above the stored review. The engine's own sentence when a review is ready,
- * because the rule is the engine's; what is still needed when it is not, composed from the
- * engine's four numbers in the reader's own language.
+ * The line above the stored review, composed from the engine's numbers in the reader's
+ * own language whether or not a review is ready. The engine's own English sentence, when it
+ * printed one, is the line's `title`: there to check the composed one against, and not in
+ * the middle of a Chinese screen.
  */
 
 const settled = () => new Promise(setImmediate);
@@ -559,11 +560,29 @@ async function withReadiness(answer) {
   }
 }
 
-test("a review that is ready is said in the engine's own words", async () => {
+test("a review that is ready is said in the reader's language, from the engine's numbers", async () => {
   const said = "A review is ready: 151 new sessions so far and 697 commits crossed their 7-day mark.";
-  const line = await withReadiness({ ready: true, sentence: said });
+  const answer = {
+    ready: true,
+    sentence: said,
+    newSessions: 151,
+    requiredSessions: 5,
+    maturedCommits: 697,
+    requiredCommits: 1,
+  };
+  const line = await withReadiness(answer);
   assert.equal(line.hidden, false, "the line stayed hidden with an answer in hand");
-  assert.equal(line.textContent, said);
+  assert.equal(line.textContent, "A review is ready: 151 new sessions so far and 697 commits matured.");
+  assert.equal(line.title, said, "the engine's own sentence is not kept to check against");
+
+  Str.setLang("zh-Hans");
+  try {
+    const chinese = await withReadiness(answer);
+    assert.equal(chinese.textContent, "可以写一次回顾了：目前有 151 个新会话，697 次提交已成熟。");
+    assert.equal(chinese.title, said);
+  } finally {
+    Str.setLang("en");
+  }
 });
 
 test("a review that is not ready says what is still needed, from the engine's numbers", async () => {

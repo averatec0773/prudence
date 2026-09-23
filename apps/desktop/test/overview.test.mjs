@@ -18,6 +18,7 @@ import {
   firstDay,
   grainOf,
   heat,
+  heuristicTokens,
   lastDayOf,
   mondayOf,
   outcomes,
@@ -28,9 +29,13 @@ import {
 
 const NOW = new Date(2026, 8, 21, 12, 0, 0); // Monday 21 September 2026, local
 
-function payload({ usage = [], outcomes: out = [], commits = [], sessions = [] } = {}) {
+function payload({ usage = [], activity = [], outcomes: out = [], commits = [], sessions = [] } = {}) {
   return readPayload({
     usage: { columns: Object.keys(usage[0] ?? { day: "" }), rows: usage.map(Object.values) },
+    activity: {
+      columns: Object.keys(activity[0] ?? { day: "" }),
+      rows: activity.map(Object.values),
+    },
     outcomes: { columns: Object.keys(out[0] ?? { project: "" }), rows: out.map(Object.values) },
     commits: { columns: Object.keys(commits[0] ?? { day: "" }), rows: commits.map(Object.values) },
     sessions,
@@ -138,8 +143,8 @@ test("a daily axis has one slot per day, first day to today", () => {
 test("one day is one bucket and never an empty chart", () => {
   const data = payload({
     usage: [
-      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 40, active_minutes: 30 },
-      { day: "2026-09-20", project: "a", purpose: "development", total_tokens: 99, active_minutes: 30 },
+      { day: "2026-09-21", project: "a", bucket: "change", total_tokens: 40 },
+      { day: "2026-09-20", project: "a", bucket: "change", total_tokens: 99 },
     ],
   });
   const out = buckets(data, { range: "1d", now: NOW });
@@ -166,12 +171,12 @@ test("a weekly axis has one slot per ISO week the range touches", () => {
 
 /* --- buckets -------------------------------------------------------------------------- */
 
-test("buckets come out oldest first, in the fixed purpose order", () => {
+test("time slots come out oldest first, each with its tokens per bucket", () => {
   const data = payload({
     usage: [
-      { day: "2026-09-21", project: "a", purpose: "research", total_tokens: 10, active_minutes: 1 },
-      { day: "2026-09-14", project: "a", purpose: "development", total_tokens: 20, active_minutes: 2 },
-      { day: "2026-09-15", project: "a", purpose: "development", total_tokens: 5, active_minutes: 1 },
+      { day: "2026-09-21", project: "a", bucket: "read", total_tokens: 10, heuristic_tokens: 4 },
+      { day: "2026-09-14", project: "a", bucket: "change", total_tokens: 20, heuristic_tokens: 0 },
+      { day: "2026-09-15", project: "a", bucket: "change", total_tokens: 5, heuristic_tokens: 0 },
     ],
   });
   const out = buckets(data, { range: "90d", now: NOW });
@@ -184,14 +189,18 @@ test("buckets come out oldest first, in the fixed purpose order", () => {
   );
   const fourteenth = out.find((w) => w.bucket === "2026-09-14");
   assert.equal(fourteenth.total, 25, "the two days of one week are summed");
-  // The buckets, not the key order of `byPurpose`: that order is `emptyBuckets()`
-  // whatever the data is, so asserting it could not fail. The order the legend and the
-  // table walk is `PURPOSES`, which `purposes.test.mjs` pins against the engine.
-  assert.equal(fourteenth.byPurpose.development, 25);
-  assert.equal(fourteenth.byPurpose.research, 0);
+  // The values, not the key order of `byBucket`: that order is `emptyMix()` whatever the
+  // data is, so asserting it could not fail. The order the legend and the table walk is
+  // `BUCKETS`, which `buckets.test.mjs` pins against the engine.
+  assert.equal(fourteenth.byBucket.change, 25);
+  assert.equal(fourteenth.byBucket.read, 0);
   const twentyFirst = out.find((w) => w.bucket === "2026-09-21");
-  assert.equal(twentyFirst.byPurpose.research, 10);
-  assert.equal(twentyFirst.byPurpose.development, 0);
+  assert.equal(twentyFirst.byBucket.read, 10);
+  assert.equal(twentyFirst.byBucket.change, 0);
+  // The part of the range resting on the engine's name heuristic, summed from its own
+  // column, which is what the chart's quiet caption says.
+  assert.deepEqual(heuristicTokens(out), { tokens: 4, share: 4 / 35 });
+  assert.deepEqual(heuristicTokens(out.slice(0, -1)), { tokens: 0, share: 0 });
 });
 
 /* The same rows under a daily range are two separate days, not one week. This is the
@@ -199,8 +208,8 @@ test("buckets come out oldest first, in the fixed purpose order", () => {
 test("the same two days are one weekly bucket and two daily ones", () => {
   const data = payload({
     usage: [
-      { day: "2026-09-20", project: "a", purpose: "development", total_tokens: 20, active_minutes: 2 },
-      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 5, active_minutes: 1 },
+      { day: "2026-09-20", project: "a", bucket: "change", total_tokens: 20 },
+      { day: "2026-09-21", project: "a", bucket: "change", total_tokens: 5 },
     ],
   });
   const daily = buckets(data, { range: "7d", now: NOW }).filter((one) => one.measured);
@@ -226,8 +235,8 @@ test("the same two days are one weekly bucket and two daily ones", () => {
 test("a bucket outside the range is not in the answer", () => {
   const data = payload({
     usage: [
-      { day: "2026-01-05", project: "a", purpose: "development", total_tokens: 99, active_minutes: 1 },
-      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 1, active_minutes: 1 },
+      { day: "2026-01-05", project: "a", bucket: "change", total_tokens: 99 },
+      { day: "2026-09-21", project: "a", bucket: "change", total_tokens: 1 },
     ],
   });
   // The January row is outside a thirty-day range, so no slot is drawn for it at all;
@@ -371,8 +380,12 @@ test("no active time measured is a dash, not a zero", () => {
 test("a project filter applies to every figure on the screen", () => {
   const data = payload({
     usage: [
-      { day: "2026-09-21", project: "a", purpose: "development", total_tokens: 10, active_minutes: 60 },
-      { day: "2026-09-21", project: "b", purpose: "development", total_tokens: 90, active_minutes: 120 },
+      { day: "2026-09-21", project: "a", bucket: "change", total_tokens: 10 },
+      { day: "2026-09-21", project: "b", bucket: "change", total_tokens: 90 },
+    ],
+    activity: [
+      { day: "2026-09-21", project: "a", active_minutes: 60, measured_sessions: 1 },
+      { day: "2026-09-21", project: "b", active_minutes: 120, measured_sessions: 1 },
     ],
     commits: [
       { day: "2026-09-21", project: "a", commits: 1, commits_fact: 1, commits_inferred: 0 },
@@ -388,11 +401,28 @@ test("a project filter applies to every figure on the screen", () => {
   assert.equal(dayOfA.total, 10);
 });
 
+/* Hours are a session's, not a reply's, so they come from the activity view and never
+   from the bucket view: a day whose sessions spent no tokens still has its hours, and a
+   day with tokens and no activity row has none. The purpose view carried both, which is
+   why this used to be one read. */
+test("the hours come from the activity view and nothing else", () => {
+  const data = payload({
+    usage: [{ day: "2026-09-20", project: "a", bucket: "change", total_tokens: 10 }],
+    activity: [{ day: "2026-09-21", project: "a", active_minutes: 45, measured_sessions: 1 }],
+  });
+  assert.equal(cards(data, { range: "7d", now: NOW }).hours, 0.75);
+  assert.equal(cards(data, { range: "7d", bucket: "2026-09-20", now: NOW }).hours, null);
+  const strip = heat(data, { range: "7d", now: NOW });
+  const cells = strip.weeks.flatMap((column) => column.days);
+  assert.equal(cells.find((cell) => cell.day === "2026-09-21").hours, 0.75);
+  assert.equal(cells.find((cell) => cell.day === "2026-09-20").hours, null);
+});
+
 /* --- the heat strip --------------------------------------------------------------------- */
 
 test("the heat strip has seven rows, Monday first, and contiguous weeks", () => {
   const data = payload({
-    usage: [{ day: "2026-09-16", project: "a", purpose: "development", total_tokens: 1, active_minutes: 90 }],
+    activity: [{ day: "2026-09-16", project: "a", active_minutes: 90 }],
   });
   const strip = heat(data, { range: "90d", now: NOW });
   assert.ok(strip.weeks.length >= 8);
@@ -410,7 +440,7 @@ test("the heat strip has seven rows, Monday first, and contiguous weeks", () => 
 
 test("a day with no row is missing, not a measured zero", () => {
   const data = payload({
-    usage: [{ day: "2026-09-16", project: "a", purpose: "development", total_tokens: 1, active_minutes: 90 }],
+    activity: [{ day: "2026-09-16", project: "a", active_minutes: 90 }],
   });
   const strip = heat(data, { range: "90d", now: NOW });
   const column = strip.weeks.find((c) => c.week === "2026-09-14");
@@ -420,10 +450,10 @@ test("a day with no row is missing, not a measured zero", () => {
 
 test("the cells add up to the view's own active minutes", () => {
   const data = payload({
-    usage: [
-      { day: "2026-09-16", project: "a", purpose: "development", total_tokens: 1, active_minutes: 30 },
-      { day: "2026-09-16", project: "a", purpose: "research", total_tokens: 1, active_minutes: 30 },
-      { day: "2026-09-17", project: "a", purpose: "development", total_tokens: 1, active_minutes: 15 },
+    activity: [
+      { day: "2026-09-16", project: "a", active_minutes: 30 },
+      { day: "2026-09-16", project: "b", active_minutes: 30 },
+      { day: "2026-09-17", project: "a", active_minutes: 15 },
     ],
   });
   const strip = heat(data, { range: "90d", now: NOW });
@@ -469,8 +499,8 @@ test("the coverage series is cut where coverage is missing, not where alive is",
 });
 
 test("a project with no usage row still gets its own colour", () => {
-  // `data.projects` comes from `app_usage_by_purpose_day`. A repository with counted
-  // commits and no session usage is not in it, and `indexOf` returning -1 used to hand it
+  // `data.projects` comes from `app_session_list`. A repository with counted commits and
+  // no session is not in it, and `indexOf` returning -1 used to hand it
   // the first project's colour, so the legend showed two names under one swatch.
   const known = ["alpha", "beta"];
   assert.notEqual(projectColour("gamma", [...known, "gamma"]), projectColour("alpha", [...known, "gamma"]));

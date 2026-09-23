@@ -157,8 +157,8 @@ body {
  * answer is written into it.
  *
  * One line for a run's report, which is one sentence. Two for the readiness answer, which
- * is the engine's own sentence or the four numbers this app composes, and is two lines at
- * 360 pt in both languages. `DESIGN.md` carries what happens to a longer one. */
+ * this app composes from the engine's numbers whether a review is ready or not, and is two
+ * lines at 360 pt in both languages. `DESIGN.md` carries what happens to a longer one. */
 .pop-reserve {
   min-height: calc(var(--t-caption2) * 1.4 + 4px);
   display: flex;
@@ -175,9 +175,9 @@ body {
   background: none;
 }
 
-/* The purposes are named in the sentence and coloured there, so the bar under it can be
-   read without a legend repeating the same three words. Identity, never judgement. */
-.week-row .purpose-name {
+/* The buckets are named in the sentence and coloured there, so the bar under it can be
+   read without a legend repeating the same four words. Identity, never judgement. */
+.week-row .bucket-name {
   font-weight: 590;
 }
 

@@ -101,6 +101,9 @@ const FORCE_LANGUAGE = "PRUDENCE_FORCE_LANGUAGE";
 /** The `app_status` columns that carry a version, in the order the engine runs them. */
 const VERSIONS = [
   ["parser_version", "settings.version.parser"],
+  ["bucket_rule_version", "settings.version.bucketRule"],
+  // Still the rule behind a stored review's activity table and an observation split on a
+  // purpose, so it stays listed until the engine drops the label.
   ["purpose_rule_version", "settings.version.purposeRule"],
   ["commit_fact_version", "settings.version.commit"],
   ["attribution_fact_version", "settings.version.attribution"],

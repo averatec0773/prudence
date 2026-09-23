@@ -41,7 +41,70 @@ record; this file is the product's. The tables below are the values, and
 `test/tokens.test.mjs` asserts the stylesheet against them, so a token table nobody checks
 cannot drift from what is drawn.
 
+### Bucket palette
+
+What each reply of the model did, from its tool calls alone (`store/buckets.py`, bucket
+rule version 1): **change** wrote a file, **run** ran a command or a tool that acts,
+**read** only looked, **talk** did none of those (it spoke, asked, or dispatched an agent).
+In Chinese the four are 改动, 运行, 阅读, 对话. Every token chart and the panel's seven days
+are drawn in these, and only these.
+
+| Bucket | Light | Dark |
+|---|---|---|
+| `--b-change` | `#C4501B` | `#F06A36` |
+| `--b-run` | `#0B7FA8` | `#2AA3CF` |
+| `--b-read` | `#856C00` | `#C4A020` |
+| `--b-talk` | `#8A4FC7` | `#AD86EC` |
+
+**The order is fixed: change, run, read, talk.** It is the engine's precedence order (a reply
+that did several things is in the first of them it did) and the order `prudence usage`
+prints, so the chart stacks from the baseline up in it, the legend, the table's columns and
+the panel's sentence read in it, and it is never sorted by size. `design/buckets.js` holds
+the list and `test/buckets.test.mjs` pins it to the engine's.
+
+**Why four new colours and not the purpose palette.** The purposes still carry meaning on
+the Review screen (a stored review's activity table) and in observations split on a
+purpose, so blue is still "development" there; drawn on the Overview, it would say
+"change" is development. The four are chosen so that none is a purpose, project, outcome
+or accent colour (a test asserts it), none is red or green (colour is identity, never a
+verdict), and each reads as text at 4.5:1 or better on its appearance's surface, because
+the panel colours the words themselves (a test asserts that too). The categorical checks
+were run with the dataviz validator: the light set passes all five; the dark set passes
+separation and contrast and sits above that validator's lightness band on purpose, since
+text contrast on `#2C2C2E` is the constraint that decides it here. The nearest neighbour
+on the same screen is `--proj-4` beside `--b-talk`, and a fifth project is the first time
+the two meet.
+
+**A bucket this build does not know** stays in every total and in no colour: the four
+shares fall short of a hundred and the panel's bar leaves the rest of its track unfilled,
+rather than one of the four absorbing it. The engine pin fails before that can ship.
+
+**Two meanings of "bucket" in the code.** A day or a week on the Overview's time axis was
+called a bucket before these existed (`store/overview.js`, "the bucket rule" below). In code
+that slot keeps the name and these four are always `BUCKETS` and `byBucket`; the reader
+sees neither word.
+
+#### The captions a bucket chart carries
+
+- **The per-slot totals are behind the disclosure, not under the chart.** The figure's
+  caption stays for a screen reader and is hidden; the table in "How this is measured"
+  has one row per day or week, one column per bucket and the slot's total. At thirty days
+  the printed caption was a paragraph of thirty dates between the bars and the legend.
+- **The legend names only the buckets present in the range**, in the fixed order.
+- **Guessed tokens are said quietly, and only when there are any.** `heuristic_tokens` is
+  the part whose bucket rests on a tool's name rather than on the rule's lists; above zero
+  for the range, one `panel-note` line under the legend says how many and what share, and
+  at zero there is no line at all.
+- **The note says what the four are**, in the reader's words, on every range; the method
+  names the view, the precedence and what is not counted.
+- **The panel's sentence is the legend**: each bucket's word in its own colour, then its
+  share ("改动 40%，运行 33%，阅读 20%，对话 7%"), and the bar under it in the same order.
+
 ### Purpose palette
+
+Drawn only where the engine still speaks in purposes: a stored review's activity table and
+its composition bar, and an observation split on a purpose. The token charts left it at
+contract 4.
 
 One colour per purpose, identical in every chart on every screen, in this fixed stacking and
 legend order. Keys are the engine's own labels (`design/purposes.js` reads them out of
@@ -125,7 +188,7 @@ it samples the page, never the desktop.
 
 | Directory | What lives there | What may import it |
 |---|---|---|
-| `src/design/` | tokens, the DOM helpers, the brand mark, the purpose list, the charts | anything |
+| `src/design/` | tokens, the DOM helpers, the brand mark, the bucket and purpose lists, the charts | anything |
 | `src/text/` | the two string tables, the string runtime, the formatters, the composed sentences | anything above `design` |
 | `src/store/` | the shell's payload, turned into rows and the two windows the panel asks about | `ui`, `boot` |
 | `src/ui/` | one file per surface: the panel, the window | `boot` only |
@@ -379,7 +442,9 @@ Two rules that are not geometry:
 ## The app owns no numbers
 
 `src-tauri/src/store.rs` opens the store read-only, refuses a contract version outside
-`SUPPORTED_CONTRACT`, and selects from `app_*` views and nothing else. The page may **sum
+`contract::SUPPORTED` (4, and only 4: contract 3 had the purpose view this build no longer
+reads, and the refusal tells the reader to run `prudence rebuild` or Ingest now when the
+store is the older side and to update the app when it is the newer), and selects from `app_*` views and nothing else. The page may **sum
 view columns into a bucket** and take the **ratio of two columns of the same row**, and
 nothing else. A median, a threshold or an attribution is a new view in
 `src/prudence/store/app_views.py`, never a function here.
@@ -571,11 +636,12 @@ ticked from that answer rather than from what was asked for.
 
 ### Whether a review is ready costs two runs of `prudence status`
 
-`lib.rs`, `engine_readiness`. The numbers come from `status --json`, because a sentence
-cannot be recomposed in the reader's language out of English. The sentence comes from
-`status`, because when a review **is** ready the engine's own line is the thing to say and
-the JSON carries none. The text status is asked for only in that case, so a store that is
-not ready costs one run.
+`lib.rs`, `engine_readiness`. The numbers come from `status --json`, and both lines, ready
+and not, are composed from them in the reader's language (`text/sentences.js`). The
+engine's own `review:` line comes from `status`, because the JSON carries none, and is kept
+as the line's `title` on the panel and on the Review screen, so the composed sentence can
+be checked against the engine's words. The text status is asked for only when a review is
+ready, so a store that is not ready costs one run.
 
 - **Assumes:** the two runs, a moment apart, agree about the same store.
 - **When it breaks:** an ingest landing between them would put a ready sentence beside
@@ -616,14 +682,28 @@ so the window was re-measured and re-anchored under the reader: 635 px at render
 a second later. The slots are now in the layout from the first paint, and the answer is
 written into one of them.
 
-- **Assumes:** a run's report is one line, and the readiness sentence is two at 360 pt. The
-  engine's own "a review is ready" line and the four numbers this app composes are both two
-  lines in both languages today.
+- **Assumes:** a run's report is one line, and the readiness sentence is two at 360 pt. Both
+  sentences this app composes, ready and not, are two lines in both languages today.
 - **When it breaks:** a longer sentence still grows the panel, because `refit` still runs
   after the answer: the alternative is a sentence cut off inside a fixed slot, and a window
   that moves is better than a figure that cannot be read.
 - **Removed when:** the shell can size the panel for its final content before showing it,
   or the readiness answer is known before the first paint.
+
+### The panel's seven days are local days, and the CLI's are 168 hours
+
+`store/payload.js`, `lastSevenDays`. The panel sums `app_usage_by_bucket_day` over today and
+the six local days before it. `prudence usage --last 7d` counts back 168 hours from the
+moment it runs, in UTC. A view of local days cannot cut one in half, so the two windows
+differ by the replies of part of one day, and the figures differ by them.
+
+- **Assumes:** a reader of "Last 7 days" means seven calendar days of their own.
+- **When it breaks:** the panel's tokens and shares disagree with `prudence usage --last 7d`
+  run at the same moment, by whatever was spent between local midnight six days ago and
+  the same clock time that day. `prudence usage --last <that midnight in UTC>` agrees with
+  the panel exactly, which is how the batch check is made.
+- **Removed when:** the CLI's window is the local day, or the engine publishes a view the
+  two share. Either is an engine decision.
 
 ### `window.css` is not covered by the no-tokens test
 
@@ -747,7 +827,7 @@ that app was retired from master (commit `7fd8f60`; its history stays).
 
 `src/design/fmt.js` is the port of `PrudenceUI/Fmt.swift`: counts, token abbreviations,
 hours, stamps, relative times, days, the four count phrases, the list separator, the
-purpose names. **Two things deliberately do not go through the locale** and are marked
+bucket and purpose names. **Two things deliberately do not go through the locale** and are marked
 where they are: the `%.0f%%` share and the plain ungrouped integer inside an observation
 sentence, which have to match `store/observations.py` character for character or the
 word-for-word test against `app_observation.sentence` fails.
@@ -764,7 +844,7 @@ Grown by each batch. Batch 1 adds the window shell only.
 |---|---|---|
 | The panel | 360 pt, one column, a caption above every block, the action grid at the foot | `src/ui/panel.js` |
 | The window shell | The system's titlebar overlaid, a sidebar with four entries, the heading and the screen's controls on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
-| `miniStack` | One row of a stacked bar: the composition of a whole, in a single line | `src/design/charts.js` |
+| `miniStack` | One row of a stacked bar: the composition of a whole, in a single line. It takes its parts in the caller's fixed order with their colours (the purposes on the Review screen, the buckets on the panel), and a `total` when the whole holds something none of the parts names | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
 | The engine block | Where `prudence` is, its version against the store's, the actions, the picker, and the Install or Update button with uv's own output under it | `src/ui/engine-section.js`, `ui/engine-section.css` |
 | The activity strip | One report at the foot of the window: what a run is doing, and how it ended | same file |

@@ -6,9 +6,10 @@ A menu bar panel and a four-screen window, in English and Simplified Chinese,
 on real Liquid Glass where the system has it:
 
 - **Overview**: one sentence saying what the screen is over, the three totals as a strip,
-  tokens by purpose per bucket, one card each for what was still there after thirty days
-  and what was rewritten, and where the hours went. Seven ranges from one day to all, and
-  a bucket is a day up to sixty days and an ISO week beyond; the two outcome cards stay
+  tokens by what each reply did (change, run, read, talk) per day or week, one card each
+  for what was still there after thirty days and what was rewritten, and where the hours
+  went. Seven ranges from one day to all, and a bar is a day up to sixty days and an ISO
+  week beyond; the two outcome cards stay
   weekly under every range, because the engine measures an outcome per week. Each card's
   full table is behind its "how this is measured" drawer and is built when the drawer is
   first opened.
@@ -196,7 +197,7 @@ apps/desktop/
 ## Three rules this app is built on
 
 **1. The app owns no numbers.** `store.rs` opens the store read-only, refuses a contract
-version outside `SUPPORTED_CONTRACT`, and selects from `app_*` views only. The page may sum
+version outside `contract::SUPPORTED` (4, and only 4), and selects from `app_*` views only. The page may sum
 view columns into a bucket and take the ratio of two columns of the same row; a median, a
 threshold or an attribution is a new view in `src/prudence/store/app_views.py`.
 

@@ -21,19 +21,21 @@
 import { heatStrip, linesWithGaps, niceMax, stackedBars } from "../design/charts.js";
 import { el } from "../design/dom.js";
 import { disclosure, emptyState, panel } from "../design/components.js";
-import { PURPOSES } from "../design/purposes.js";
+import { BUCKETS, bucketColour } from "../design/buckets.js";
 import {
   WEEKDAYS,
   buckets as readBuckets,
   cards as readCards,
   grainOf,
   heat as readHeat,
+  heuristicTokens,
   outcomes as readOutcomes,
   projectColour,
   rangeOf,
   weekAxis,
 } from "../store/overview.js";
 import {
+  bucket as bucketName,
   count,
   day as formatDay,
   shortDay,
@@ -42,7 +44,6 @@ import {
   list,
   monthName,
   percent,
-  purpose,
   rangeName,
   sessions,
   commits as commitPhrase,
@@ -51,50 +52,50 @@ import {
 } from "../text/fmt.js";
 import { plural, t } from "../text/strings.js";
 
-
-
-/** Swatch and label per purpose, in the fixed order, wrapping. */
-function purposeLegend(present) {
+/** Swatch and label per bucket, in the fixed order, wrapping. */
+function bucketLegend(present) {
   const legend = el("div", { class: "legend" });
-  for (const key of PURPOSES) {
+  for (const key of BUCKETS) {
     if (!present.has(key)) continue;
     const item = el("span", { class: "key" });
     const swatch = document.createElement("i");
-    swatch.style.background = `var(--p-${key})`;
+    swatch.style.background = bucketColour(key);
     item.appendChild(swatch);
-    item.appendChild(document.createTextNode(purpose(key)));
+    item.appendChild(document.createTextNode(bucketName(key)));
     legend.appendChild(item);
   }
   return legend;
 }
 
 /**
- * A bucket's own name, in full: a day is its date, a week is the week it starts.
+ * A time slot's own name, in full: a day is its date, a week is the week it starts.
  *
- * One function, because every place a bucket is named has to name it the same way: the
+ * One function, because every place a slot is named has to name it the same way: the
  * table, the hover line, the caption and the filter note.
  */
-function bucketName(key, grain) {
+function slotName(key, grain) {
   return grain === "week" ? t("overview.weekOf", formatDay(key)) : formatDay(key);
 }
 
-/** The same numbers the picture has, as a table a reader can check. */
+/** The same numbers the picture has, as a table a reader can check: one row per day or
+ *  week, one column per bucket, and the slot's total, which is where the per-slot totals
+ *  are read now that the chart no longer prints them under itself. */
 function bucketTable(buckets, grain) {
   const table = el("table", { class: "data" });
   const head = el("tr", {}, [el("th", { text: t("chart.period") })]);
-  const present = PURPOSES.filter((key) => buckets.some((one) => one.byPurpose[key] > 0));
-  for (const key of present) head.appendChild(el("th", { text: purpose(key) }));
+  const present = BUCKETS.filter((key) => buckets.some((one) => one.byBucket[key] > 0));
+  for (const key of present) head.appendChild(el("th", { text: bucketName(key) }));
   head.appendChild(el("th", { text: t("chart.value") }));
   table.appendChild(el("thead", {}, [head]));
 
   const body = el("tbody");
   for (const one of buckets) {
     const row = el("tr", { class: one.measured ? "" : "unmeasured" }, [
-      el("td", { text: bucketName(one.bucket, grain) }),
+      el("td", { text: slotName(one.bucket, grain) }),
     ]);
     for (const key of present) {
       row.appendChild(
-        el("td", { text: one.byPurpose[key] ? tokens(one.byPurpose[key]) : t("common.dash") })
+        el("td", { text: one.byBucket[key] ? tokens(one.byBucket[key]) : t("common.dash") })
       );
     }
     // A bucket with no row at all has no total either. Printing 0 here would say the work
@@ -230,7 +231,7 @@ export function overview(state) {
       el("span", {
         text: t(
           "overview.bucketFilter",
-          bucketName(bucket, grain),
+          slotName(bucket, grain),
           tokens(buckets.find((one) => one.bucket === bucket)?.total ?? 0)
         ),
       }),
@@ -241,7 +242,7 @@ export function overview(state) {
     screen.appendChild(note);
   }
 
-  /* --- tokens by purpose, per bucket ---------------------------------------------- */
+  /* --- tokens by what each reply did, per day or week ------------------------------ */
 
   // The chart's own title, note, method and hint all say which grain is on the axis,
   // because "per day" and "per week" are different pictures and the reader has to know
@@ -249,11 +250,11 @@ export function overview(state) {
   // daily chart the note said "What each week's tokens went on" and the method said the
   // figures were summed into the ISO week each day falls in, which is what the weekly
   // chart does and not what this one does.
-  const chartTitle = grain === "week" ? "overview.tokensByPurpose" : "overview.tokensByPurposeDay";
+  const chartTitle = grain === "week" ? "overview.tokensByBucket" : "overview.tokensByBucketDay";
   const chartNote =
-    grain === "week" ? "overview.tokensByPurpose.note2" : "overview.tokensByPurpose.note2Day";
+    grain === "week" ? "overview.tokensByBucket.note2" : "overview.tokensByBucket.note2Day";
   const chartMethod =
-    grain === "week" ? "overview.tokensByPurpose.method" : "overview.tokensByPurpose.methodDay";
+    grain === "week" ? "overview.tokensByBucket.method" : "overview.tokensByBucket.methodDay";
   const hint = grain === "week" ? "chart.hint.weeks" : "chart.hint.days";
   const hover = el("div", { class: "hover-value", text: t(hint) });
 
@@ -268,7 +269,7 @@ export function overview(state) {
       })
     );
   } else {
-    const present = new Set(PURPOSES.filter((key) => buckets.some((w) => w.byPurpose[key] > 0)));
+    const present = new Set(BUCKETS.filter((key) => buckets.some((w) => w.byBucket[key] > 0)));
     const say = (which) => {
       if (!which) {
         hover.textContent = t(hint);
@@ -277,11 +278,11 @@ export function overview(state) {
       const found = buckets.find((w) => w.bucket === which);
       if (!found) return;
       const parts = [...present]
-        .filter((key) => found.byPurpose[key] > 0)
-        .map((key) => `${purpose(key)} ${tokens(found.byPurpose[key])}`);
+        .filter((key) => found.byBucket[key] > 0)
+        .map((key) => `${bucketName(key)} ${tokens(found.byBucket[key])}`);
       hover.textContent = t(
         "overview.bucketReading",
-        bucketName(found.bucket, grain),
+        slotName(found.bucket, grain),
         tokens(found.total),
         list(parts)
       );
@@ -296,17 +297,35 @@ export function overview(state) {
       caption: list(
         buckets
           .filter((w) => w.measured)
-          .map((w) => `${bucketName(w.bucket, grain)} ${tokens(w.total)}`)
+          .map((w) => `${slotName(w.bucket, grain)} ${tokens(w.total)}`)
       ),
       onHover: say,
       onSelect: state.onBucket,
     });
 
+    // The tokens whose bucket is a guess from a tool's name, said quietly under the legend
+    // when there are any and not at all when there are none: a line reading "0 tokens were
+    // guessed" on every range would be noise about a thing that did not happen.
+    const guessed = heuristicTokens(buckets);
+    const body = el("div", {}, [chart, hover, bucketLegend(present)]);
+    if (guessed.tokens > 0) {
+      body.appendChild(
+        el("p", {
+          class: "panel-note",
+          text: t(
+            "overview.tokensByBucket.heuristic",
+            tokens(guessed.tokens),
+            percent(guessed.share)
+          ),
+        })
+      );
+    }
+
     screen.appendChild(
       panel({
         title: t(chartTitle),
         note: t(chartNote),
-        body: el("div", {}, [chart, hover, purposeLegend(present)]),
+        body,
         extra: null,
         method: methodAndTable(
           t(chartMethod),
@@ -331,9 +350,9 @@ export function overview(state) {
 
   const series = readOutcomes(data, { project, range });
   const allWeeks = weekAxis(data, { range });
-  // Every project that appears anywhere, not only those with a usage row: `data.projects`
-  // comes from `app_usage_by_purpose_day`, so a repository with counted commits and no
-  // session usage fell through `indexOf` to -1 and drew in the first project's colour.
+  // Every project that appears anywhere, not only those with a session: `data.projects`
+  // comes from `app_session_list`, so a repository with counted commits and no session
+  // would fall through `indexOf` to -1 and draw in the first project's colour.
   const names = [
     ...new Set([...data.projects.map((row) => String(row.name)), ...series.map((one) => one.project)]),
   ];

@@ -69,9 +69,8 @@ export function outcomeLabel(outcome) {
  * interface to word it itself.
  *
  * **The engine's text stays the fallback and stays authoritative where it disagrees.** A
- * contract 2 store has neither column, and a contract 3 row may carry an operator this
- * build has never heard of; either way the engine's own words are printed rather than a
- * clause this app invented. The text is shown behind the disclosure in both cases, so
+ * row may carry no number for its split, or an operator this build has never heard of;
+ * either way the engine's own words are printed rather than a clause this app invented. The text is shown behind the disclosure in both cases, so
  * the rewording can be checked against it.
  *
  * @param {Record<string, any>} row
@@ -253,7 +252,7 @@ function card(group) {
     el("p", { text: t("observations.method") }),
   ]);
   // The engine's own clause, kept where a reader can check the reworded one above
-  // against it. On a contract 2 store the two are the same string, which is honest.
+  // against it. Where the split had no number the two are the same string, which is honest.
   if (first.threshold_text !== null && first.threshold_text !== undefined) {
     how.appendChild(
       el("p", { text: t("observations.method.threshold", String(first.threshold_text)) })

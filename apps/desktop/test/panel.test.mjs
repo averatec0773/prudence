@@ -242,19 +242,21 @@ test("the head says what the panel is over", () => {
   );
 });
 
-/* The sentence names the purposes in order and the bar draws them, so a swatch legend
-   naming the same three words was a third row for one fact in a 360 pt window. The colour
-   goes on the name instead: identity, never judgement. */
-test("the purposes are coloured in the sentence and named nowhere else", () => {
-  PANEL_RUN.port = null;
-  const container = drawWith({
+/* The sentence names the buckets in order and the bar draws them, so a swatch legend
+   naming the same four words was a fifth row for one fact in a 360 pt window. The colour
+   goes on the name instead: identity, never judgement. The shares are the bucket view's
+   tokens over the seven days, and the sentence is composed in the reader's language, which
+   is the line the founder wrote down: "改动 40%，运行 33%，阅读 20%，对话 7%". */
+function weekOf(rows) {
+  return drawWith({
     status: { engine_version: "0.4.0" },
     usage: {
-      columns: ["day", "project", "repo_key", "purpose", "total_tokens", "active_minutes", "measured_sessions", "sessions"],
-      rows: [
-        [today(), "a", "root:a", "development", 900, 60, 1, 1],
-        [today(), "a", "root:a", "research", 100, 10, 1, 1],
-      ],
+      columns: ["day", "project", "repo_key", "bucket", "total_tokens", "heuristic_tokens", "sessions"],
+      rows: rows.map(([bucket, tokens]) => [today(), "a", "root:a", bucket, tokens, 0, 1]),
+    },
+    activity: {
+      columns: ["day", "project", "repo_key", "active_minutes", "sessions", "measured_sessions"],
+      rows: [[today(), "a", "root:a", 90, 1, 1]],
     },
     commits: [],
     sessions: [],
@@ -263,17 +265,51 @@ test("the purposes are coloured in the sentence and named nowhere else", () => {
     reviews: [],
     projects: [{ key: "root:a", name: "a" }],
   });
+}
 
-  const named = container.findAll(".purpose-name");
-  assert.deepEqual(
-    named.map((node) => node.textContent),
-    [Str.t("purpose.development"), Str.t("purpose.research")],
-    "the purposes are not named in the sentence"
-  );
-  for (const node of named) {
-    assert.match(node.style.color, /^var\(--p-[a-z]+\)$/, `no purpose colour on ${node.textContent}`);
+const MIX = [
+  ["talk", 70],
+  ["change", 400],
+  ["read", 200],
+  ["run", 330],
+];
+
+test("the last seven days are the four buckets by share, each word in its own colour", () => {
+  PANEL_RUN.port = null;
+  const expected = {
+    en: "change 40%, run 33%, read 20%, talk 7%",
+    "zh-Hans": "改动 40%，运行 33%，阅读 20%，对话 7%",
+  };
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      const container = weekOf(MIX);
+      const line = container.find(".week-row").find(".obs-line");
+      // In the engine's order whatever order the rows arrived in, never sorted by size.
+      assert.equal(line.textContent, expected[language]);
+
+      const named = container.findAll(".bucket-name");
+      assert.deepEqual(
+        named.map((node) => node.style.color),
+        ["change", "run", "read", "talk"].map((key) => `var(--b-${key})`),
+        `${language}: the words are not in the bucket colours`
+      );
+      assert.deepEqual(container.findAll(".legend"), [], "the swatch legend is still under the bar");
+    } finally {
+      Str.setLang("en");
+    }
   }
-  assert.deepEqual(container.findAll(".legend"), [], "the swatch legend is still under the bar");
+});
+
+/* The bar under the sentence is the same four, in the same colours and the same order. */
+test("the bar under the sentence draws the four buckets in their colours", () => {
+  PANEL_RUN.port = null;
+  const container = weekOf(MIX);
+  const fills = container
+    .find(".week-row")
+    .findAll("rect")
+    .map((node) => node.getAttribute("fill"));
+  assert.deepEqual(fills, ["change", "run", "read", "talk"].map((key) => `var(--b-${key})`));
 });
 
 /* --- what a run says while it is going ------------------------------------------------
@@ -379,19 +415,37 @@ test("the readiness answer arrives into a reserved row and changes no node", asy
   );
 });
 
-test("the panel says what the engine says about writing a review", async () => {
-  fakeShell(undefined, {
-    readiness: {
-      ready: true,
-      sentence: "A review is ready: 151 new sessions so far and 697 commits crossed their 7-day mark.",
-    },
-  });
-  const container = draw();
-  await settled();
-  const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
-  assert.ok(caption, "the panel has no readiness caption");
-  assert.equal(caption.hidden, false, "the caption stayed hidden with an answer in hand");
-  assert.ok(caption.textContent.includes("151 new sessions"), caption.textContent);
+/* A ready review is said in the reader's language too. It printed the engine's English
+   line on a Chinese panel, which is the one sentence the panel did not compose; the
+   engine's words are kept as the caption's `title`, to check the composed one against. */
+test("the panel says a review is ready in the reader's language", async () => {
+  const ready = {
+    ready: true,
+    sentence: "A review is ready: 151 new sessions so far and 697 commits crossed their 7-day mark.",
+    newSessions: 151,
+    requiredSessions: 5,
+    maturedCommits: 697,
+    requiredCommits: 1,
+  };
+  const expected = {
+    en: "A review is ready: 151 new sessions so far and 697 commits matured.",
+    "zh-Hans": "可以写一次回顾了：目前有 151 个新会话，697 次提交已成熟。",
+  };
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      fakeShell(undefined, { readiness: ready });
+      const container = draw();
+      await settled();
+      const caption = container.findAll(".coverage-chip").find((node) => node.id === "pop-ready");
+      assert.ok(caption, "the panel has no readiness caption");
+      assert.equal(caption.hidden, false, "the caption stayed hidden with an answer in hand");
+      assert.equal(caption.textContent, expected[language]);
+      assert.equal(caption.title, ready.sentence);
+    } finally {
+      Str.setLang("en");
+    }
+  }
 });
 
 test("a review that is not ready says what is still needed, in the reader's language", async () => {

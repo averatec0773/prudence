@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import {
   lastSevenDays,
   localDay,
-  purposeShares,
+  bucketShares,
   readPayload,
   rowsOf,
   sessionsBetween,
@@ -43,7 +43,7 @@ test("a review's JSON columns are parsed once, and a broken one is null", () => 
 });
 
 /* Sessions are rows of `app_session_list`, never a sum of
-   `app_usage_by_purpose_day.sessions`, which is per purpose per day. */
+   `app_usage_by_bucket_day.sessions`, which is per bucket per day. */
 test("sessions in a window are counted as rows, in local time", () => {
   // Built from local times, because the window is in local days: the engine stamps in
   // UTC and a UTC midnight is the previous local day for anyone west of Greenwich.
@@ -77,31 +77,76 @@ test("today is the machine's today, not the last day with a row", () => {
   assert.equal(answer.commits, 0, "a commit on an older day is not today's");
 });
 
-/* An unrecognised purpose folds into `unknown` and stays in the total, so the shares
-   still sum to a hundred when the engine grows a label this build has not heard of. */
-test("a purpose this build does not know still counts", () => {
+/* The seven days the panel shows: tokens from the bucket view, summed per bucket over the
+   seven local days that end today, and hours from the activity view. The purpose view
+   carried both until contract 4; the bucket view carries no time, because active time
+   belongs to a session and one session's replies sit in several buckets. */
+test("the last seven days are the bucket view's tokens and the activity view's hours", () => {
   const now = new Date(2026, 8, 21, 10, 0, 0);
   const data = readPayload({
     usage: {
-      columns: ["day", "purpose", "total_tokens", "active_minutes"],
+      columns: ["day", "project", "bucket", "total_tokens", "heuristic_tokens"],
       rows: [
-        ["2026-09-21", "development", 800, 30],
-        ["2026-09-21", "something_new", 200, 10],
+        ["2026-09-21", "a", "change", 400, 0],
+        ["2026-09-20", "a", "run", 330, 30],
+        ["2026-09-15", "b", "read", 200, 0],
+        ["2026-09-15", "b", "talk", 70, 0],
+        // Seven days back is 15 September, so this one is outside the window.
+        ["2026-09-14", "a", "change", 9999, 0],
+      ],
+    },
+    activity: {
+      columns: ["day", "project", "active_minutes", "sessions", "measured_sessions"],
+      rows: [
+        ["2026-09-21", "a", 90, 1, 1],
+        ["2026-09-15", "b", 30, 1, 1],
+        ["2026-09-14", "a", 600, 1, 1],
+      ],
+    },
+    sessions: [],
+  });
+  const week = lastSevenDays(data, now);
+  assert.equal(week.start, "2026-09-15");
+  assert.equal(week.total, 1000);
+  assert.deepEqual(week.byBucket, { change: 400, run: 330, read: 200, talk: 70 });
+  assert.equal(week.hours, 2, "the hours are the activity view's, over the same seven days");
+  assert.deepEqual(
+    bucketShares(week).map((part) => [part.bucket, part.share]),
+    [
+      ["change", 0.4],
+      ["run", 0.33],
+      ["read", 0.2],
+      ["talk", 0.07],
+    ]
+  );
+});
+
+/* A bucket this build has not heard of stays in the total and is drawn in no colour, so
+   the four shares fall visibly short of a hundred rather than absorbing it. */
+test("a bucket this build does not know stays in the total and in no share", () => {
+  const now = new Date(2026, 8, 21, 10, 0, 0);
+  const data = readPayload({
+    usage: {
+      columns: ["day", "bucket", "total_tokens"],
+      rows: [
+        ["2026-09-21", "change", 800],
+        ["2026-09-21", "something_new", 200],
       ],
     },
     sessions: [],
   });
   const week = lastSevenDays(data, now);
   assert.equal(week.total, 1000);
-  assert.equal(week.byPurpose.unknown, 200);
-  const shares = purposeShares(week);
-  const sum = shares.reduce((total, part) => total + part.share, 0);
-  assert.ok(Math.abs(sum - 1) < 1e-9, `the shares sum to ${sum}, not 1`);
+  assert.deepEqual(
+    bucketShares(week).map((part) => [part.bucket, part.share]),
+    [["change", 0.8]]
+  );
 });
 
 test("a week with nothing measured has no shares rather than shares of zero", () => {
   const data = readPayload({ usage: { columns: ["day"], rows: [] }, sessions: [] });
   const week = lastSevenDays(data, new Date(2026, 8, 21));
   assert.equal(week.total, 0);
-  assert.deepEqual(purposeShares(week), []);
+  assert.equal(week.hours, 0);
+  assert.deepEqual(bucketShares(week), []);
 });

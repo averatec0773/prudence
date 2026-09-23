@@ -14,7 +14,7 @@
  *   has no pointer and a share without the number it is over cannot be checked.
  */
 
-import { emptyBuckets, known } from "../design/purposes.js";
+import { emptyMix, known } from "../design/buckets.js";
 import { daysBefore, localDay, sessionsBetween, startOfLocalDay } from "./payload.js";
 
 /** @typedef {"1d"|"7d"|"30d"|"60d"|"90d"|"365d"|"all"} RangeKey */
@@ -108,7 +108,7 @@ export function lastDayOf(bucket, grain) {
  * hole it actually is.
  *
  * For "all" the axis starts at the earliest day anything was recorded on, taken across
- * usage, outcomes and commits together.
+ * usage, activity, outcomes and commits together.
  */
 export function axis(data, { range = DEFAULT_RANGE, now = new Date() } = {}) {
   const grain = grainOf(range);
@@ -155,7 +155,7 @@ export function weekAxis(data, { range = DEFAULT_RANGE, now = new Date() } = {})
   return out;
 }
 
-/** The earliest local day any of the three weekly sources recorded. */
+/** The earliest local day any of the four sources recorded. */
 function earliestRecordedDay(data) {
   let earliest = null;
   const consider = (value) => {
@@ -163,6 +163,7 @@ function earliestRecordedDay(data) {
     if (day && (earliest === null || day < earliest)) earliest = day;
   };
   for (const row of data.usage) consider(row.day);
+  for (const row of data.activity ?? []) consider(row.day);
   for (const row of data.commits ?? []) consider(row.day);
   for (const row of data.outcomes ?? []) consider(row.week_start);
   return earliest;
@@ -183,8 +184,8 @@ function matchesProject(row, project) {
  * The three figures above the charts.
  *
  * Each comes from the view that counts the thing once: sessions from
- * `app_session_list`, hours from `app_usage_by_purpose_day.active_minutes`, and commits
- * from `app_commits_by_day`, which is the view that exists precisely because summing
+ * `app_session_list`, hours from `app_activity_by_day.active_minutes`, and commits from
+ * `app_commits_by_day`, which is the view that exists precisely because summing
  * `app_session_list` double counts a commit credited to two sessions.
  */
 export function cards(
@@ -197,7 +198,7 @@ export function cards(
 
   let minutes = 0;
   let measuredSessions = 0;
-  for (const row of data.usage) {
+  for (const row of data.activity ?? []) {
     if (!inRange(row.day, from) || String(row.day) > to) continue;
     if (!matchesProject(row, project)) continue;
     minutes += Number(row.active_minutes) || 0;
@@ -230,20 +231,25 @@ export function cards(
 }
 
 /**
- * Tokens by purpose, summed into the bucket each local day falls in, over the whole
- * range's axis.
+ * Tokens by what each reply did, summed into the time slot each local day falls in, over
+ * the whole range's axis.
  *
- * Every bucket in the range is here, in order. A bucket the store has no row for carries
+ * Every slot in the range is here, in order. A slot the store has no row for carries
  * `measured: false`, and the chart draws an **empty slot** rather than a zero-height bar:
  * nothing was recorded is not the same statement as nothing was spent, and the two must
- * not look alike.
+ * not look alike. `heuristic` is the slot's share of `heuristic_tokens`, the tokens whose
+ * bucket rests on a guess from a tool's name; a bucket this build does not know stays in
+ * `total` and in no colour (`design/buckets.js`).
  */
 export function buckets(data, { project = null, range = DEFAULT_RANGE, now = new Date() } = {}) {
   const grain = grainOf(range);
   const slots = axis(data, { range, now });
-  /** @type {Map<string, {bucket: string, byPurpose: Record<string, number>, total: number, measured: boolean}>} */
+  /** @type {Map<string, {bucket: string, byBucket: Record<string, number>, total: number, heuristic: number, measured: boolean}>} */
   const found = new Map(
-    slots.map((key) => [key, { bucket: key, byPurpose: emptyBuckets(), total: 0, measured: false }])
+    slots.map((key) => [
+      key,
+      { bucket: key, byBucket: emptyMix(), total: 0, heuristic: 0, measured: false },
+    ])
   );
 
   for (const row of data.usage) {
@@ -252,12 +258,28 @@ export function buckets(data, { project = null, range = DEFAULT_RANGE, now = new
     // Outside the axis, which is the range's own test now that the axis defines it.
     if (!slot) continue;
     const tokens = Number(row.total_tokens) || 0;
-    slot.byPurpose[known(String(row.purpose))] += tokens;
+    const bucket = known(String(row.bucket));
+    if (bucket) slot.byBucket[bucket] += tokens;
     slot.total += tokens;
+    slot.heuristic += Number(row.heuristic_tokens) || 0;
     slot.measured = true;
   }
 
   return slots.map((key) => /** @type {any} */ (found.get(key)));
+}
+
+/**
+ * How many of the range's tokens sit in a bucket the engine chose from a tool's name
+ * rather than from its rules' lists, and their share of every token drawn: two sums of
+ * view columns over the slots, and their ratio.
+ *
+ * @param {{ heuristic: number, total: number }[]} slots what `buckets` returned
+ * @returns {{ tokens: number, share: number }}
+ */
+export function heuristicTokens(slots) {
+  const tokens = slots.reduce((sum, slot) => sum + slot.heuristic, 0);
+  const total = slots.reduce((sum, slot) => sum + slot.total, 0);
+  return { tokens, share: total > 0 ? tokens / total : 0 };
 }
 
 /**
@@ -343,7 +365,8 @@ export function runs(points, key) {
 }
 
 /**
- * Active minutes per local day, as one cell per day, seven rows Monday first.
+ * Active minutes per local day from `app_activity_by_day`, as one cell per day, seven rows
+ * Monday first.
  *
  * A day with no row in the view has **no cell value**, which is not a measured zero: the
  * view has no row for a day nothing happened on, and a grey cell that means "nothing
@@ -356,7 +379,7 @@ export function heat(data, { project = null, range = DEFAULT_RANGE, now = new Da
 
   /** @type {Map<string, number>} */
   const minutes = new Map();
-  for (const row of data.usage) {
+  for (const row of data.activity ?? []) {
     if (!matchesProject(row, project)) continue;
     const day = String(row.day);
     if (day < from || day > to) continue;
@@ -389,7 +412,7 @@ export function heat(data, { project = null, range = DEFAULT_RANGE, now = new Da
 
 function earliestDay(data, project = null) {
   let earliest = null;
-  for (const row of data.usage) {
+  for (const row of data.activity ?? []) {
     if (!matchesProject(row, project)) continue;
     const day = String(row.day);
     if (earliest === null || day < earliest) earliest = day;

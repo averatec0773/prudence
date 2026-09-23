@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -75,6 +75,10 @@ test("every key is translated in both languages", () => {
  */
 const SHARED_TEXT = {
   en: [
+    // What a reply did, and a column header the engine writes on a review's comparison
+    // table. The first is this app's word for a bucket; the second changes when the engine
+    // changes it.
+    ["bucket.change", "review.header.change"],
     ["chart.hours", "overview.activeHours"],
     // A chart's short axis word, and the unit a progress counter counts in. The Chinese
     // is not the same in the two places (`会话` against `个会话`), which is what makes
@@ -96,6 +100,11 @@ const SHARED_TEXT = {
     ["section.settings", "settings.title"],
   ],
   "zh-Hans": [
+    // A reply that neither wrote, ran nor read, and a session the retired purpose rule
+    // labelled a conversation. The founder chose 对话 for the bucket; the purpose word is
+    // still on stored reviews and observations, and the two go separate ways when the
+    // purpose label is dropped.
+    ["bucket.talk", "purpose.conversation"],
     ["chart.hours", "overview.activeHours"],
     // As above: a chart's own unit, and a header the engine wrote.
     ["chart.unit.tokens", "review.header.tokens"],
@@ -174,7 +183,7 @@ test("placeholders are the same set in each language, in each language's own ord
    the runtime asks, so it is what the test asks. */
 test("plurals choose a form in English and do not in Chinese", () => {
   const plural = Object.entries(strings.en).filter(([, v]) => typeof v !== "string");
-  assert.equal(plural.length, 8, "eight keys carry a count");
+  assert.equal(plural.length, 7, "seven keys carry a count");
 
   for (const [key, english] of plural) {
     assert.deepEqual(
@@ -204,6 +213,32 @@ test("plurals choose a form in English and do not in Chinese", () => {
    called itself the guard against that defect. The rule is now asserted by calling the
    function: see `test/fmt.test.mjs`, "a share rounds the way the engine rounds", and
    `test/sentences.test.mjs`, which compares the whole sentence with the engine's own. */
+
+/* Every key is read by something.
+
+   A key nothing reads is a string nobody reviews: it is translated, kept in step with its
+   pair and carried through every rename, and it says whatever it said when the screen
+   that used it was deleted. Nineteen had piled up since the tables were generated from
+   the Swift catalogue, and the purpose chart's six would have joined them at contract 4.
+
+   A key is read when the source names it in quotes, or when it starts with a prefix the
+   source completes at run time (`engine.step.${...}`); those prefixes are found in the
+   source rather than listed here, so a new one needs no edit to this test. */
+test("every key is read by something in the source", () => {
+  const files = readdirSync(join(app, "src"), { recursive: true })
+    .map(String)
+    .filter((name) => /\.(js|html)$/.test(name));
+  const source = files.map((name) => readFileSync(join(app, "src", name), "utf8")).join("\n");
+  const prefixes = [...source.matchAll(/`([a-zA-Z][a-zA-Z.]*\.)\$\{/g)].map((m) => m[1]);
+  assert.ok(prefixes.includes("weekday."), `the prefix scan found ${prefixes}`);
+
+  const unread = Object.keys(strings.en).filter(
+    (key) =>
+      !["\"", "'", "`"].some((quote) => source.includes(`${quote}${key}${quote}`)) &&
+      !prefixes.some((prefix) => key.startsWith(prefix))
+  );
+  assert.deepEqual(unread, [], `nothing reads: ${unread.join(", ")}`);
+});
 
 /* The tables say what they are: the source of truth, checked against each other here. */
 test("both tables say they are the source of truth", () => {

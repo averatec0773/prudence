@@ -1,6 +1,6 @@
 /* Prudence design tokens and the small component set the mockups are built from.
-   One accent, one fixed colour per purpose, hairlines instead of shadows, motion only
-   for state changes. Light and dark are the same tokens with different values. */
+   One accent, one fixed colour per purpose and per bucket, hairlines instead of shadows,
+   motion only for state changes. Light and dark are the same tokens with different values. */
 
 :root {
   color-scheme: light dark;
@@ -75,6 +75,17 @@
   --p-mixed: #5856d6;
   --p-unknown: #8e8e93;
 
+  /* What each reply did, in the fixed stacking and legend order: change, run, read, talk.
+     Their own four, not the purpose palette: the Review screen still draws purposes, and a
+     reader who has learned that blue is "development" there must not read it as "change"
+     here. None is a purpose, project, outcome or accent colour (a test asserts it), every
+     one reads as text on the surface at 4.5:1 or better, because the panel colours the
+     words, and none is red or green, because colour is identity and never a verdict. */
+  --b-change: #c4501b;
+  --b-run: #0b7fa8;
+  --b-read: #856c00;
+  --b-talk: #8a4fc7;
+
   /* Outcome series. Survival and rework are two readings of the same lines, so they
      share a hue family and differ in line style, never in "good" and "bad" colour. */
   --o-alive: #0a7d45;
@@ -131,6 +142,10 @@
     --p-conversation: #bf5af2;
     --p-mixed: #7d7aff;
     --p-unknown: #98989d;
+    --b-change: #f06a36;
+    --b-run: #2aa3cf;
+    --b-read: #c4a020;
+    --b-talk: #ad86ec;
     --o-alive: #3ac07a;
     --o-rework: #e0a33a;
     --proj-0: #6e9bff;
@@ -177,6 +192,10 @@
   --p-conversation: #bf5af2;
   --p-mixed: #7d7aff;
   --p-unknown: #98989d;
+  --b-change: #f06a36;
+  --b-run: #2aa3cf;
+  --b-read: #c4a020;
+  --b-talk: #ad86ec;
   --o-alive: #3ac07a;
   --o-rework: #e0a33a;
   --proj-0: #6e9bff;

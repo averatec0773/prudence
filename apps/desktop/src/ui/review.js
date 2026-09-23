@@ -44,7 +44,7 @@ import {
   sessions as sessionPhrase,
   stamp,
 } from "../text/fmt.js";
-import { observationSentence, readinessSentence } from "../text/sentences.js";
+import { observationSentence, readinessSentence, readinessSource } from "../text/sentences.js";
 import { t } from "../text/strings.js";
 
 /** The engine's key for an observation computed over every project rather than one. */
@@ -252,7 +252,7 @@ function didCard(section) {
   if (present.length) {
     body.appendChild(
       miniStack({
-        byPurpose,
+        parts: PURPOSES.map((key) => ({ value: byPurpose[key], colour: `var(--p-${key})` })),
         caption: list(
           present.map((key) => {
             const tokens = numbers.get(`did.tokens.${key}`);
@@ -608,6 +608,8 @@ export function review(state) {
         const said = readinessSentence(found);
         if (!said) return;
         ready.textContent = said;
+        // The engine's own English line, under the pointer, to check the composed one by.
+        ready.title = readinessSource(found);
         ready.hidden = false;
       })
       // Silent, and deliberately: a Review screen that cannot reach the engine still has

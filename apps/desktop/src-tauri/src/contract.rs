@@ -5,16 +5,19 @@
 //! as long as it still answers with these columns, and changing one of them is what
 //! bumps `meta.APP_CONTRACT_VERSION`."* This is the other side of that sentence.
 //!
-//! **Contract 3 is additive over 2**, so both are drawn from one code path: every column
-//! 3 added is read as an optional and used only where it is present, and the app and the
-//! engine can be upgraded in either order.
+//! **This build reads contract 4 and nothing else.** Contract 4 retired
+//! `app_usage_by_purpose_day`, which is where every token chart and the hours used to come
+//! from, so a contract 3 store is missing the two views the Overview and the panel now
+//! draw. Reading it would mean keeping the purpose charts alive beside the bucket ones for
+//! a store one `prudence rebuild` away from being current. The mismatch message says which
+//! side is behind (`store.rs`).
 //!
 //! A test asserts that each view still answers with exactly these columns in this order,
 //! so a Python change that forgets to bump the version fails here rather than in front
 //! of the user.
 
 /// The contract versions this build renders.
-pub const SUPPORTED: &[u32] = &[2, 3];
+pub const SUPPORTED: &[u32] = &[4];
 
 /// One view: its name, and the columns it must answer with, in order.
 pub struct View {
@@ -22,7 +25,7 @@ pub struct View {
     pub columns: &'static [&'static str],
 }
 
-/// The seven views. Not eleven: `app_session_time` and `app_observation_text` are
+/// The eight views. Not twelve: `app_session_time` and `app_observation_text` are
 /// helper tables that `app_views.py` marks explicitly as "not contract".
 pub const VIEWS: &[View] = &[
     View {
@@ -40,20 +43,34 @@ pub const VIEWS: &[View] = &[
             "outcome_fact_version",
             "observation_fact_version",
             "hook_fact_version",
+            // Contract 4.
+            "bucket_rule_version",
+            "coverage_gap_tokens",
         ],
     },
     View {
-        name: "app_usage_by_purpose_day",
+        name: "app_usage_by_bucket_day",
         columns: &[
             "day",
             "repo_key",
             "project",
-            "purpose",
+            "bucket",
             "input_tokens",
             "output_tokens",
             "cache_read_tokens",
             "cache_creation_tokens",
             "total_tokens",
+            "responses",
+            "heuristic_tokens",
+            "sessions",
+        ],
+    },
+    View {
+        name: "app_activity_by_day",
+        columns: &[
+            "day",
+            "repo_key",
+            "project",
             "active_minutes",
             "sessions",
             "measured_sessions",
@@ -138,6 +155,11 @@ pub const VIEWS: &[View] = &[
             "content_archived",
             // Contract 2.
             "edits",
+            // Contract 4.
+            "change_share",
+            "run_share",
+            "read_share",
+            "talk_share",
         ],
     },
     View {
@@ -163,28 +185,3 @@ pub const VIEWS: &[View] = &[
         ],
     },
 ];
-
-/// The columns a contract-2 store does not have. Everything here is read as an optional
-/// and a null stays a null, which is what "additive" has to mean in practice.
-pub const ADDED_AT_3: &[(&str, &str)] = &[
-    ("app_observation", "threshold_value"),
-    ("app_observation", "threshold_op"),
-    ("app_review", "segment_language"),
-];
-
-pub fn view(name: &str) -> Option<&'static View> {
-    VIEWS.iter().find(|view| view.name == name)
-}
-
-/// The columns to select from a view at a given contract version: all of them at 3, and
-/// at 2 the ones that existed then.
-pub fn columns_at(name: &str, version: u32) -> Vec<&'static str> {
-    let Some(view) = view(name) else {
-        return Vec::new();
-    };
-    view.columns
-        .iter()
-        .copied()
-        .filter(|column| version >= 3 || !ADDED_AT_3.iter().any(|(v, c)| *v == name && c == column))
-        .collect()
-}

@@ -11,8 +11,8 @@
  * change, the catalog's `observation.*` keys change with it and the test says so.
  */
 
-import { count, day, list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
-import { lang as currentLang, t } from "./strings.js";
+import { commits, count, day, list, percent, purposeInSentence, relative, stamp } from "./fmt.js";
+import { lang as currentLang, plural, t } from "./strings.js";
 
 /** @typedef {import("./strings.js").Language} Language */
 
@@ -125,16 +125,16 @@ export function reviewLine(review, language) {
 }
 
 /**
- * Whether writing a review now would produce one, as one line.
+ * Whether writing a review now would produce one, as one line in the reader's language.
  *
- * **The two halves are not the same kind of sentence, on purpose.** A review that is ready
- * gets the engine's own words, because the rule is the engine's and `prudence status`
- * states it in one line that the app should not reword; the app's own sentence is only the
- * fallback for an engine that printed none. A review that is not ready is composed here
- * out of the four numbers, in the reader's own language, because there the numbers are the
- * answer and an English clause in the middle of a Chinese screen is not.
+ * **Both halves are composed here, from the engine's numbers.** A review that is ready
+ * used to get the engine's own `review:` line from `prudence status`, which is English, so
+ * a Chinese panel carried one English sentence under Chinese buttons. The verdict and the
+ * counts are the engine's either way; only the words are the reader's. The engine's own
+ * sentence stays where it can be checked against this one: `readinessSource` below, which
+ * the panel and the Review screen put in the line's `title`.
  *
- * Null for no answer at all, which is what an engine that does not carry readiness gives:
+ * Empty for no answer at all, which is what an engine that does not carry readiness gives:
  * saying "not ready" then would be the app inventing a verdict.
  *
  * @param {{ ready?: boolean, sentence?: string|null, newSessions?: number,
@@ -145,7 +145,14 @@ export function reviewLine(review, language) {
  */
 export function readinessSentence(found, language) {
   if (!found) return "";
-  if (found.ready) return String(found.sentence || t("review.readiness.ready"));
+  if (found.ready) {
+    const newSessions = Number(found.newSessions ?? 0);
+    return t(
+      "review.readiness.ready",
+      plural("unit.newSessions", newSessions, count(newSessions, language), language),
+      commits(Number(found.maturedCommits ?? 0), language)
+    );
+  }
   return t(
     "review.readiness.needs",
     count(Number(found.newSessions ?? 0), language),
@@ -153,6 +160,18 @@ export function readinessSentence(found, language) {
     count(Number(found.maturedCommits ?? 0), language),
     count(Number(found.requiredCommits ?? 0), language)
   );
+}
+
+/**
+ * The engine's own sentence about the same answer, as `prudence status` printed it, or
+ * empty where it printed none. It is English and is never the line itself: it is the
+ * thing the composed line can be checked against.
+ *
+ * @param {{ sentence?: string|null } | null | undefined} found
+ * @returns {string}
+ */
+export function readinessSource(found) {
+  return found?.sentence ? String(found.sentence) : "";
 }
 
 /** `21 Sep 01:45 (13 hours ago)`, both halves in the reader's locale. */

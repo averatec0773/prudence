@@ -14,26 +14,26 @@
  */
 
 import { el, figure, svgEl } from "./dom.js";
-import { PURPOSES } from "./purposes.js";
-
-/** The palette lives in `tokens.css`; this is only how a purpose names its own variable. */
-function purposeColour(purpose) {
-  return `var(--p-${purpose})`;
-}
+import { BUCKETS, bucketColour } from "./buckets.js";
 
 /**
  * One row of a stacked bar: the composition of a whole, in a single line.
  *
- * @param {{ byPurpose: Record<string, number>, height?: number, caption: string }} options
+ * `parts` are drawn in the order given, which is the caller's fixed order (the purposes on
+ * the Review screen, the four buckets on the panel) and never sorted by size. `total` is
+ * the whole the parts are shares of, and is the sum of the parts when it is not given. A
+ * caller whose total holds something none of its parts names passes it, so that remainder
+ * stays visible as unfilled track instead of being shared out among the parts.
+ *
+ * @param {{ parts: { value: number, colour: string }[], total?: number, height?: number,
+ *           caption: string }} options
  * @returns {HTMLElement}
  */
 export function miniStack(options) {
   const width = 320;
   const height = options.height ?? 10;
-  // Summed over the fixed list, which is the same list the caller's percentages are over.
-  // Summing over the bucket's own keys instead would let an unrecognised purpose into the
-  // denominator here and not into the legend, and the two would disagree.
-  const total = PURPOSES.reduce((sum, purpose) => sum + (options.byPurpose[purpose] || 0), 0);
+  const total =
+    options.total ?? options.parts.reduce((sum, part) => sum + (part.value || 0), 0);
 
   const marks = [];
   if (total <= 0) {
@@ -42,8 +42,8 @@ export function miniStack(options) {
     );
   } else {
     let x = 0;
-    for (const purpose of PURPOSES) {
-      const value = options.byPurpose[purpose] || 0;
+    for (const part of options.parts) {
+      const value = part.value || 0;
       if (value <= 0) continue;
       const w = (value / total) * width;
       marks.push(
@@ -53,7 +53,7 @@ export function miniStack(options) {
           width: Math.max(w - 1.5, 1.5),
           height,
           rx: 2,
-          fill: purposeColour(purpose),
+          fill: part.colour,
         })
       );
       x += w;
@@ -286,15 +286,21 @@ function slotLabels({ slots, label, at, height }) {
 
 /* --- composition of a whole, over time ---------------------------------------------
  *
- * One bar per bucket across the whole range, the fixed purpose order, a quiet value axis
- * on the right and the bucket under each bar. A bucket the store has no row for is an
- * **empty slot**: no bar at all, because nothing recorded and nothing spent are different
- * statements and must not look alike.
+ * One bar per time slot across the whole range, stacked in the fixed bucket order (change,
+ * run, read, talk from the baseline up), a quiet value axis on the right and the slot
+ * under each bar. A slot the store has no row for is an **empty slot**: no bar at all,
+ * because nothing recorded and nothing spent are different statements and must not look
+ * alike.
+ *
+ * **The per-slot totals are not printed under the chart.** They were, as a visible
+ * caption, which at thirty days was a paragraph of thirty dates and figures between the
+ * chart and its legend. They are the table behind the card's disclosure, which is where a
+ * figure is checked, and the caption stays for a screen reader.
  */
 
 /**
  * @param {{
- *   buckets: {bucket: string, byPurpose: Record<string, number>, total: number, measured: boolean}[],
+ *   buckets: {bucket: string, byBucket: Record<string, number>, total: number, measured: boolean}[],
  *   caption: string,
  *   label: (bucket: string) => string,
  *   axisFormat: (value: number) => string,
@@ -330,8 +336,8 @@ export function stackedBars(options) {
     });
 
     let y = PLOT.padTop + plotH;
-    for (const purpose of PURPOSES) {
-      const value = one.byPurpose[purpose] || 0;
+    for (const bucket of BUCKETS) {
+      const value = one.byBucket[bucket] || 0;
       if (value <= 0) continue;
       const h = (value / max) * plotH;
       y -= h;
@@ -343,7 +349,7 @@ export function stackedBars(options) {
           width: barWidth,
           height: Math.max(h, 0.75),
           rx: 1.5,
-          fill: purposeColour(purpose),
+          fill: bucketColour(bucket),
         })
       );
     }
@@ -387,7 +393,7 @@ export function stackedBars(options) {
   );
 
   const svg = svgEl("svg", { viewBox: `0 0 ${PLOT.width} ${height}`, class: "bars" }, marks);
-  return figure(svg, options.caption);
+  return figure(svg, options.caption, { visuallyHidden: true });
 }
 
 /* --- over time, with holes ----------------------------------------------------------

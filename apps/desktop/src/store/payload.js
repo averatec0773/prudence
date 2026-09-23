@@ -13,7 +13,7 @@
  * `src/prudence/store/app_views.py`.
  */
 
-import { emptyBuckets, known } from "../design/purposes.js";
+import { BUCKETS, emptyMix, known } from "../design/buckets.js";
 
 /** @typedef {{ columns: string[], rows: (string|number|null)[][] }} Block */
 
@@ -66,7 +66,10 @@ export function readPayload(payload) {
   return {
     /** `app_status`, one row, or null when the store had none. */
     status: /** @type {Record<string, any>|null} */ (source.status ?? null),
+    /** `app_usage_by_bucket_day`: tokens per local day, project and bucket. */
     usage: rowsOf(source.usage),
+    /** `app_activity_by_day`: active minutes and sessions per local day and project. */
+    activity: rowsOf(source.activity),
     commits: rowsOf(source.commits),
     sessions: rowsOf(source.sessions),
     outcomes: rowsOf(source.outcomes),
@@ -108,8 +111,8 @@ export function daysBefore(day, n) {
 /**
  * Sessions started inside a window of local days, as **rows of `app_session_list`**.
  *
- * Never a sum of `app_usage_by_purpose_day.sessions`: that column is per purpose per
- * day, so summing it counts one session once for every day and purpose it touched.
+ * Never a sum of `app_usage_by_bucket_day.sessions`: that column is per bucket per day,
+ * so summing it counts one session once for every day and bucket it touched.
  */
 export function sessionsBetween(sessions, fromDay, toDay) {
   const start = startOfLocalDay(fromDay).getTime();
@@ -133,19 +136,23 @@ export function today(data, now = new Date()) {
 }
 
 /**
- * The last seven local days, which is `prudence usage --last 7d`'s window.
+ * The last seven local days: today and the six before it.
  *
  * Not the ISO week: the dropdown is a rolling seven days, and the Overview chart's ISO
- * weeks are a different question asked of the same view.
+ * weeks are a different question asked of the same view. Not quite
+ * `prudence usage --last 7d` either, which counts back 168 hours from this moment in UTC:
+ * a view of local days cannot draw a line through the middle of one, so this starts at
+ * local midnight six days ago and the two can differ by the replies of part of one day.
  *
- * Every figure here is a sum of one view column. An unrecognised purpose folds into
- * `unknown` (`design/purposes.js`) rather than being dropped, so the shares still sum to
- * a hundred when the engine grows a label this build has not heard of.
+ * Tokens are sums of one column of `app_usage_by_bucket_day`, and hours of one column of
+ * `app_activity_by_day`, because active time belongs to a session and one session's
+ * replies sit in several buckets. A bucket this build does not know stays in the total
+ * and in no share (`design/buckets.js`).
  */
 export function lastSevenDays(data, now = new Date()) {
   const end = localDay(now);
   const start = daysBefore(end, 6);
-  const byPurpose = emptyBuckets();
+  const byBucket = emptyMix();
   let total = 0;
   let minutes = 0;
 
@@ -153,15 +160,20 @@ export function lastSevenDays(data, now = new Date()) {
     const day = String(row.day);
     if (day < start || day > end) continue;
     const tokens = Number(row.total_tokens) || 0;
-    byPurpose[known(String(row.purpose))] += tokens;
+    const bucket = known(String(row.bucket));
+    if (bucket) byBucket[bucket] += tokens;
     total += tokens;
+  }
+  for (const row of data.activity ?? []) {
+    const day = String(row.day);
+    if (day < start || day > end) continue;
     minutes += Number(row.active_minutes) || 0;
   }
 
   return {
     start,
     end,
-    byPurpose,
+    byBucket,
     total,
     hours: minutes / 60,
     sessions: sessionsBetween(data.sessions, start, end),
@@ -169,17 +181,15 @@ export function lastSevenDays(data, now = new Date()) {
 }
 
 /**
- * The week's shares, in the fixed purpose order, leaving out what measured nothing.
+ * The seven days' shares, in the fixed bucket order, leaving out what measured nothing.
  * Each share is a ratio of two sums of the same column, which is the widest arithmetic
  * this layer is allowed.
  */
-export function purposeShares(week) {
+export function bucketShares(week) {
   if (!week.total) return [];
-  return Object.entries(week.byPurpose)
-    .filter(([, tokens]) => tokens > 0)
-    .map(([purpose, tokens]) => ({ purpose, tokens, share: tokens / week.total }))
-    .sort((a, b) => {
-      const order = Object.keys(week.byPurpose);
-      return order.indexOf(a.purpose) - order.indexOf(b.purpose);
-    });
+  return BUCKETS.filter((bucket) => week.byBucket[bucket] > 0).map((bucket) => ({
+    bucket,
+    tokens: week.byBucket[bucket],
+    share: week.byBucket[bucket] / week.total,
+  }));
 }

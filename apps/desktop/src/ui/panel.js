@@ -12,13 +12,14 @@ import { miniStack } from "../design/charts.js";
 import { runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { mark } from "../design/brand.js";
+import { BUCKETS, bucketColour } from "../design/buckets.js";
 import {
+  bucket,
   hourPhrase,
   list,
   listSeparator,
   percent,
   projects,
-  purpose,
   sessions,
   commits,
   tokenPhrase,
@@ -28,11 +29,12 @@ import {
   observationCaveat,
   observationSentence,
   readinessSentence,
+  readinessSource,
   reviewLine,
   stampedAgo,
 } from "../text/sentences.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
-import { lastSevenDays, purposeShares, today } from "../store/payload.js";
+import { bucketShares, lastSevenDays, today } from "../store/payload.js";
 import { readiness } from "../store/readiness.js";
 
 /** Set by `render`, so the size report can run again when the content changes. `why` is
@@ -54,7 +56,7 @@ function block(caption, node) {
  * **The scope is the answer to "what are these figures about?"** Every number on the panel
  * is the whole store, all projects, and nothing said so: a reader with three repositories
  * recorded had no way to know that from here. It is the same list the window's project
- * picker offers, which is the projects the store has usage for.
+ * picker offers, which is the projects the store has sessions for.
  */
 function head(data) {
   const bar = el("div", { class: "pop-head" });
@@ -86,20 +88,22 @@ function todayBlock(data) {
 }
 
 /**
- * The last seven days: the mix in words, the same mix as a bar, and the three totals.
+ * The last seven days: what the replies did in words, the same mix as a bar, and the three
+ * totals.
  *
  * **The sentence is the legend.** It used to be stated in words, drawn as a bar, and then
  * named a third time by a swatch legend under it: three rows for one fact in a 360 pt
- * window. The purpose's own colour now goes on its name where the name already is, which
- * is what makes the bar readable and returns a row. Colour is identity here, as it is
- * everywhere: it says which quantity this is and never whether the quantity is good.
+ * window. Each bucket's own colour goes on its name where the name already is ("change
+ * 40%, run 33%, read 20%, talk 7%"), which is what makes the bar readable and returns a
+ * row. Colour is identity here, as it is everywhere: it says which bucket this is and
+ * never whether a share is good.
  */
 function weekBlock(data) {
   const week = lastSevenDays(data);
-  const shares = purposeShares(week);
+  const shares = bucketShares(week);
   const summary = shares.length
-    ? list(shares.map((part) => `${purpose(part.purpose)} ${percent(part.share)}`))
-    : t("menu.noTokensThisWeek");
+    ? list(shares.map((part) => `${bucket(part.bucket)} ${percent(part.share)}`))
+    : t("menu.noTokensSevenDays");
 
   const wrap = el("div", { class: "week-row" });
 
@@ -109,19 +113,22 @@ function weekBlock(data) {
   } else {
     shares.forEach((part, index) => {
       if (index) line.appendChild(document.createTextNode(listSeparator()));
-      const named = el("span", { class: "purpose-name", text: purpose(part.purpose) });
-      named.style.color = `var(--p-${part.purpose})`;
+      const named = el("span", { class: "bucket-name", text: bucket(part.bucket) });
+      named.style.color = bucketColour(part.bucket);
       line.appendChild(named);
       // A space between a name and its figure is not punctuation the language chooses, so
       // it is part of the figure's own element rather than a bare text node in between.
-      line.appendChild(el("span", { class: "purpose-share", text: ` ${percent(part.share)}` }));
+      line.appendChild(el("span", { class: "bucket-share", text: ` ${percent(part.share)}` }));
     });
   }
   wrap.appendChild(line);
 
   wrap.appendChild(
     miniStack({
-      byPurpose: week.byPurpose,
+      parts: BUCKETS.map((key) => ({ value: week.byBucket[key], colour: bucketColour(key) })),
+      // The whole seven days, so tokens in a bucket this build does not know stay as
+      // unfilled track rather than being shared out among the four.
+      total: week.total,
       height: 8,
       caption: `${t("menu.lastSevenDays")}: ${summary} (${tokenPhrase(week.total)}, ${sessions(week.sessions)})`,
     })
@@ -379,8 +386,8 @@ function footer(data) {
   const line = el("div", { class: "coverage-chip", text: "" });
   line.id = "pop-note";
 
-  // Whether a review is ready, beside the button that writes one: the engine's own
-  // sentence where there is one, and what is still needed where there is not.
+  // Whether a review is ready, beside the button that writes one, in the reader's words
+  // from the engine's numbers, with the engine's own sentence under the pointer.
   //
   // Through `store/readiness.js`, which decides when the engine is asked at all. Asking on
   // every draw closes a loop with the store watcher, and that file holds the whole story.
@@ -395,6 +402,7 @@ function footer(data) {
         const said = readinessSentence(found);
         if (!said) return;
         ready.textContent = said;
+        ready.title = readinessSource(found);
         refit("readiness");
       })
       .catch(() => {});

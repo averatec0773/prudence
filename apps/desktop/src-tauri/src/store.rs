@@ -27,24 +27,52 @@ pub enum StoreError {
     Missing(PathBuf),
     #[error("The store could not be opened: {0}")]
     Open(String),
-    #[error(
-        "This store is at contract version {found}; this app reads {supported}. \
-         Update whichever of the two is older."
-    )]
-    Contract { found: String, supported: String },
+    #[error("This store is at contract version {found}; this app reads {supported}. {advice}")]
+    Contract {
+        found: String,
+        supported: String,
+        advice: &'static str,
+    },
     #[error("The store could not be read: {0}")]
     Read(String),
 }
 
+/// What to do about a store this build will not read, by which side is behind.
+const OLDER_STORE: &str = "The store is older than this app: run `prudence rebuild`, or \
+     Ingest now, to bring it up to date.";
+const NEWER_STORE: &str = "The store is newer than this app: update the app.";
+const UNKNOWN_STORE: &str = "Update whichever of the two is older.";
+
 impl StoreError {
-    fn supported_list() -> String {
-        contract::SUPPORTED
+    /// The refusal, naming both versions and the one thing that fixes it.
+    ///
+    /// "Update whichever of the two is older" was the whole advice, which left the reader
+    /// to work out which side that was from two numbers. A store with no contract row at
+    /// all predates contracts, so it is the older side too.
+    fn contract(found: &str) -> Self {
+        let supported = contract::SUPPORTED
             .iter()
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
-            .join(" or ")
+            .join(" or ");
+        let lowest = contract::SUPPORTED.iter().min().copied().unwrap_or(0);
+        let highest = contract::SUPPORTED.iter().max().copied().unwrap_or(0);
+        let advice = match found.trim().parse::<u32>() {
+            Ok(version) if version < lowest => OLDER_STORE,
+            Ok(version) if version > highest => NEWER_STORE,
+            Err(_) if found == NO_CONTRACT => OLDER_STORE,
+            _ => UNKNOWN_STORE,
+        };
+        StoreError::Contract {
+            found: found.to_string(),
+            supported,
+            advice,
+        }
     }
 }
+
+/// What a store with no contract row is reported as.
+const NO_CONTRACT: &str = "none";
 
 /// Where the store lives, honouring the same environment variable `src/prudence/paths.py`
 /// honours, so an app pointed at a copy can never read the real one.
@@ -295,13 +323,12 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
 
     let contract = contract_version(&connection)?;
 
-    // Every view, with the columns its contract version has. Generated from the
-    // contract rather than hand-written, so a column added in Python and listed in
-    // `contract.rs` is selected here without a second edit, and so the two cannot drift.
+    // Every view, with the columns the contract lists. Generated from the contract rather
+    // than hand-written, so a column added in Python and listed in `contract.rs` is
+    // selected here without a second edit, and so the two cannot drift.
     let mut blocks = Map::new();
     for view in contract::VIEWS {
-        let columns = contract::columns_at(view.name, contract);
-        let sql = format!("SELECT {} FROM {}", columns.join(", "), view.name);
+        let sql = format!("SELECT {} FROM {}", view.columns.join(", "), view.name);
         blocks.insert(
             view.name.to_string(),
             serde_json::to_value(block(&connection, &sql)?).unwrap(),
@@ -316,10 +343,12 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
         .unwrap_or(Value::Null);
 
     // The projects a surface can pick between, which is a distinct over one view rather
-    // than a view of its own.
+    // than a view of its own. Every session's project, not every usage row's: a session
+    // whose records carried no token counts is still a project's session, and the hours
+    // and the heat strip count it.
     let projects = rows(
         &connection,
-        "SELECT DISTINCT repo_key AS key, project AS name FROM app_usage_by_purpose_day \
+        "SELECT DISTINCT repo_key AS key, project AS name FROM app_session_list \
          ORDER BY project",
     )?;
 
@@ -335,7 +364,8 @@ pub fn read(path: &Path) -> Result<Value, StoreError> {
         "app_contract_version": contract,
         "status": status,
         "projects": projects,
-        "usage": blocks.get("app_usage_by_purpose_day"),
+        "usage": blocks.get("app_usage_by_bucket_day"),
+        "activity": blocks.get("app_activity_by_day"),
         "outcomes": blocks.get("app_outcomes_by_week"),
         "commits": blocks.get("app_commits_by_day"),
         "sessions": blocks.get("app_session_list"),
@@ -362,19 +392,12 @@ fn contract_version(connection: &Connection) -> Result<u32, StoreError> {
     };
 
     let Some(found) = found else {
-        return Err(StoreError::Contract {
-            found: "none".into(),
-            supported: StoreError::supported_list(),
-        });
+        return Err(StoreError::contract(NO_CONTRACT));
     };
 
-    let parsed = found.trim().parse::<u32>().ok();
-    match parsed {
-        Some(version) if contract::SUPPORTED.contains(&version) => Ok(version),
-        _ => Err(StoreError::Contract {
-            found,
-            supported: StoreError::supported_list(),
-        }),
+    match found.trim().parse::<u32>() {
+        Ok(version) if contract::SUPPORTED.contains(&version) => Ok(version),
+        _ => Err(StoreError::contract(&found)),
     }
 }
 
@@ -477,6 +500,7 @@ mod tests {
         // went blank. The shape is the thing the page needs.
         for key in [
             "usage",
+            "activity",
             "outcomes",
             "commits",
             "sessions",
@@ -491,9 +515,43 @@ mod tests {
         }
         assert!(payload["status"].is_object(), "status is not an object");
         assert!(payload["projects"].is_array(), "projects is not an array");
+        for key in ["usage", "activity"] {
+            assert!(
+                !payload[key]["rows"].as_array().unwrap().is_empty(),
+                "the fixture has no {key} rows"
+            );
+        }
+    }
+
+    /// The project picker's list is every project with a session, which is what the hours
+    /// and the heat strip are counted over. It came from the purpose view, which the engine
+    /// retired at contract 4, and a list read from the bucket view would leave out a project
+    /// whose sessions recorded no token counts.
+    #[test]
+    fn the_projects_are_every_project_with_a_session() {
+        let payload = read(&fixture()).expect("the fixture reads");
+        let connection = Connection::open_with_flags(
+            fixture(),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .unwrap();
+        let expected: Vec<String> = connection
+            .prepare("SELECT DISTINCT project FROM app_session_list ORDER BY project")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let listed: Vec<String> = payload["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(listed, expected);
         assert!(
-            !payload["usage"]["rows"].as_array().unwrap().is_empty(),
-            "the fixture has usage rows"
+            listed.len() >= 2,
+            "the fixture has two projects: {listed:?}"
         );
     }
 
@@ -518,74 +576,25 @@ mod tests {
         );
     }
 
-    /// The columns a **contract 2** store answers with, written out here rather than
-    /// derived from `contract::ADDED_AT_3`.
-    ///
-    /// That is the whole point of the test below. Asserting `columns_at(name, 2)` against
-    /// the constant it is implemented from proves only that the constant is itself, and
-    /// until now nothing opened a contract-2 database at all: the fixture is contract 3,
-    /// so `columns_at(name, 2)` was dead code everywhere except in an assertion about
-    /// itself. If `ADDED_AT_3` were missing an entry, the first person to find out would
-    /// be a user on an older engine.
-    ///
-    /// These two lists are the independent statement. They come from `app_views.py` at
-    /// the commit that introduced contract 3, reading what the columns were *before* it.
-    const OBSERVATION_AT_2: &[&str] = &[
-        "repo_key",
-        "project",
-        "pooled",
-        "fact",
-        "threshold_text",
-        "outcome",
-        "direction",
-        "with_n",
-        "without_n",
-        "with_value",
-        "without_value",
-        "coverage",
-        "fact_commits",
-        "inferred_commits",
-        "fact_version",
-        "observation_id",
-        "sentence",
-    ];
-    const REVIEW_AT_2: &[&str] = &[
-        "id",
-        "created_at",
-        "range_start",
-        "range_end",
-        "outcome_range_start",
-        "outcome_range_end",
-        "repo_key",
-        "project",
-        "headline",
-        "sections",
-        "numbers",
-        "coverage",
-        "segment_text",
-        "segment_model",
-        "segment_created_at",
-    ];
-
-    /// A contract-2 store, built rather than committed: a binary fixture would drift and
-    /// nobody would notice until it mattered.
-    fn contract_two_store(directory: &Path) -> PathBuf {
+    /// A store whose `app_*` tables carry exactly the columns this build reads, one row
+    /// each, at the contract version asked for. Built rather than committed: a binary
+    /// fixture would drift and nobody would notice until it mattered.
+    fn built_store(directory: &Path, version: &str) -> PathBuf {
         let path = directory.join("prudence.db");
         let connection = Connection::open(&path).expect("a new database");
         connection
             .execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)", [])
             .expect("meta");
         connection
-            .execute("INSERT INTO meta VALUES ('app_contract_version', '2')", [])
+            .execute(
+                "INSERT INTO meta VALUES ('app_contract_version', ?1)",
+                [version],
+            )
             .expect("the version");
 
         for view in contract::VIEWS {
-            let columns: Vec<&str> = match view.name {
-                "app_observation" => OBSERVATION_AT_2.to_vec(),
-                "app_review" => REVIEW_AT_2.to_vec(),
-                other => contract::view(other).unwrap().columns.to_vec(),
-            };
-            let spec = columns
+            let spec = view
+                .columns
                 .iter()
                 .map(|column| format!("\"{column}\" TEXT"))
                 .collect::<Vec<_>>()
@@ -593,7 +602,12 @@ mod tests {
             connection
                 .execute(&format!("CREATE TABLE {} ({spec})", view.name), [])
                 .expect("a view");
-            let values = columns.iter().map(|_| "'x'").collect::<Vec<_>>().join(", ");
+            let values = view
+                .columns
+                .iter()
+                .map(|_| "'x'")
+                .collect::<Vec<_>>()
+                .join(", ");
             connection
                 .execute(&format!("INSERT INTO {} VALUES ({values})", view.name), [])
                 .expect("a row");
@@ -613,9 +627,9 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("prudence-rebuild-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a scratch directory");
-        let path = contract_two_store(&directory);
+        let path = built_store(&directory, "4");
 
-        // It reads to begin with: `contract_two_store` builds every view.
+        // It reads to begin with: `built_store` builds every view.
         assert!(readable(&path).is_ok(), "the built store does not read");
 
         // Now drop one, which is what an ingest does to all of them for a moment.
@@ -634,45 +648,54 @@ mod tests {
         // And the contract row is still there, which is exactly why asking only for it
         // was not enough.
         let connection = Connection::open(&path).expect("open again");
-        assert_eq!(contract_version(&connection).ok(), Some(2));
+        assert_eq!(contract_version(&connection).ok(), Some(4));
 
         std::fs::remove_dir_all(&directory).ok();
     }
 
-    /// The contract-2 path, exercised against an actual database.
+    /// A store the app will not read says which side is behind and what fixes it.
+    ///
+    /// The message said "update whichever of the two is older" whatever the numbers were,
+    /// so a reader on a contract 3 store was left to work out that `prudence rebuild` was
+    /// the answer. Contract 4 is the first bump this build refuses an older store over,
+    /// because 3 had the purpose view and 4 does not, so every older store now meets this
+    /// message once.
     #[test]
-    fn a_contract_two_store_reads_without_the_columns_it_does_not_have() {
+    fn a_store_on_another_contract_is_refused_with_what_fixes_it() {
         let directory =
-            std::env::temp_dir().join(format!("prudence-contract-2-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("a scratch directory");
-        let path = contract_two_store(&directory);
-
-        let payload = read(&path).expect("a contract 2 store reads");
-        assert_eq!(payload["app_contract_version"], 2);
-
-        let columns = |block: &str| -> Vec<String> {
-            payload[block]["columns"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|value| value.as_str().unwrap().to_string())
-                .collect()
-        };
-        assert_eq!(columns("observations"), OBSERVATION_AT_2);
-        assert_eq!(columns("reviews"), REVIEW_AT_2);
-        // And the three that arrived at contract 3 really are the ones left out.
-        for (view, column) in contract::ADDED_AT_3 {
-            let block = match *view {
-                "app_observation" => "observations",
-                "app_review" => "reviews",
-                other => panic!("no block for {other}"),
-            };
-            assert!(
-                !columns(block).iter().any(|have| have == column),
-                "{column} should not be selected from a contract 2 store"
+            std::env::temp_dir().join(format!("prudence-contract-{}", std::process::id()));
+        for (found, fix) in [
+            ("3", "prudence rebuild"),
+            ("2", "Ingest now"),
+            ("5", "update the app"),
+        ] {
+            std::fs::create_dir_all(&directory).expect("a scratch directory");
+            let path = built_store(&directory, found);
+            let message = format!(
+                "{}",
+                read(&path).expect_err("another contract must not read")
             );
+            assert!(
+                message.contains(&format!("contract version {found}"))
+                    && message.contains("reads 4"),
+                "the refusal does not name both versions: {message}"
+            );
+            assert!(
+                message.contains(fix),
+                "a contract {found} store is not told to {fix}: {message}"
+            );
+            std::fs::remove_dir_all(&directory).ok();
         }
 
+        // A store with no contract row at all predates contracts, so it is the older side.
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let path = directory.join("prudence.db");
+        Connection::open(&path)
+            .expect("a new database")
+            .execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)", [])
+            .expect("meta");
+        let message = format!("{}", read(&path).expect_err("no contract must not read"));
+        assert!(message.contains("prudence rebuild"), "{message}");
         std::fs::remove_dir_all(&directory).ok();
     }
 
@@ -717,24 +740,12 @@ mod tests {
         }
     }
 
-    /// Contract 3 is additive, so a contract-2 store is read by selecting the columns
-    /// that existed then. If this list is wrong, a 2 store fails at the first select.
+    /// Eight: contract 4 retired the purpose view and added the bucket and activity
+    /// views. `app_session_time` and `app_observation_text` are helper tables and
+    /// `app_views.py` says they are not contract.
     #[test]
-    fn a_contract_two_store_is_selected_without_the_columns_three_added() {
-        let at_two = contract::columns_at("app_observation", 2);
-        let at_three = contract::columns_at("app_observation", 3);
-        assert!(!at_two.contains(&"threshold_value"));
-        assert!(at_three.contains(&"threshold_value"));
-        assert_eq!(at_three.len(), at_two.len() + 2);
-        assert!(!contract::columns_at("app_review", 2).contains(&"segment_language"));
-    }
-
-    /// Seven, not the eleven an earlier note claimed: `app_session_time` and
-    /// `app_observation_text` are helper tables and `app_views.py` says they are not
-    /// contract.
-    #[test]
-    fn the_contract_is_the_seven_views_the_engine_publishes() {
-        assert_eq!(contract::VIEWS.len(), 7);
+    fn the_contract_is_the_eight_views_the_engine_publishes() {
+        assert_eq!(contract::VIEWS.len(), 8);
         for view in contract::VIEWS {
             assert!(view.name.starts_with("app_"));
             assert!(!view.columns.is_empty());
@@ -766,7 +777,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("prudence-snapshot-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a scratch directory");
-        let path = contract_two_store(&directory);
+        let path = built_store(&directory, "4");
         forget();
 
         // One read, and the answer says it is the first.

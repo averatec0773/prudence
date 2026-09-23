@@ -272,10 +272,15 @@ export function list(parts, language) {
 }
 
 /** The same separator, for a list whose parts are elements rather than strings. The panel
- *  colours each purpose in its own sentence, so the parts are spans and the joins are text
+ *  colours each bucket in its own sentence, so the parts are spans and the joins are text
  *  nodes between them; the punctuation still comes from the language and not from JS. */
 export function listSeparator(language) {
   return tIn(langOf(language), "common.listSeparator");
+}
+
+/** What a reply did, in the reader's word: `change`, `run`, `read`, `talk`. */
+export function bucket(key, language) {
+  return tIn(langOf(language), `bucket.${key}`);
 }
 
 /** The purpose the reader sees. `unknown` is "other", never "unknown". */
