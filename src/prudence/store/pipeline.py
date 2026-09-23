@@ -17,7 +17,11 @@ anything, because they are the join of the two before them: a behaviour fact on 
 and what became of the lines on the other.
 
 `ingest` runs all eleven; `rebuild` runs all but the archive, which is what makes a
-parser change a rebuild rather than a migration. The last step derives nothing: it is
+parser change a rebuild rather than a migration. They differ in one more way: an ingest
+parses only the sessions whose inputs moved, harvests only the commits it has not
+stored and keeps the outcome marks already measured, where a rebuild parses, harvests
+and measures everything; `tests/test_incremental.py` holds the two to the same tables
+(ARCHITECTURE.md, "What an ingest reads again"). The last step derives nothing: it is
 `store/app_views.replace_app_views`, which puts the `app_*` read contract back over
 whatever the earlier steps have just written. It is a step here because a client
 watching `--progress` waits for it like any other.
@@ -36,8 +40,10 @@ or the new one.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from prudence import config as config_module
 from prudence.facts import registry as facts_registry
@@ -49,6 +55,7 @@ from prudence.store import (
     derived,
     hand_edits,
     lines,
+    meta,
     observations,
     outcomes,
     repos,
@@ -89,6 +96,16 @@ LABELS: dict[str, str] = {
 }
 
 
+# SQLite's page cache for the run's connection, in KiB. The default is 2 MiB, and the
+# commit harvest and the parse write into primary keys and indexes of tens to hundreds of
+# megabytes in no particular order, so with the default nearly every row inserted read
+# its pages back from disk. The cache is taken as pages are used and freed at the end.
+CACHE_KIB = 256 * 1024
+
+# Where the last run of each command says what it did, in `meta`, which no step rebuilds.
+LAST_RUN_KEYS = {True: "last_ingest", False: "last_rebuild"}
+
+
 @dataclass
 class Result:
     archived: archive.IngestStats | None = None
@@ -103,6 +120,8 @@ class Result:
         default_factory=observations.ObservationStats
     )
     repositories: int = 0
+    # Wall-clock seconds per step, in the order they ran.
+    steps: dict[str, float] = field(default_factory=dict)
 
 
 def run(
@@ -110,14 +129,20 @@ def run(
     config: config_module.Config,
     with_archive: bool,
     progress: progress_module.Sink | None = None,
+    workers: int = 1,
 ) -> Result:
-    """Build everything the store holds, from the sources each step is allowed to read."""
+    """Build everything the store holds, from the sources each step is allowed to read.
+
+    `ingest` (with the archive) parses incrementally; `rebuild` reads everything.
+    `workers` is how many processes read archived files during the parse.
+    """
     result = Result()
     steps = STEPS if with_archive else tuple(name for name in STEPS if name != ARCHIVE)
     reporter = progress_module.Run(progress, steps, LABELS)
     # The swaps below rename tables the `app_*` views name; see the module docstring for
     # why that is allowed to happen under them rather than after they are taken down.
     connection.execute("PRAGMA legacy_alter_table=ON")
+    connection.execute(f"PRAGMA cache_size=-{CACHE_KIB}")
     try:
         with reporter.step("repositories") as step:
             resolver = repos.resolver(connection, config, progress=step)
@@ -133,7 +158,14 @@ def run(
             repos.save_discoveries(connection, resolver)
 
         with reporter.step("parse") as step:
-            result.parsed = derived.build(connection, config.levels, resolver, progress=step)
+            result.parsed = derived.build(
+                connection,
+                config.levels,
+                resolver,
+                progress=step,
+                incremental=with_archive,
+                workers=workers,
+            )
         with reporter.step("hooks") as step:
             result.hooks = spool.build(connection, resolver, progress=step)
         with reporter.step("turn_trees") as step:
@@ -141,12 +173,19 @@ def run(
         key = lines.load_key()
         with reporter.step("commits") as step:
             result.harvested = commits.harvest(
-                connection, repositories, key, config.levels, progress=step
+                connection, repositories, key, config.levels, progress=step, keep=with_archive
             )
         with reporter.step("attribution") as step:
             result.attributed = attribution.build(connection, repositories, progress=step)
         with reporter.step("outcomes") as step:
-            result.outcomes = outcomes.build(connection, repositories, key, progress=step)
+            result.outcomes = outcomes.build(
+                connection,
+                repositories,
+                key,
+                progress=step,
+                keep_marks=with_archive,
+                workers=workers,
+            )
         with reporter.step("facts") as step:
             result.facts = facts_registry.build(connection, progress=step)
         with reporter.step("observations") as step:
@@ -158,4 +197,33 @@ def run(
     # transaction so that a store never holds half a contract.
     with reporter.step("views") as step:
         app_views.replace_app_views(connection, progress=step)
+    result.steps = dict(reporter.elapsed)
+    meta.set_meta(connection, LAST_RUN_KEYS[with_archive], json.dumps(_run_record(result)))
     return result
+
+
+def _run_record(result: Result) -> dict:
+    """What `prudence status` says about the last ingest or rebuild: what was read, how long."""
+    parsed, fates = result.parsed, result.outcomes
+    return {
+        "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "seconds": round(sum(result.steps.values()), 3),
+        "steps": result.steps,
+        "workers": parsed.workers,
+        "parse_mode": parsed.mode,
+        "full_reason": parsed.full_reason,
+        "files_parsed": parsed.files_parsed,
+        "files_skipped": parsed.files_skipped,
+        "sessions_parsed": parsed.sessions_parsed,
+        "marks_measured": fates.marks_measured,
+        "marks_kept": fates.marks_kept,
+    }
+
+
+def last_runs(connection: sqlite3.Connection) -> dict[str, dict | None]:
+    """The records `run` left for the last ingest and the last rebuild, or None each."""
+    found: dict[str, dict | None] = {}
+    for key in LAST_RUN_KEYS.values():
+        value = meta.get_meta(connection, key)
+        found[key] = json.loads(value) if value else None
+    return found

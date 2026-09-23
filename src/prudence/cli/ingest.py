@@ -19,8 +19,24 @@ from prudence.cli.render import size
 from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
 from prudence.reviews import first_look
-from prudence.store import db, pipeline
+from prudence.store import db, parse_pool, pipeline
 from prudence.store import progress as progress_module
+
+WORKERS_HELP = (
+    "Processes that read archived files while parsing. Defaults to the number of cores"
+    f" minus one, at most {parse_pool.MAX_DEFAULT_WORKERS}; 1 reads in this process."
+)
+
+
+def workers_option(function):
+    """`--workers`, shared by `ingest` and `rebuild`."""
+    return click.option(
+        "--workers",
+        type=click.IntRange(min=1),
+        default=parse_pool.default_workers,
+        show_default="cores minus one",
+        help=WORKERS_HELP,
+    )(function)
 
 
 @click.command()
@@ -31,7 +47,8 @@ from prudence.store import progress as progress_module
     is_flag=True,
     help="Write one JSON progress line per step to stderr while the ingest runs.",
 )
-def ingest(as_json: bool, show_progress: bool) -> None:
+@workers_option
+def ingest(as_json: bool, show_progress: bool, workers: int) -> None:
     """Record everything new from the enabled repositories."""
     config = config_module.load()
     if not config.repositories:
@@ -40,7 +57,7 @@ def ingest(as_json: bool, show_progress: bool) -> None:
         )
     try:
         with db.ingest_lock():
-            _run(config, as_json, show_progress)
+            _run(config, as_json, show_progress, workers)
     except db.Locked as error:
         raise click.ClickException(str(error)) from error
 
@@ -61,11 +78,20 @@ def progress_sink(enabled: bool) -> progress_module.Sink | None:
     return write
 
 
-def _run(config: config_module.Config, as_json: bool = False, show_progress: bool = False) -> None:
+def _run(
+    config: config_module.Config,
+    as_json: bool = False,
+    show_progress: bool = False,
+    workers: int = 1,
+) -> None:
     connection = db.connect()
     try:
         result = pipeline.run(
-            connection, config, with_archive=True, progress=progress_sink(show_progress)
+            connection,
+            config,
+            with_archive=True,
+            progress=progress_sink(show_progress),
+            workers=workers,
         )
         _refresh_enabled(connection)
         if as_json:
@@ -133,6 +159,17 @@ def report(result: pipeline.Result) -> list[str]:
         f"{parsed.commands} commands, {parsed.unknown_types} unknown record types, "
         f"{parsed.elapsed:.1f} s."
     )
+    if parsed.mode == "incremental":
+        lines.append(
+            f"Read {parsed.files_parsed} of {parsed.files_total} archived files "
+            f"({parsed.sessions_parsed} sessions) with {parsed.workers} workers; every other "
+            "session's rows were kept from the last parse."
+        )
+    else:
+        lines.append(
+            f"Read all {parsed.files_total} archived files with {parsed.workers} workers "
+            f"(a full parse: {parsed.full_reason})."
+        )
     lines.append(
         f"Tokens: {parsed.usage_tokens} over {parsed.usage_rows} API responses "
         "(input, output and cache together; a response is counted once)."
@@ -167,7 +204,9 @@ def report(result: pipeline.Result) -> list[str]:
         f"Commits: {harvested.commits + harvested.merges} harvested from "
         f"{harvested.repositories} repositories ({harvested.merges} of them merges, which "
         f"carry no lines; {harvested.added_lines} added lines, "
-        f"{harvested.excluded_paths} generated paths skipped), {harvested.elapsed:.1f} s."
+        f"{harvested.excluded_paths} generated paths skipped; {harvested.kept} already stored"
+        f" and kept, {harvested.dropped} no longer reachable and dropped),"
+        f" {harvested.elapsed:.1f} s."
     )
     attributed = result.attributed
     lines.append(
@@ -201,7 +240,8 @@ def report(result: pipeline.Result) -> list[str]:
     lines.append(
         f"Outcomes: {fates.lines} attributed lines of {fates.commits} commits followed to "
         f"7, 30 and 90 days and to HEAD ({fates.blamed_paths} files blamed, "
-        f"{fates.reworked} lines reworked), {fates.elapsed:.1f} s."
+        f"{fates.reworked} lines reworked; {fates.marks_measured} marks read from git, "
+        f"{fates.marks_kept} kept from an earlier run), {fates.elapsed:.1f} s."
     )
     if fates.sampled_repositories:
         lines.append(

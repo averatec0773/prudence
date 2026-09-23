@@ -136,7 +136,8 @@ class Run:
     """The steps of one pipeline run, numbered as the client will number them.
 
     `steps` is the run's own list, so a `rebuild` that skips the archive reports ten
-    steps numbered one to ten rather than eleven with a hole in the middle.
+    steps numbered one to ten rather than eleven with a hole in the middle. `elapsed`
+    holds each finished step's wall-clock seconds, for `prudence status` to show later.
     """
 
     def __init__(
@@ -145,6 +146,7 @@ class Run:
         self._sink = sink
         self._steps = steps
         self._labels = labels or {}
+        self.elapsed: dict[str, float] = {}
 
     @contextmanager
     def step(self, name: str) -> Iterator[Step]:
@@ -159,8 +161,10 @@ class Run:
             steps=len(self._steps),
             label=self._labels.get(name, name),
         )
+        started = time.monotonic()
         yield handle
         handle.done()
+        self.elapsed[name] = round(time.monotonic() - started, 3)
 
 
 def silent() -> Step:

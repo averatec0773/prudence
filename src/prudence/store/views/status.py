@@ -23,6 +23,7 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         derived,
         observations,
         outcomes,
+        pipeline,
         rewritten,
         spool,
     )
@@ -133,6 +134,7 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
             "SELECT type, claude_version, count FROM unknown_record_type ORDER BY count DESC, type"
         )
     ]
+    result.update(pipeline.last_runs(connection))
     return result
 
 

@@ -26,6 +26,7 @@ from prudence.store import (
     derived,
     observations,
     outcomes,
+    pipeline,
     rewritten,
     spool,
     views,
@@ -187,7 +188,7 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
     ).fetchone()[0]
     if resumed:
         lines.append(f"resumed sessions noted: {resumed}")
-    return lines + _unknown_lines(connection)
+    return lines + _unknown_lines(connection) + _last_run_lines(connection)
 
 
 def _usage_lines(connection: sqlite3.Connection) -> list[str]:
@@ -332,6 +333,27 @@ def _mapping_lines(connection: sqlite3.Connection) -> list[str]:
         detail = ", ".join(f"{count} by {method}" for method, count in sorted(recovered.items()))
         lines.append(f"sessions mapped by a fallback: {detail}")
     lines.append(f"sessions with no repository: {unassigned}")
+    return lines
+
+
+def _last_run_lines(connection: sqlite3.Connection) -> list[str]:
+    """What the last ingest and the last rebuild read, kept, and spent their time on."""
+    lines: list[str] = []
+    for key, record in pipeline.last_runs(connection).items():
+        if record is None:
+            continue
+        command = key.removeprefix("last_")
+        how = record["parse_mode"]
+        if record.get("full_reason"):
+            how += f", because {record['full_reason']}"
+        lines.append(
+            f"last {command}: {record['finished_at']}, {record['seconds']:.1f} s with "
+            f"{record['workers']} workers; parse {how}: {record['files_parsed']} files parsed, "
+            f"{record['files_skipped']} skipped ({record['sessions_parsed']} sessions read); "
+            f"outcome marks {record['marks_measured']} measured, {record['marks_kept']} kept"
+        )
+        steps = ", ".join(f"{name} {seconds:.1f} s" for name, seconds in record["steps"].items())
+        lines.append(f"  steps: {steps}")
     return lines
 
 

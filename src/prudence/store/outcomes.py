@@ -17,7 +17,7 @@ Five measurements per line, and they are deliberately not one number:
 - `alive_head`: the same test at HEAD now. `alive_head_anywhere` repeats it over every
   file at HEAD, which is how a line that moved to another path stays visible as moved
   rather than dead.
-- `blame_head`: `git blame -w -M --line-porcelain` at HEAD still credits that line to
+- `blame_head`: `git blame -w -M --porcelain` at HEAD still credits that line to
   the commit (or to a commit the alias table says is the same work). The spike measured
   presence and blame within two points of each other on average and five in the worst
   repository, always in the same direction, because presence counts an identical line
@@ -28,8 +28,9 @@ Five measurements per line, and they are deliberately not one number:
 Rework is the sixth column and a different kind of fact: `reworked_by` holds the first
 later commit, inside the ninety-day window and carrying one of the user's own identities
 (see `user_identities`), whose diff removed that line from that path. Removals are read
-in one streaming `git log -p -U0` pass, filtered to the lines this table already holds,
-so the memory is bounded by the table and not by the repository.
+in one streaming `git log -p -U0` pass over the commits that changed a followed file,
+filtered to the lines this table already holds, so the memory is bounded by the table
+and not by the repository.
 
 Two guards. A repository where other people commit gets no outcome facts at all, and
 fact version 2 changed how "other people" is decided, because version 1 suppressed the
@@ -61,16 +62,30 @@ And a repository with more attributed commits than `MAX_COMMITS` is sampled
 deterministically by commit hash, so a rebuild produces exactly the same sample and the
 surfaces can say which share of the work they speak for.
 
+What an ingest measures again and what it keeps. A measurement at a fixed moment in the
+past is kept once it has been made: the 7, 30 and 90 day marks of a commit read the tree
+the branch had at a date that has passed, so `outcome_mark` holds every such answer,
+line by line, and the next ingest reuses it rather than asking git again. A measurement
+of "now" is never kept: presence at HEAD, blame at HEAD and rework are read afresh for
+every counted commit on every run, because HEAD moves, and nothing here is cached under
+HEAD or under anything HEAD names. A kept mark is dropped, and the commit measured again
+in full, when the commit's attribution changed (another session, method, rank or
+confidence) or when this module's fact version did. `rebuild` keeps nothing: it
+measures every mark again and writes the cache anew.
+
 Read-only git only: `ls-tree`, `cat-file`, `rev-list`, `blame`, `log`.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import shutil
 import sqlite3
 import subprocess
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -95,6 +110,10 @@ OTHER_AUTHOR_SHARE = 0.20
 # so a rebuild draws the same sample; the surfaces print the share when it fires.
 MAX_COMMITS = 2000
 
+# Paths named in one `git log` when asking which commits changed the followed files.
+# A command line has a length limit, and a repository can follow thousands of files.
+PATHS_PER_CALL = 500
+
 # Blobs larger than this are not read. A file nobody can read a line out of has no
 # line to find, and one huge generated file should not decide the run's cost.
 MAX_BLOB_BYTES = 2_000_000
@@ -115,6 +134,23 @@ CREATE TABLE IF NOT EXISTS line_fate(
     PRIMARY KEY (commit_hash, path, line_hash)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS line_fate_path ON line_fate(path);
+"""
+
+# The marks already measured, per line. A value is NULL until its mark has been read;
+# `attribution` is `_attribution_keys`'s digest of the rows that counted the commit.
+MARK_TABLE = "outcome_mark"
+MARK_SCHEMA = """
+CREATE TABLE {name}(
+    commit_hash TEXT NOT NULL,
+    path TEXT NOT NULL,
+    line_hash TEXT NOT NULL,
+    alive_7d INTEGER,
+    alive_30d INTEGER,
+    alive_90d INTEGER,
+    attribution TEXT NOT NULL,
+    fact_version INTEGER NOT NULL,
+    PRIMARY KEY (commit_hash, path, line_hash)
+) WITHOUT ROWID
 """
 
 
@@ -160,6 +196,9 @@ class OutcomeStats:
     # Repository name to the guard's counts, for the repositories it suppressed.
     suppressed: dict[str, Guard] = field(default_factory=dict)
     blamed_paths: int = 0
+    # (commit, mark) pairs read from git this run, and kept from an earlier one.
+    marks_measured: int = 0
+    marks_kept: int = 0
     elapsed: float = 0.0
 
 
@@ -176,15 +215,24 @@ def build(
     key: bytes,
     now: datetime | None = None,
     progress: progress_module.Step | None = None,
+    keep_marks: bool = False,
+    workers: int = 1,
 ) -> OutcomeStats:
-    """Recompute every line's fate. Dropped and rebuilt, never migrated (rule 1)."""
+    """Recompute every line's fate. Dropped and rebuilt, never migrated (rule 1).
+
+    `keep_marks` (what `ingest` asks for) reuses the marks an earlier run measured, as
+    the module docstring says; `workers` is how many git processes run at once.
+    """
     started = time.monotonic()
     stats = OutcomeStats()
     progress = progress or progress_module.silent()
     # Naive UTC throughout, the one form `store/commits.utc` puts every timestamp in.
     moment = now or datetime.now(UTC).replace(tzinfo=None)
+    kept = _kept_marks(connection) if keep_marks else {}
     connection.execute("DROP TABLE IF EXISTS line_fate")
     connection.executescript(SCHEMA)
+    connection.execute(f"DROP TABLE IF EXISTS {MARK_TABLE}__new")
+    connection.execute(MARK_SCHEMA.format(name=f"{MARK_TABLE}__new"))
     connection.execute(
         "UPDATE repository SET outcomes_suppressed = 0, outcomes_suppressed_note = NULL"
     )
@@ -207,10 +255,63 @@ def build(
             )
             stats.suppressed[repository.name or repository.repo_key] = guard
             continue
-        _one_repository(connection, repository, key, moment, identities, stats, progress)
+        _one_repository(
+            connection, repository, key, moment, identities, stats, progress, kept, workers
+        )
 
+    _swap_marks(connection)
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+def _kept_marks(connection: sqlite3.Connection) -> dict[str, tuple[str, dict]]:
+    """The marks an earlier run measured: commit -> (attribution digest, line -> marks)."""
+    kept: dict[str, tuple[str, dict]] = {}
+    try:
+        rows = connection.execute(
+            f"SELECT * FROM {MARK_TABLE} WHERE fact_version = ?", (FACT_VERSION,)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return kept
+    for row in rows:
+        _, lines = kept.setdefault(row["commit_hash"], (row["attribution"], {}))
+        lines[(row["path"], row["line_hash"])] = (
+            row["alive_7d"],
+            row["alive_30d"],
+            row["alive_90d"],
+        )
+    return kept
+
+
+def _attribution_keys(connection: sqlite3.Connection, hashes: list[str]) -> dict[str, str]:
+    """A digest of the attribution rows that count each commit, to tell when they change."""
+    rows: dict[str, list[str]] = defaultdict(list)
+    for start in range(0, len(hashes), 400):
+        batch = hashes[start : start + 400]
+        marks = ", ".join("?" * len(batch))
+        for row in connection.execute(
+            "SELECT commit_hash, session_id, method, rank, confidence FROM attribution"
+            f" WHERE commit_hash IN ({marks})",
+            batch,
+        ):
+            rows[row["commit_hash"]].append(
+                f"{row['session_id']}|{row['method']}|{row['rank']}|{row['confidence']}"
+            )
+    return {
+        commit: hashlib.sha256("\n".join(sorted(entries)).encode()).hexdigest()[:16]
+        for commit, entries in rows.items()
+    }
+
+
+def _swap_marks(connection: sqlite3.Connection) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute(f"DROP TABLE IF EXISTS {MARK_TABLE}")
+        connection.execute(f"ALTER TABLE {MARK_TABLE}__new RENAME TO {MARK_TABLE}")
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
 
 
 def user_identities(connection: sqlite3.Connection) -> set[str]:
@@ -282,6 +383,8 @@ def _one_repository(
     identities: set[str],
     stats: OutcomeStats,
     progress: progress_module.Step,
+    kept: dict[str, tuple[str, dict]],
+    workers: int,
 ) -> None:
     directory = repository.toplevel
     assert directory is not None
@@ -304,21 +407,29 @@ def _one_repository(
     # This is one unit of the `outcomes` step and several minutes of git on a real
     # repository, so each phase says its own name without moving the counter.
     name = repository.name or repository.repo_key
+    attributed = _attribution_keys(connection, [commit.commit_hash for commit in commits])
+    measured = _still_measured(kept, attributed, fates)
+    stats.marks_kept += len(measured)
     blobs = _Blobs(directory, key)
     try:
         progress.at(f"Indexing the HEAD of {name}")
         by_path, everywhere = _head_index(directory, key, blobs)
         progress.at(f"Finding the 7, 30 and 90 day marks of {name}")
-        marks = _marks(directory, commits, now)
+        # A commit with no line to follow (every path generated, or nothing added) has no
+        # row a mark could fill, so its marks are not looked up at all.
+        followed = [commit for commit in commits if commit.commit_hash in fates]
+        marks = _marks(directory, followed, now, measured, workers)
+        stats.marks_measured += len(marks)
         at_mark = _mark_lines(blobs, fates, commits, marks)
         progress.at(f"Blaming {name}")
-        blamed = _blame(directory, key, paths & set(by_path), stats)
+        blamed = _blame(directory, key, paths & set(by_path), stats, workers)
         progress.at(f"Looking for rework in {name}")
         reworked = _rework(directory, key, fates, commits, identities)
         aliases = _alias_groups(connection)
 
         rows = []
         for commit in commits:
+            before = kept.get(commit.commit_hash, ("", {}))[1]
             for entry in fates.get(commit.commit_hash, ()):
                 path, line_hash = entry
                 rows.append(
@@ -327,8 +438,10 @@ def _one_repository(
                         path,
                         line_hash,
                         *(
-                            _present(at_mark.get((commit.commit_hash, days)), path, line_hash)
-                            for days in MARKS
+                            before[entry][index]
+                            if (commit.commit_hash, days) in measured
+                            else _present(at_mark.get((commit.commit_hash, days)), path, line_hash)
+                            for index, days in enumerate(MARKS)
                         ),
                         int(line_hash in by_path.get(path, ())),
                         int(line_hash in everywhere),
@@ -337,9 +450,24 @@ def _one_repository(
                         FACT_VERSION,
                     )
                 )
-        connection.executemany(
-            "INSERT OR REPLACE INTO line_fate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
-        )
+        # One commit for the repository's rows: row by row, each was its own.
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.executemany(
+                "INSERT OR REPLACE INTO line_fate VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+            )
+            connection.executemany(
+                f"INSERT OR REPLACE INTO {MARK_TABLE}__new VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (*row[:6], attributed.get(row[0], ""), FACT_VERSION)
+                    for row in rows
+                    if any(value is not None for value in row[3:6])
+                ],
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
         stats.lines += len(rows)
         stats.reworked += sum(1 for row in rows if row[9] is not None)
     finally:
@@ -514,10 +642,36 @@ def _head_index(
     return by_path, frozenset(everywhere)
 
 
-def _marks(directory: str, commits: list[_Commit], now: datetime) -> dict[tuple[str, int], str]:
-    """The commit the branch stood at, for every mark that has already happened."""
-    resolved: dict[str, str | None] = {}
-    marks: dict[tuple[str, int], str] = {}
+def _still_measured(
+    kept: dict[str, tuple[str, dict]],
+    attributed: dict[str, str],
+    fates: dict[str, list[tuple[str, str]]],
+) -> set[tuple[str, int]]:
+    """The (commit, mark) pairs an earlier run measured for every line, and still valid.
+
+    Valid means the commit is counted by the same attribution rows as then; a mark is
+    measured when every line the commit holds now has a value for it.
+    """
+    measured: set[tuple[str, int]] = set()
+    for commit_hash, entries in fates.items():
+        digest, lines = kept.get(commit_hash, ("", {}))
+        if not lines or digest != attributed.get(commit_hash):
+            continue
+        for index, days in enumerate(MARKS):
+            if all(lines.get(entry, (None,) * 3)[index] is not None for entry in entries):
+                measured.add((commit_hash, days))
+    return measured
+
+
+def _marks(
+    directory: str,
+    commits: list[_Commit],
+    now: datetime,
+    measured: set[tuple[str, int]],
+    workers: int,
+) -> dict[tuple[str, int], str]:
+    """The commit the branch stood at, for every mark that has happened and was not kept."""
+    wanted: dict[tuple[str, int], str] = {}
     for commit in commits:
         made = utc(commit.committer_at)
         if made is None:
@@ -525,15 +679,19 @@ def _marks(directory: str, commits: list[_Commit], now: datetime) -> dict[tuple[
         base = datetime.fromisoformat(made)
         for days in MARKS:
             when = base + timedelta(days=days)
-            if when > now:
+            if when > now or (commit.commit_hash, days) in measured:
                 continue
-            stamp = when.strftime("%Y-%m-%dT%H:%M:%S")
-            if stamp not in resolved:
-                resolved[stamp] = _git(directory, "rev-list", "-1", f"--before={stamp}", "HEAD")
-            found = resolved[stamp]
-            if found:
-                marks[(commit.commit_hash, days)] = found
-    return marks
+            wanted[(commit.commit_hash, days)] = when.strftime("%Y-%m-%dT%H:%M:%S")
+    stamps = sorted(set(wanted.values()))
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        found = pool.map(lambda stamp: _mark_commit(directory, stamp), stamps)
+        resolved = dict(zip(stamps, found, strict=True))
+    return {pair: resolved[stamp] for pair, stamp in wanted.items() if resolved[stamp]}
+
+
+def _mark_commit(directory: str, stamp: str) -> str | None:
+    """The commit HEAD's history stood at, at one moment."""
+    return _git(directory, "rev-list", "-1", f"--before={stamp}", "HEAD")
 
 
 def _mark_lines(
@@ -567,30 +725,55 @@ def _present(at_mark: dict[str, frozenset[str]] | None, path: str, line_hash: st
 
 
 def _blame(
-    directory: str, key: bytes, paths: set[str], stats: OutcomeStats
+    directory: str, key: bytes, paths: set[str], stats: OutcomeStats, workers: int = 1
 ) -> dict[str, dict[str, set[str]]]:
-    """Which commit blame credits each line of each file to, at HEAD, cached per path."""
+    """Which commit blame credits each line of each file to, at HEAD, cached per path.
+
+    Every path is blamed on every run, `workers` processes at a time, and each answer is
+    read as soon as it arrives, while the others are still being computed; the answers
+    are collected in path order, so the result does not depend on which finished first.
+    """
     result: dict[str, dict[str, set[str]]] = {}
-    for path in sorted(paths):
-        output = _git(directory, "blame", "-w", "-M", "--line-porcelain", "HEAD", "--", path)
-        if output is None:
+    ordered = sorted(paths)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        blamed = list(
+            zip(
+                ordered,
+                pool.map(lambda path: _blame_one(directory, key, path), ordered),
+                strict=True,
+            )
+        )
+    for path, per_line in blamed:
+        if per_line is None:
             continue
         stats.blamed_paths += 1
-        per_line: dict[str, set[str]] = defaultdict(set)
-        current: str | None = None
-        for line in output.splitlines():
-            if line.startswith("\t"):
-                if current is not None:
-                    digest = line_module.hash_line(key, line[1:])
-                    if digest is not None:
-                        per_line[digest].add(current)
-                current = None
-            else:
-                head = line.split(" ", 1)[0]
-                if len(head) == 40 and all(c in "0123456789abcdef" for c in head):
-                    current = head
-        result[path] = dict(per_line)
+        result[path] = per_line
     return result
+
+
+def _blame_one(directory: str, key: bytes, path: str) -> dict[str, set[str]] | None:
+    """One file's blame at HEAD, as line hash -> the commits blame credits with it.
+
+    `--porcelain` says which commit each line comes from exactly as `--line-porcelain`
+    does, and repeats a commit's details only the first time, so there is less to read.
+    """
+    output = _git(directory, "blame", "-w", "-M", "--porcelain", "HEAD", "--", path)
+    if output is None:
+        return None
+    per_line: dict[str, set[str]] = defaultdict(set)
+    current: str | None = None
+    for line in output.splitlines():
+        if line.startswith("\t"):
+            if current is not None:
+                digest = line_module.hash_line(key, line[1:])
+                if digest is not None:
+                    per_line[digest].add(current)
+            current = None
+        else:
+            head = line.split(" ", 1)[0]
+            if len(head) == 40 and all(c in "0123456789abcdef" for c in head):
+                current = head
+    return dict(per_line)
 
 
 def _alias_groups(connection: sqlite3.Connection) -> dict[str, set[str]]:
@@ -676,9 +859,21 @@ def _rework(
 def _removed_lines(
     directory: str, key: bytes, wanted: set[tuple[str, str]]
 ) -> dict[tuple[str, str], list[tuple[str, str, str]]]:
-    """Every removal of a line we care about, oldest first: when, by which commit, by whom."""
+    """Every removal of a line we care about, oldest first: when, by which commit, by whom.
+
+    Only the commits in which one of the followed files changed are read with their
+    diffs (`_touching`), and read whole, exactly as a pass over every commit would read
+    them: a line can only leave a file in a commit that changed it. A hunk in a file no
+    counted line sits in is passed over without hashing its lines. The history of a
+    repository is mostly other files, and reading and hashing all of it was most of this
+    step's time.
+    """
+    paths = {path for path, _ in wanted}
+    commits = _touching(directory, paths)
+    if not commits:
+        return {}
     record, field_sep = "\x01", "\x1f"
-    process = _log(directory, f"--format={record}%H{field_sep}%cI{field_sep}%ae")
+    process = _log(directory, f"--format={record}%H{field_sep}%cI{field_sep}%ae", revisions=commits)
     if process is None:
         return {}
     removals: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
@@ -702,6 +897,7 @@ def _removed_lines(
             path, in_hunk = None, False
         elif not in_hunk and line.startswith("--- "):
             path = _post_path(line[4:])
+            path = path if path in paths else None
         elif line.startswith("@@"):
             in_hunk = path is not None
         elif in_hunk and path is not None and line.startswith("-"):
@@ -730,16 +926,31 @@ def _post_path(raw: str) -> str | None:
 # --- git ------------------------------------------------------------------------------------
 
 
+@functools.cache
+def _git_executable() -> str:
+    """git's full path, found once. See `_git` for why it has to be a path."""
+    return shutil.which("git") or "git"
+
+
 def _git(directory: str, *args: str) -> str | None:
+    """One git command's output, or None when it failed.
+
+    Blame runs once per followed file on every run, thousands of commands, and forking
+    this process to start each one cost more than the blame itself once the parse had
+    left it large. Started from git's full path with `close_fds=False`, Python uses
+    `posix_spawn` instead of `fork`; this process opens nothing a child could inherit,
+    because Python and SQLite both open their descriptors close-on-exec.
+    """
     try:
         result = subprocess.run(
-            ["git", "-C", directory, *args],
+            [_git_executable(), "-C", directory, *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=120,
             check=False,
+            close_fds=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -748,10 +959,48 @@ def _git(directory: str, *args: str) -> str | None:
     return result.stdout.strip("\n") or None
 
 
-def _log(directory: str, *args: str) -> subprocess.Popen | None:
+def _touching(directory: str, paths: set[str]) -> list[str]:
+    """Every non-merge commit reachable from any ref in which one of these paths changed.
+
+    `--full-history` keeps the commits a merge's history simplification would hide, and
+    `--literal-pathspecs` keeps a path with `*` or `?` in it a path. Asked in groups of
+    `PATHS_PER_CALL` so the command line stays short, and the answers joined.
+    """
+    found: dict[str, None] = {}
+    ordered = sorted(paths)
+    for start in range(0, len(ordered), PATHS_PER_CALL):
+        output = _git(
+            directory,
+            "--literal-pathspecs",
+            "log",
+            "--all",
+            "--no-merges",
+            "--full-history",
+            "--format=%H",
+            "--",
+            *ordered[start : start + PATHS_PER_CALL],
+        )
+        found.update(dict.fromkeys((output or "").split()))
+    return list(found)
+
+
+def _log(directory: str, *args: str, revisions: list[str]) -> subprocess.Popen | None:
+    """`git log -p -U0` over exactly `revisions`, named on standard input."""
     try:
-        return subprocess.Popen(
-            ["git", "-C", directory, "log", "--all", "--no-merges", "-p", "-U0", *args],
+        process = subprocess.Popen(
+            [
+                "git",
+                "-C",
+                directory,
+                "log",
+                "--no-walk=unsorted",
+                "--stdin",
+                "--no-merges",
+                "-p",
+                "-U0",
+                *args,
+            ],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -760,3 +1009,8 @@ def _log(directory: str, *args: str) -> subprocess.Popen | None:
         )
     except OSError:
         return None
+    assert process.stdin is not None
+    # git reads every revision on standard input before it writes a line.
+    process.stdin.write("".join(f"{commit}\n" for commit in revisions))
+    process.stdin.close()
+    return process

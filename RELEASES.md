@@ -131,6 +131,30 @@ Engine changes in the same release:
   value. A review's "What you did" now says what share of the period's tokens went into
   test-fix loops against the previous period's, and observations split on five or more
   loops and on a turn above five million tokens.
+- **A daily ingest reads what changed, and leaves the tables a rebuild would.** `prudence
+  ingest` used to parse every archived file, re-harvest every commit and read every
+  outcome mark from git on every run. It now parses only the sessions whose inputs moved
+  (a file that is new, grew or was rewritten, a changed repository or capture level, a
+  worktree root learned under one of its edits) together with every session linked to
+  them (a fork's orphaned parent, a resume that lost records to them), and keeps every
+  other session's rows; it reads only the commits it has not stored, and drops the ones
+  no ref reaches any more; and it keeps a 7, 30 or 90-day mark once measured, unless the
+  commit's attribution changed. Presence at HEAD, blame at HEAD and rework are still
+  measured for every counted commit on every run. `prudence rebuild` still reads and
+  measures everything, and a new test module holds the two to identical tables after
+  sequences of ingests (new sessions, growth, late subagent logs, forks and resumes in
+  either order, a changed capture level, a worktree learned later, a rewritten commit).
+  Several steps that wrote one row per commit now write in one transaction, which was
+  most of the parse's time; the files that are parsed are read in worker processes
+  (`--workers`, cores minus one and at most eight by default); blame, the mark lookups
+  and rework's history read run concurrently or read only the commits that touched a
+  followed file; a grown file is checked at three windows instead of being read whole;
+  and archived files are split into lines in linear rather than quadratic time.
+  `prudence status` and `status --json` say what the last ingest and the last rebuild
+  read, skipped and kept, and how long each step took. On a copy of the founder's store
+  (275 sessions, 5,855 parsed files, 9,097 commits) a full rebuild went from 2,854 s to
+  287 s, and an ingest with nothing new reads no file and takes 49 s, 34 s of it the
+  HEAD measurements every run repeats.
 
 ## Before 0.1.0
 

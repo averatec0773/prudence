@@ -33,6 +33,13 @@ src/prudence/
                    the archive and nothing else; owner of the capture level, of the
                    pairing of a call with its result, and of which session a record
                    belongs to
+    parse_plan.py   which sessions a parse reads, in reading order, each resolved to its
+                   repository before any is read; for an ingest, which inputs moved
+    parse_state.py  what the last parse read (each file's generation, size and digest,
+                   under which parser) and which sessions depend on which, so that an
+                   ingest reads only what changed; bookkeeping, read by no surface
+    parse_pool.py   archived files into events in worker processes (spawn, so any
+                   platform), handed back in the order asked for; writes nothing
     agent_turns.py  which turn a subagent's records belong to: the turn whose call
                    dispatched the agent, resolved once a session's every file is read
     buckets.py    what one response did (change, run, read, talk), from its tool calls
@@ -45,7 +52,8 @@ src/prudence/
     rewritten.py  commits a rebase renamed, or a quiet `git commit` never named, found
                    again by timing and overlapping lines
     outcomes.py   what became of each attributed line: presence at 7, 30, 90 days and at
-                   HEAD, blame as the check, and rework by the author's own later commit
+                   HEAD, blame as the check, and rework by the author's own later commit;
+                   a mark already measured is kept in `outcome_mark`, HEAD never is
     observations.py  the join: for one behaviour and one threshold, the median outcome of
                    the sessions above it against the sessions below, inside one project;
                    a fact with no threshold is named in `NOT_SPLIT` on purpose
@@ -54,7 +62,8 @@ src/prudence/
     transfer.py   the whole store as one .tar.gz, and back into an empty one
     sampling.py   the precision sample: the hard quarter, drawn, and every method's score
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
-    pipeline.py   the order the eleven steps run in, so ingest and rebuild agree
+    pipeline.py   the order the eleven steps run in, so ingest and rebuild agree, and
+                   the record of the last run of each that `prudence status` prints
     meta.py       the one key/value table a rebuild does not touch; holds the contract
                    version the app checks before it renders anything
     app_views.py  the `app_*` SQL views, the only thing a surface other than the CLI
@@ -115,6 +124,54 @@ four buckets from its tool calls, with no text read and no threshold, and every 
 above is a sum of responses (the `response` table, and `app_usage_by_bucket_day` for the
 app). The tokens that rest on a guess from a tool's name and the tokens in records that
 could not be read are carried beside the sums, never folded into a bucket.
+
+## What an ingest reads again, and what it keeps
+
+`prudence rebuild` reads the whole archive and measures everything. `prudence ingest`
+must leave the same tables behind and does less work to get there, in four places only.
+
+- **The parse** (`store/parse_plan.py`, `store/parse_state.py`, `store/derived.py`). A
+  session is read again when anything its rows are a function of has moved: the bytes
+  of one of its files (a
+  new file, a file that grew, a file archived again), the set of its files, its
+  repository or the rule that found it, its capture level, a worktree root one of its
+  edits sits under, or the parser or any version beneath it (the last is a full parse).
+  So is every session linked to one of those: an orphan and the forks that carry it, two
+  sessions that wrote the same turn, call or response id, and the sessions that lost a
+  record or reply to it. A session read again that meets a record a kept session claims
+  from later in the reading order sends that session to be read too, and the parse runs
+  again with it, until nothing new is sent. The rows of every other session are kept as
+  they are; the ones read again are replaced in one transaction, with their bookkeeping.
+  (A rebuild still builds every table under a new name and swaps it in, also in one
+  transaction; an ingest replaces rows rather than tables, because a swap would copy
+  every kept row on every run.)
+  Every session is resolved to its repository before any is read, so an edit's path is
+  relative to the same roots whichever session taught them. The files that are read are
+  read by `store/parse_pool.py` in `--workers` processes; the fold stays in one process,
+  in one order.
+- **The commit harvest** (`store/commits.py`). A commit is immutable, so one already
+  stored is not read again; `git rev-list --all` names the commits to read and the stored
+  ones to drop because no ref reaches them any more. A repository is read whole when its
+  capture level, the line-hash key or the fact version changed.
+- **The outcome marks** (`store/outcomes.py`). A 7, 30 or 90-day mark already measured is
+  kept in `outcome_mark` and not measured again, unless the commit's attribution rows or
+  the fact version changed. HEAD presence, HEAD blame and rework are measured for every
+  counted commit on every run, and nothing is cached under HEAD.
+- **The archive** (`store/archive.py`). An unchanged file is a `stat`; a grown one is
+  checked at three windows against the archive's own bytes, and only its new bytes are
+  read.
+
+Everything else is rebuilt on every run, as before. The guard is `tests/test_incremental.py`:
+after sequences of ingests over a changing machine (a new session, a grown transcript,
+a late subagent log, a fork before and after its parent, a re-stamped resume in both
+orders, a changed capture level, a worktree learned later, a mark kept then invalidated,
+a commit added and one rewritten away) every table the pipeline writes is compared, row
+by row and in any order, with what a
+rebuild of the same archive writes. A table a later step adds is compared from the day it
+appears unless it is named, with the reason, in that module's `NOT_DERIVED`. The one
+difference a rebuild may show on real data is a kept mark whose history before the mark
+was rewritten since it was measured: the ingest keeps the first reading, as intended, and
+a rebuild reads the rewritten history.
 
 ## Rules
 

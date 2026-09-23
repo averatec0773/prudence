@@ -11,6 +11,21 @@ replaced (Claude Code rewrites a transcript on compaction, and the operating sys
 reuses names), so the stored prefix is verified before bytes are treated as an
 append; when it does not match, the file is archived again from offset zero and the
 earlier chunks are marked superseded rather than deleted.
+
+What a run costs per file. A file whose size and modification time are what the archive
+recorded is a `stat` and nothing else; its `last_seen` is written with every other such
+file's in one transaction at the end. A file that grew is checked by comparing three
+windows of `PREFIX_WINDOW` bytes (the start of the file, the middle and the end of what
+was archived) with the archive's own bytes at the same offsets, and then only the bytes
+after the archived end are read. A rewrite that keeps all three windows byte for byte
+is the one change this does not see; a transcript rewrite starts new records right after
+its opening lines, which the end window catches. A file whose size is unchanged but whose
+modification time moved is compared in full, because a same-size change can sit anywhere.
+
+`sha256` is a digest of the archived bytes: of the whole file when it is first archived
+or archived again, and after that chained, the previous digest hashed with the digest of
+the bytes appended, so that it changes whenever the archived bytes do without reading
+what was archived before.
 """
 
 from __future__ import annotations
@@ -20,6 +35,7 @@ import sqlite3
 import time
 import zlib
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +49,10 @@ from prudence.store.repos import Resolver
 
 CHUNK_BYTES = 4 * 1024 * 1024
 READ_BLOCK = 1024 * 1024
+# The bytes compared at each of the three places a grown file is checked.
+PREFIX_WINDOW = 4 * 1024
+# How much of a file's first chunk is inflated to find its first few records.
+HEAD_PREFIX_BYTES = 64 * 1024
 COMPRESSION = "zlib"
 
 
@@ -115,6 +135,7 @@ def archive(
     progress = progress or progress_module.silent()
     progress.start(len(targets), "files")
     now = datetime.now(UTC).isoformat()
+    seen: list[tuple[str, str]] = []
     for target in targets:
         progress.advance(label=_label(target, names))
         stats.files_seen += 1
@@ -128,32 +149,21 @@ def archive(
             (str(target.path),),
         ).fetchone()
         if row is None:
-            _store(connection, target, 0, generation=0, now=now, first_seen=now, stats=stats)
+            with _transaction(connection):
+                _store(connection, target, 0, 0, now, now, None, stats)
             stats.new_files += 1
             continue
         if info.st_size == row["size"] and info.st_mtime == row["mtime"]:
-            connection.execute(
-                "UPDATE archive_file SET last_seen = ? WHERE path = ?", (now, str(target.path))
-            )
+            seen.append((now, str(target.path)))
             stats.unchanged_files += 1
             continue
-        prefix_ok = info.st_size >= row["size"] and _prefix_matches(
-            target.path, row["size"], row["sha256"]
-        )
-        if not prefix_ok:
-            connection.execute(
-                "UPDATE archive_chunk SET superseded = 1 WHERE path = ? AND generation = ?",
-                (str(target.path), row["generation"]),
-            )
-            _store(
-                connection,
-                target,
-                0,
-                generation=row["generation"] + 1,
-                now=now,
-                first_seen=None,
-                stats=stats,
-            )
+        if not _still_the_archived_file(connection, target.path, info.st_size, row["size"]):
+            with _transaction(connection):
+                connection.execute(
+                    "UPDATE archive_chunk SET superseded = 1 WHERE path = ? AND generation = ?",
+                    (str(target.path), row["generation"]),
+                )
+                _store(connection, target, 0, row["generation"] + 1, now, None, None, stats)
             stats.rearchived_files += 1
             continue
         if info.st_size == row["size"]:
@@ -163,17 +173,33 @@ def archive(
             )
             stats.unchanged_files += 1
             continue
-        _store(
-            connection,
-            target,
-            row["size"],
-            generation=row["generation"],
-            now=now,
-            first_seen=None,
-            stats=stats,
-        )
+        with _transaction(connection):
+            _store(
+                connection,
+                target,
+                row["size"],
+                row["generation"],
+                now,
+                None,
+                row["sha256"],
+                stats,
+            )
+    with _transaction(connection):
+        connection.executemany("UPDATE archive_file SET last_seen = ? WHERE path = ?", seen)
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+@contextmanager
+def _transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """One commit for a file's chunks and its row, so a crash leaves both or neither."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+    connection.execute("COMMIT")
 
 
 def read_file(connection: sqlite3.Connection, path: str) -> bytes:
@@ -197,31 +223,50 @@ def iter_lines(connection: sqlite3.Connection, path: str) -> Iterator[tuple[int,
 
     Chunk boundaries fall wherever the file happened to stop growing, so a line can be
     split across two chunks and the tail of a file can be a line still being written.
+    Lines are found by moving an index along the chunk rather than by cutting the rest of
+    it off after every line, which copied most of a four-megabyte chunk once per line.
     """
-    buffer = b""
+    carry = b""
     line_offset = 0
     for _, chunk in iter_chunks(connection, path):
-        buffer += chunk
+        data = carry + chunk if carry else chunk
+        start = 0
         while True:
-            index = buffer.find(b"\n")
+            index = data.find(b"\n", start)
             if index < 0:
                 break
-            line = buffer[:index]
-            yield line_offset, line
-            line_offset += index + 1
-            buffer = buffer[index + 1 :]
-    if buffer.strip():
-        yield line_offset, buffer
+            yield line_offset, data[start:index]
+            line_offset += index + 1 - start
+            start = index + 1
+        carry = data[start:]
+    if carry.strip():
+        yield line_offset, carry
 
 
-def head_lines(connection: sqlite3.Connection, path: str) -> list[bytes]:
-    """The lines of a file's first chunk. Enough to learn when a session started."""
+def head_lines(
+    connection: sqlite3.Connection, path: str, max_bytes: int | None = None
+) -> list[bytes]:
+    """The lines of a file's first chunk. Enough to learn when a session started.
+
+    With `max_bytes`, only that much of the chunk is decompressed and only the whole
+    lines in it are returned: a caller that needs the first few records of a file should
+    not inflate four megabytes to find them.
+    """
     row = connection.execute(
         'SELECT data FROM archive_chunk WHERE path = ? AND superseded = 0 ORDER BY "offset"'
         " LIMIT 1",
         (path,),
     ).fetchone()
-    return zlib.decompress(row["data"]).split(b"\n") if row else []
+    if row is None:
+        return []
+    if max_bytes is None:
+        return zlib.decompress(row["data"]).split(b"\n")
+    inflater = zlib.decompressobj()
+    data = inflater.decompress(row["data"], max_bytes)
+    lines = data.split(b"\n")
+    if inflater.unconsumed_tail or not inflater.eof:
+        lines = lines[:-1]
+    return lines
 
 
 def archive_totals(connection: sqlite3.Connection) -> tuple[int, int, int]:
@@ -249,20 +294,56 @@ def _repo_key(session: base.SessionFile, resolver: Resolver | None) -> str | Non
     return identity.key if identity else None
 
 
-def _prefix_matches(path: Path, size: int, expected_sha: str | None) -> bool:
-    """Is the file still the file we archived, or did something rewrite it under us?"""
-    if expected_sha is None:
+def _still_the_archived_file(
+    connection: sqlite3.Connection, path: Path, size: int, archived: int
+) -> bool:
+    """Is the file still the file we archived, or did something rewrite it under us?
+
+    A file shorter than what was archived was rewritten. One that grew is compared at
+    three windows (the module docstring says why that is enough); one whose size did not
+    change is compared in full.
+    """
+    if size < archived:
         return False
-    digest = hashlib.sha256()
-    remaining = size
+    if size == archived:
+        windows = [(0, archived)]
+    else:
+        middle = max(0, archived // 2 - PREFIX_WINDOW // 2)
+        windows = sorted(
+            {
+                (0, min(PREFIX_WINDOW, archived)),
+                (middle, min(middle + PREFIX_WINDOW, archived)),
+                (max(0, archived - PREFIX_WINDOW), archived),
+            }
+        )
     with path.open("rb") as handle:
-        while remaining > 0:
-            block = handle.read(min(READ_BLOCK, remaining))
-            if not block:
+        for start, end in windows:
+            if not _same_range(connection, str(path), handle, start, end):
                 return False
-            digest.update(block)
-            remaining -= len(block)
-    return digest.hexdigest() == expected_sha
+    return True
+
+
+def _same_range(connection: sqlite3.Connection, path: str, handle, start: int, end: int) -> bool:
+    """The file's bytes in [start, end) against the archive's, a chunk at a time."""
+    handle.seek(start)
+    for offset, chunk in _chunks_over(connection, path, start, end):
+        low, high = max(start, offset), min(end, offset + len(chunk))
+        if handle.read(high - low) != chunk[low - offset : high - offset]:
+            return False
+    return handle.tell() == end
+
+
+def _chunks_over(
+    connection: sqlite3.Connection, path: str, start: int, end: int
+) -> Iterator[tuple[int, bytes]]:
+    """The live chunks that hold any of [start, end), decompressed, in order."""
+    rows = connection.execute(
+        'SELECT "offset", data FROM archive_chunk WHERE path = ? AND superseded = 0'
+        ' AND "offset" < ? AND "offset" + length > ? ORDER BY "offset"',
+        (path, end, start),
+    )
+    for row in rows:
+        yield row["offset"], zlib.decompress(row["data"])
 
 
 def _store(
@@ -272,37 +353,44 @@ def _store(
     generation: int,
     now: str,
     first_seen: str | None,
+    previous_sha: str | None,
     stats: IngestStats,
 ) -> None:
-    """Read from `start` to the end of the file, storing compressed chunks as we go."""
+    """Read from `start` to the end of the file, storing compressed chunks as we go.
+
+    Nothing before `start` is read. The digest is of the bytes read, chained onto
+    `previous_sha` when this is an append (see the module docstring).
+    """
     digest = hashlib.sha256()
-    offset = 0
+    offset = start
     pending = bytearray()
     pending_offset = start
     written = 0
     with target.path.open("rb") as handle:
+        handle.seek(start)
         while True:
             block = handle.read(READ_BLOCK)
             if not block:
                 break
             digest.update(block)
-            if offset + len(block) > start:
-                wanted = block[max(0, start - offset) :]
-                pending.extend(wanted)
-                while len(pending) >= CHUNK_BYTES:
-                    written += _write_chunk(
-                        connection,
-                        target.path,
-                        pending_offset,
-                        bytes(pending[:CHUNK_BYTES]),
-                        generation,
-                    )
-                    pending_offset += CHUNK_BYTES
-                    del pending[:CHUNK_BYTES]
+            pending.extend(block)
+            while len(pending) >= CHUNK_BYTES:
+                written += _write_chunk(
+                    connection,
+                    target.path,
+                    pending_offset,
+                    bytes(pending[:CHUNK_BYTES]),
+                    generation,
+                )
+                pending_offset += CHUNK_BYTES
+                del pending[:CHUNK_BYTES]
             offset += len(block)
     if pending:
         written += _write_chunk(connection, target.path, pending_offset, bytes(pending), generation)
     stats.new_bytes += written
+    sha = digest.hexdigest()
+    if start > 0:
+        sha = hashlib.sha256(f"{previous_sha}:{sha}".encode()).hexdigest()
     info = target.path.stat()
     connection.execute(
         "INSERT INTO archive_file"
@@ -319,7 +407,7 @@ def _store(
             target.repo_key,
             offset,
             info.st_mtime,
-            digest.hexdigest(),
+            sha,
             first_seen or now,
             now,
             generation,

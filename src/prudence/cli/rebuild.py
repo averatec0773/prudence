@@ -12,7 +12,7 @@ from __future__ import annotations
 import click
 
 from prudence import config as config_module
-from prudence.cli.ingest import progress_sink, report
+from prudence.cli.ingest import progress_sink, report, workers_option
 from prudence.store import db, derived, pipeline
 
 
@@ -23,7 +23,8 @@ from prudence.store import db, derived, pipeline
     is_flag=True,
     help="Write one JSON progress line per step to stderr while the rebuild runs.",
 )
-def rebuild(show_progress: bool) -> None:
+@workers_option
+def rebuild(show_progress: bool, workers: int) -> None:
     """Rebuild every derived table from the archive, and harvest the commits again."""
     config = config_module.load()
     try:
@@ -35,6 +36,7 @@ def rebuild(show_progress: bool) -> None:
                     config,
                     with_archive=False,
                     progress=progress_sink(show_progress),
+                    workers=workers,
                 )
             finally:
                 connection.close()

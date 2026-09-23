@@ -23,7 +23,7 @@ from click.testing import CliRunner
 from conftest import Workspace, write_transcript
 
 from prudence.cli import main
-from prudence.store import db, derived
+from prudence.store import db, derived, parse_plan
 
 PARENT = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 FORK = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
@@ -221,17 +221,18 @@ def test_the_same_tables_come_out_whichever_file_is_read_first(
 ) -> None:
     """Which session owns a record must not depend on the order the files are read in.
 
-    The build reads the archived transcripts in one sorted order (`_transcripts_in_order`),
-    so reversing that sort is exactly what ingesting the files in the other order would do.
+    The build reads the archived transcripts in one sorted order
+    (`parse_plan.transcripts_in_order`), so reversing that sort is exactly what ingesting
+    the files in the other order would do.
     """
     _write(lab)
     _ingest()
     forwards = _dump()
 
-    in_order = derived._transcripts_in_order
+    in_order = parse_plan.transcripts_in_order
     monkeypatch.setattr(
-        derived,
-        "_transcripts_in_order",
+        parse_plan,
+        "transcripts_in_order",
         lambda connection, adapter: list(reversed(in_order(connection, adapter))),
     )
     result = CliRunner().invoke(main, ["rebuild"])

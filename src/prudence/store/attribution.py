@@ -311,7 +311,10 @@ def _line_match(connection: sqlite3.Connection, repo_key: str) -> dict[str, list
 
     Done in Python rather than in one join because the comparison is a dictionary
     lookup per commit line, which is linear, where the equivalent SQL join over two
-    hash columns is not.
+    hash columns is not. The commit lines looked at are only those whose hash some edit
+    of this repository added, found through `commit_line_hash`: a repository's history
+    is mostly lines no session wrote, and reading every one of them into Python was most
+    of this step's time. A line whose hash no edit added could not have matched anyway.
     """
     index: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
     for row in connection.execute(
@@ -335,9 +338,16 @@ def _line_match(connection: sqlite3.Connection, repo_key: str) -> dict[str, list
             (repo_key,),
         )
     }
+    connection.execute("CREATE TEMP TABLE IF NOT EXISTS edited_hash(line_hash TEXT PRIMARY KEY)")
+    connection.execute("DELETE FROM edited_hash")
+    connection.executemany(
+        "INSERT OR IGNORE INTO edited_hash VALUES (?)",
+        [(line_hash,) for _, line_hash in index],
+    )
     tally: Counter[tuple[str, str]] = Counter()
     for row in connection.execute(
-        "SELECT cl.commit_hash, cl.path, cl.line_hash FROM commit_line cl"
+        "SELECT cl.commit_hash, cl.path, cl.line_hash FROM edited_hash h"
+        " JOIN commit_line cl ON cl.line_hash = h.line_hash"
         ' JOIN "commit" c ON c.commit_hash = cl.commit_hash WHERE c.repo_key = ?',
         (repo_key,),
     ):
@@ -386,21 +396,20 @@ def _in_session(
             'SELECT commit_hash FROM "commit" WHERE repo_key = ?', (repository.repo_key,)
         )
     }
-    resolved: dict[str, str | None] = {}
     pairs: list[tuple[str, str]] = []
     unresolved: set[rewritten.Call] = set()
-    for row in connection.execute(
+    printed = connection.execute(
         "SELECT c.commit_hash AS short, c.session_id AS session_id, t.started_at AS started_at"
         " FROM command c JOIN session s ON s.session_id = c.session_id"
         " LEFT JOIN tool_call t ON t.tool_use_id = c.tool_use_id"
         " WHERE c.command_class = 'git_commit' AND c.commit_hash IS NOT NULL"
         " AND s.repo_key = ?",
         (repository.repo_key,),
-    ):
+    ).fetchall()
+    resolved = _resolve(repository.toplevel, sorted({row["short"] for row in printed}))
+    for row in printed:
         short = row["short"]
-        if short not in resolved:
-            resolved[short] = _rev_parse(repository.toplevel, short)
-        full = resolved[short]
+        full = resolved.get(short)
         if full is None or full not in known:
             stats.unresolved_hashes += 1
             unresolved.add(rewritten.Call(short, row["session_id"], row["started_at"]))
@@ -497,10 +506,37 @@ def parse_note(note: str | None) -> set[str] | None:
     return named
 
 
-def _rev_parse(directory: str, short: str) -> str | None:
-    if not short or len(short) < 4:
-        return None
-    return _git(directory, "rev-parse", "--verify", "--quiet", f"{short}^{{commit}}")
+def _resolve(directory: str, shorts: list[str]) -> dict[str, str | None]:
+    """Each printed hash as the full hash of the commit it names, or None.
+
+    What `git rev-parse --verify short^{commit}` answers, asked of one `git cat-file
+    --batch-check` for the whole repository rather than one process per hash: a hash
+    that names no commit, or more than one object, comes back `missing` or `ambiguous`.
+    Fewer than four characters name nothing.
+    """
+    asked = [short for short in shorts if short and len(short) >= 4 and "\n" not in short]
+    resolved: dict[str, str | None] = dict.fromkeys(shorts)
+    if not asked:
+        return resolved
+    try:
+        result = subprocess.run(
+            ["git", "-C", directory, "cat-file", "--batch-check"],
+            input="".join(f"{short}^{{commit}}\n" for short in asked),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return resolved
+    answers = result.stdout.splitlines()
+    if result.returncode != 0 or len(answers) != len(asked):
+        return resolved
+    for short, answer in zip(asked, answers, strict=True):
+        parts = answer.split()
+        if len(parts) == 3 and parts[1] == "commit":
+            resolved[short] = parts[0]
+    return resolved
 
 
 def _git(directory: str, *args: str) -> str | None:

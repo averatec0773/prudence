@@ -22,11 +22,21 @@ about who writes this repository's code, and on the founder's own repository it 
 enough to suppress every outcome fact. The decision is made here, during the harvest,
 on the raw author name and email, because those are the only place the words
 `dependabot` or `[bot]` exist; only the hash of the email is stored, as before.
+
+A commit is immutable: its hash names its tree, its parents, its author and its dates,
+so what it added is the same on every run. `prudence ingest` therefore reads only the
+commits it has not stored yet, and deletes the stored ones no longer reachable from any
+ref (a rebase, a deleted branch); `git rev-list --all` says which are which. It reads a
+repository whole again when its capture level, the line-hash key or this module's fact
+version changed, because each of those changes what a stored row would say. `prudence
+rebuild` reads every repository whole, as it always did. Each repository's rows are
+replaced in one transaction.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
 import subprocess
@@ -35,10 +45,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from prudence.store import lines as line_module
+from prudence.store import meta as meta_module
 from prudence.store import progress as progress_module
 from prudence.store.repos import Repository
 
 FACT_VERSION = 2
+
+# Where the harvest remembers, per repository, what its stored rows were read under.
+POLICY_KEY = "harvest_policy"
 
 RECORD = "\x01"
 FIELD = "\x1f"
@@ -95,6 +109,10 @@ class HarvestStats:
     added_lines: int = 0
     excluded_paths: int = 0
     unreadable: int = 0
+    # Commits already stored and still reachable, not read again; and stored ones
+    # no longer reachable, deleted.
+    kept: int = 0
+    dropped: int = 0
     elapsed: float = 0.0
 
 
@@ -117,6 +135,7 @@ def harvest(
     key: bytes,
     levels: dict[str, str] | None = None,
     progress: progress_module.Step | None = None,
+    keep: bool = False,
 ) -> HarvestStats:
     """Read every reachable commit of every enabled repository into the store.
 
@@ -124,12 +143,17 @@ def harvest(
     hashed into the store. A keyed hash is not readable, but a hash of every line an
     employer's repository ever gained is more than the shape that level promises, and
     without the left-hand side there would be nothing to match it against anyway.
+
+    `keep` (what `ingest` asks for) keeps the commits already stored, as the module
+    docstring says; without it every repository is read whole.
     """
     started = time.monotonic()
     stats = HarvestStats()
     levels = levels or {}
     progress = progress or progress_module.silent()
     _ensure_schema(connection)
+    policies = json.loads(meta_module.get_meta(connection, POLICY_KEY) or "{}")
+    digest = hashlib.sha256(key).hexdigest()[:12]
     progress.start(len(repositories), "repositories")
     for repository in repositories:
         progress.advance(label=f"Harvesting {repository.name}")
@@ -138,13 +162,88 @@ def harvest(
             stats.unreadable += 1
             continue
         stats.repositories += 1
-        _forget(connection, repository.repo_key)
-        patch_ids = _patch_ids(directory)
         keep_lines = levels.get(repository.repo_key, "full") == "full"
-        _read_commits(connection, repository, directory, key, patch_ids, stats, keep_lines)
-        _read_merges(connection, repository, directory, stats)
+        policy = f"lines {keep_lines}; key {digest}; fact version {FACT_VERSION}"
+        reachable = _reachable(directory)
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            if keep and policies.get(repository.repo_key) == policy:
+                stored = _stored(connection, repository.repo_key)
+            else:
+                _forget(connection, repository.repo_key)
+                stored = set()
+            gone = sorted(stored - set(reachable))
+            _drop(connection, gone)
+            stats.dropped += len(gone)
+            stats.kept += len(stored) - len(gone)
+            fresh = [commit for commit, merge in reachable.items() if not merge]
+            merges = [commit for commit, merge in reachable.items() if merge]
+            if stored:
+                fresh = [commit for commit in fresh if commit not in stored]
+                merges = [commit for commit in merges if commit not in stored]
+            if fresh:
+                patch_ids = _patch_ids(directory, fresh if stored else None)
+                _read_commits(
+                    connection,
+                    repository,
+                    directory,
+                    key,
+                    patch_ids,
+                    stats,
+                    keep_lines,
+                    fresh if stored else None,
+                )
+            if merges:
+                _read_merges(connection, repository, directory, stats, merges if stored else None)
+            policies[repository.repo_key] = policy
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+    meta_module.set_meta(connection, POLICY_KEY, json.dumps(policies, sort_keys=True))
     stats.elapsed = time.monotonic() - started
     return stats
+
+
+def _reachable(directory: str) -> dict[str, bool]:
+    """Every commit reachable from any ref or HEAD, and whether it is a merge."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", directory, "rev-list", "--all", "--parents"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return {}
+    if result.returncode != 0:
+        return {}
+    found: dict[str, bool] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if parts:
+            found[parts[0]] = len(parts) > 2
+    return found
+
+
+def _stored(connection: sqlite3.Connection, repo_key: str) -> set[str]:
+    """The commits stored for one repository. A fact version change never reaches here: it
+    changes the repository's policy, and a changed policy reads the repository whole."""
+    return {
+        row[0]
+        for row in connection.execute(
+            'SELECT commit_hash FROM "commit" WHERE repo_key = ?', (repo_key,)
+        )
+    }
+
+
+def _drop(connection: sqlite3.Connection, hashes: list[str]) -> None:
+    """Commits no longer reachable, and the lines they added, out of the store."""
+    for start in range(0, len(hashes), 400):
+        batch = hashes[start : start + 400]
+        marks = ", ".join("?" * len(batch))
+        connection.execute(f"DELETE FROM commit_line WHERE commit_hash IN ({marks})", batch)
+        connection.execute(f'DELETE FROM "commit" WHERE commit_hash IN ({marks})', batch)
 
 
 def counts(connection: sqlite3.Connection) -> tuple[int, int]:
@@ -215,9 +314,15 @@ def _read_commits(
     patch_ids: dict[str, str],
     stats: HarvestStats,
     keep_lines: bool,
+    revisions: list[str] | None = None,
 ) -> None:
-    """One streaming pass over the diffs, hashing added lines as they go past."""
-    process = _log(directory, "--no-merges", "-p", "-U0", f"--format={LOG_FORMAT}")
+    """One streaming pass over the diffs, hashing added lines as they go past.
+
+    `revisions` None reads every reachable commit; otherwise exactly those commits.
+    """
+    process = _log(
+        directory, "--no-merges", "-p", "-U0", f"--format={LOG_FORMAT}", revisions=revisions
+    )
     if process is None:
         stats.unreadable += 1
         return
@@ -256,10 +361,14 @@ def _read_commits(
 
 
 def _read_merges(
-    connection: sqlite3.Connection, repository: Repository, directory: str, stats: HarvestStats
+    connection: sqlite3.Connection,
+    repository: Repository,
+    directory: str,
+    stats: HarvestStats,
+    revisions: list[str] | None = None,
 ) -> None:
     """Merges carry no lines of their own, but a commit missing from the store is a hole."""
-    process = _log(directory, "--merges", f"--format={LOG_FORMAT}")
+    process = _log(directory, "--merges", f"--format={LOG_FORMAT}", revisions=revisions)
     if process is None:
         return
     assert process.stdout is not None
@@ -358,14 +467,16 @@ def _path(raw: str, stats: HarvestStats) -> str | None:
     return text
 
 
-def _patch_ids(directory: str) -> dict[str, str]:
+def _patch_ids(directory: str, revisions: list[str] | None = None) -> dict[str, str]:
     """`git log -p | git patch-id` in one go: a stable id per commit, rewrites and all."""
     try:
         log = subprocess.Popen(
-            ["git", "-C", directory, "log", "--all", "--no-merges", "-p", "-U0"],
+            ["git", "-C", directory, "log", *_which(revisions), "--no-merges", "-p", "-U0"],
+            stdin=subprocess.PIPE if revisions is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
+        _feed(log, revisions, binary=True)
         ids = subprocess.Popen(
             ["git", "-C", directory, "patch-id", "--stable"],
             stdin=log.stdout,
@@ -389,10 +500,11 @@ def _patch_ids(directory: str) -> dict[str, str]:
     return result
 
 
-def _log(directory: str, *args: str) -> subprocess.Popen | None:
+def _log(directory: str, *args: str, revisions: list[str] | None = None) -> subprocess.Popen | None:
     try:
-        return subprocess.Popen(
-            ["git", "-C", directory, "log", "--all", *args],
+        process = subprocess.Popen(
+            ["git", "-C", directory, "log", *_which(revisions), *args],
+            stdin=subprocess.PIPE if revisions is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -401,3 +513,19 @@ def _log(directory: str, *args: str) -> subprocess.Popen | None:
         )
     except OSError:
         return None
+    _feed(process, revisions, binary=False)
+    return process
+
+
+def _which(revisions: list[str] | None) -> list[str]:
+    """Every reachable commit, or exactly the commits named on standard input."""
+    return ["--all"] if revisions is None else ["--no-walk=unsorted", "--stdin"]
+
+
+def _feed(process: subprocess.Popen, revisions: list[str] | None, binary: bool) -> None:
+    """Name the commits on standard input. git reads all of them before it writes."""
+    if revisions is None or process.stdin is None:
+        return
+    text = "".join(f"{commit}\n" for commit in revisions)
+    process.stdin.write(text.encode() if binary else text)
+    process.stdin.close()
