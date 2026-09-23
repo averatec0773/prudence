@@ -11,8 +11,9 @@
  * So the prose is gone, the controls are real, and the screen is four tabs:
  *
  * - **General**: the app's own four settings, each one a segmented control.
- * - **Engine**: where `prudence` is, what version, the Install or Update button, and where
- *   the store it reads is kept. Configuration only: the two actions that run the engine
+ * - **Engine**: where `prudence` is, what version, the Install or Update button, the
+ *   engine's recent runs with a diagnosis (`ui/engine-runs.js`), and where the store it
+ *   reads is kept. Configuration only: the two actions that run the engine
  *   are in the window's toolbar, on every screen.
  * - **Model**: what `prudence config model` prints, and the one field of it this app may
  *   set. The app never calls a model itself, and the tab says so.
@@ -39,6 +40,7 @@
 import { panel, segmented, subhead } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { MODEL_ANSWER } from "../store/asked.js";
+import { engineRuns } from "./engine-runs.js";
 import { engineSection } from "./engine-section.js";
 import { list, relative, stamp } from "../text/fmt.js";
 import { t } from "../text/strings.js";
@@ -71,6 +73,17 @@ export const TABS = /** @type {const} */ ([
 
 /** Which tab is open. See the note at the top of the file: navigation, not data. */
 let openTab = "general";
+
+/**
+ * Open a tab the next time the screen is drawn. The window's status row sends the reader
+ * to the Engine tab, where the engine's run records are listed; a key this screen does not
+ * have is refused rather than stored, as a tab clicked here would be.
+ *
+ * @param {string} key
+ */
+export function openSettingsTab(key) {
+  if (TABS.some((tab) => tab.key === key)) openTab = key;
+}
 
 /** The licence in the repository's own `LICENSE`, by its SPDX name. Not translated. */
 const LICENCE = "Apache-2.0";
@@ -387,6 +400,9 @@ function engine(state) {
     // version and the Install button, and owns its presentation with them, so it is
     // placed bare.
     engineSection(state),
+    // What the engine recorded about its last runs, and the diagnosis. Its own module, on
+    // the same seam: the run log is the shell's to read and this screen only places it.
+    ...engineRuns(state),
     whereItIsKept(state.data, state.info),
   ]);
 }

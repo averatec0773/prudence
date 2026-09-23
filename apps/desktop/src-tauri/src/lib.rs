@@ -5,6 +5,7 @@
 //! is whether the compositor holds. See `docs/reports/desktop/02-window-shell.md`.
 
 mod activity;
+mod applog;
 mod contract;
 mod engine;
 mod installer;
@@ -13,6 +14,7 @@ mod panel;
 mod platform;
 mod readiness;
 mod repositories;
+mod runlog;
 mod store;
 mod timer;
 mod ui_state;
@@ -69,6 +71,9 @@ pub struct Shell {
     /// The timed ingest's schedule. Held here rather than in a static so that the thread
     /// and the commands are talking to one object whose lifetime is the app's.
     pub timer: Arc<timer::Timer>,
+    /// The folder the last `prudence diagnose` from this app wrote, which is the one
+    /// `Reveal` shows. Held here so the page can ask for it by name.
+    pub bundle: Mutex<Option<PathBuf>>,
 }
 
 /// What the General tab sets, in one answer.
@@ -114,6 +119,8 @@ fn app_settings(app: &AppHandle, memory: &Memory) -> AppSettings {
 pub struct ShellInfo {
     version: String,
     database: String,
+    /// Where the engine's run log and this app's own log are, for the Engine tab's note.
+    logs: String,
     material: platform::MaterialReport,
     tray_highlight: bool,
     platform: Vec<(String, String)>,
@@ -179,6 +186,7 @@ fn shell_info(app: AppHandle, shell: State<'_, Shell>) -> ShellInfo {
     ShellInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         database: shell.database.display().to_string(),
+        logs: store::logs_dir().display().to_string(),
         material: shell.material.lock().unwrap().clone(),
         tray_highlight: *shell.tray_highlight_works.lock().unwrap(),
         platform: platform::describe(),
@@ -398,6 +406,7 @@ async fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> Result<engine
             // rather than dropped: the page is told the path was taken, so a silent
             // failure here means it is forgotten at the next launch with nobody told why.
             shell.memory.save()?;
+            setting_written("engine path", None);
             Ok(engine::Choice::accepted(chosen, version))
         }
         Err(error) => Ok(engine::Choice::rejected(chosen, &error)),
@@ -409,8 +418,13 @@ async fn engine_choose(app: AppHandle, shell: State<'_, Shell>) -> Result<engine
 fn engine_forget(shell: State<'_, Shell>) {
     shell.memory.set_engine(None);
     // Forgetting is idempotent: if the write fails the path is still forgotten for this
-    // launch, and the next `Choose` writes again.
-    let _ = shell.memory.save();
+    // launch, and the next `Choose` writes again. The failure is still on the record.
+    match shell.memory.save() {
+        Ok(()) => setting_written("engine path", Some("forgotten")),
+        Err(error) => {
+            tracing::error!(target: "settings", setting = "engine path", error = %error, "setting not saved")
+        }
+    }
 }
 
 /// Install or update `prudence-core` with uv.
@@ -429,6 +443,7 @@ async fn engine_install(
 ) -> Result<installer::InstallOutcome, String> {
     scheduled(move || {
         let Some(uv) = engine::shared().locate_uv() else {
+            tracing::error!(target: "install", upgrade, "no uv to install with");
             return installer::InstallOutcome {
                 error_kind: Some("noUv".into()),
                 manual: installer::manual(),
@@ -444,6 +459,27 @@ async fn engine_install(
                 },
             );
         });
+        // uv's lines are shown to the reader and stay out of the log, all but the last one
+        // of a failure, which is uv's own reason.
+        match &outcome {
+            Ok(done) if done.ok => {
+                tracing::info!(target: "install", upgrade, exit = ?done.status, "installed")
+            }
+            Ok(done) => tracing::error!(
+                target: "install",
+                upgrade,
+                exit = ?done.status,
+                detail = ?done.lines.last().map(String::as_str).unwrap_or(""),
+                "install failed"
+            ),
+            Err(error) => tracing::error!(
+                target: "install",
+                upgrade,
+                kind = error.kind(),
+                detail = ?error.detail(),
+                "install could not start"
+            ),
+        }
         match outcome {
             Ok(done) => done,
             Err(error) => installer::InstallOutcome {
@@ -540,6 +576,68 @@ async fn engine_readiness(shell: State<'_, Shell>) -> Result<Option<readiness::R
     .await?
 }
 
+/* --- what the engine recorded about its runs ------------------------------------------
+ *
+ * `runs.jsonl` is a file the engine writes and this app reads, beside the store, so it is
+ * read here rather than asked of the engine: `runlog.rs` says how. `prudence diagnose` is
+ * the one thing the page may start from the Engine tab, and like every command it is a
+ * constant on this side.
+ */
+
+/// The last `count` runs the engine recorded, newest first, and how many finished lines
+/// of the log could not be read. An engine older than the log answers with none.
+#[tauri::command]
+async fn engine_runs(count: usize) -> Result<runlog::Runs, String> {
+    let wanted = count.min(runlog::MOST);
+    scheduled(move || {
+        runlog::read(&runlog::file(&store::logs_dir()), wanted).map_err(|error| {
+            tracing::error!(target: "runs", error = %error, "the run log could not be read");
+            error.to_string()
+        })
+    })
+    .await?
+}
+
+/// Run `prudence diagnose`, and say which folder it wrote.
+#[tauri::command]
+async fn engine_diagnose(shell: State<'_, Shell>) -> Result<runlog::Diagnosis, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    let diagnosis = scheduled(move || {
+        let directory = runlog::bundles_dir(&store::data_dir());
+        let before = runlog::bundles(&directory);
+        match engine::shared().read(remembered.as_deref(), runlog::DIAGNOSE) {
+            Err(error) => runlog::Diagnosis::failed(&error),
+            Ok(_) => runlog::Diagnosis::found(runlog::made(&before, &runlog::bundles(&directory))),
+        }
+    })
+    .await?;
+    if let Some(path) = &diagnosis.path {
+        *shell.bundle.lock().unwrap() = Some(PathBuf::from(path));
+    }
+    Ok(diagnosis)
+}
+
+/// Show a folder in the file manager, **by name**, on the rule `open_link` keeps: the page
+/// never hands the shell a path. `logs` is the engine's log directory; `diagnose` is the
+/// bundle the last diagnosis from this app wrote.
+#[tauri::command]
+fn reveal(app: AppHandle, shell: State<'_, Shell>, name: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = match name.as_str() {
+        "logs" => store::logs_dir(),
+        "diagnose" => shell
+            .bundle
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| String::from("no diagnosis has been written from this app yet"))?,
+        _ => return Err(format!("no such place: {name}")),
+    };
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|error| error.to_string())
+}
+
 /* --- the model settings --------------------------------------------------------------
  *
  * The app never calls a model. These two read what `prudence config model` prints and set
@@ -579,6 +677,7 @@ async fn model_set_language(
         let engine = engine::shared();
         engine
             .read(remembered.as_deref(), &arguments)
+            .inspect(|_| setting_written("model language", Some(&language)))
             .and_then(|_| engine.read(remembered.as_deref(), &["config", "model"]))
             .map(|printed| model::parse(&printed))
             .map_err(|error| error.kind().to_string())
@@ -614,6 +713,7 @@ fn settings_language(
         return Err(format!("no such language: {language}"));
     }
     shell.memory.save()?;
+    setting_written("language", Some(&language));
     Ok(announce_settings(&app, &shell.memory))
 }
 
@@ -634,6 +734,7 @@ fn settings_appearance(
         return Err(format!("no such appearance: {appearance}"));
     }
     shell.memory.save()?;
+    setting_written("appearance", Some(&appearance));
     apply_appearance(&app, &appearance);
     Ok(announce_settings(&app, &shell.memory))
 }
@@ -649,6 +750,7 @@ fn settings_timed_ingest(
     }
     shell.memory.save()?;
     shell.timer.set(minutes);
+    setting_written("timed ingest", Some(&minutes.to_string()));
     Ok(announce_settings(&app, &shell.memory))
 }
 
@@ -668,10 +770,23 @@ fn settings_open_at_login(
     } else {
         app.autolaunch().disable()
     };
-    if let Err(error) = asked {
-        eprintln!("[settings] open at login: {error}");
+    match asked {
+        Ok(()) => setting_written("open at login", Some(if enabled { "on" } else { "off" })),
+        // The plugin's own words, which the General tab shows under the control.
+        Err(error) => {
+            tracing::error!(target: "settings", setting = "open at login", error = %error, "setting refused")
+        }
     }
     Ok(announce_settings(&app, &shell.memory))
+}
+
+/// A setting was written, in the app log: which one, and its value unless the value is a
+/// path, which carries the user's name and leaves the machine with the log's tail.
+fn setting_written(setting: &str, value: Option<&str>) {
+    match value {
+        Some(value) => tracing::info!(target: "settings", setting, value, "setting written"),
+        None => tracing::info!(target: "settings", setting, "setting written"),
+    }
 }
 
 /// The settings as they now are, told to both pages.
@@ -808,6 +923,16 @@ fn scripted() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started = std::time::Instant::now();
+    // Before anything else, so the first thing the app does is on the record.
+    applog::start(&store::logs_dir());
+    tracing::info!(
+        target: "app",
+        version = env!("CARGO_PKG_VERSION"),
+        contract = ?contract::SUPPORTED,
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        "app started"
+    );
     // The store is found the way `src/prudence/paths.py` finds it and no other way. There
     // was a `PRUDENCE_DB` override here in the spike; it is gone, because the engine does
     // not honour that name and a guessed variable of exactly that shape is how an agent
@@ -847,6 +972,9 @@ pub fn run() {
             engine_repositories,
             engine_repository_level,
             engine_readiness,
+            engine_runs,
+            engine_diagnose,
+            reveal,
             model_read,
             model_set_language,
             settings_read,
@@ -867,6 +995,7 @@ pub fn run() {
                 tray_highlight_works: Mutex::new(false),
                 memory,
                 timer: timer.clone(),
+                bundle: Mutex::new(None),
             });
 
             // No Dock icon and no app switcher entry until a window is open. Set before

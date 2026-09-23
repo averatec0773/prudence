@@ -29,8 +29,10 @@ the panel, the timer or a terminal), both show it instead.
   the number of sessions it is over, with the coverage and the commit mix beside it.
 - **Settings**: four tabs. **General** is the app's own four settings (language,
   appearance, open at login, timed ingest), each a segmented control that writes through
-  the shell. **Engine** is configuration only: where `prudence` is, its version, the
-  Install or Update button, and where the store is kept with what produced it. **Model** is
+  the shell. **Engine** is where `prudence` is, its version, the Install or Update button,
+  the engine's last ten runs from its run log (each opening onto its warnings, failed
+  checks and error), a Diagnose action that runs `prudence diagnose` and reveals the
+  folder it wrote, and where the store is kept with what produced it. **Model** is
   what `prudence config model` prints, with the one field this app may set; it never calls
   a model. **About** is what is running, on what, under what licence, with links to the
   project, the developer and what is recorded.
@@ -114,8 +116,18 @@ PRUDENCE_DATA_DIR=/tmp/prudence-copy \
   src-tauri/target/release/bundle/macos/Prudence.app/Contents/MacOS/Prudence
 ```
 
-The shell reads **`PRUDENCE_DATA_DIR`** and nothing else: the store's location is the
-only path it resolves. `PRUDENCE_CONFIG_DIR` is the engine's and the shell does not read
+The shell reads **`PRUDENCE_DATA_DIR`** and nothing else, and everything it touches there
+is resolved from it:
+
+| Under the data directory | What | Who writes it |
+| --- | --- | --- |
+| `prudence.db` | the store, read-only from here | the engine |
+| `ingest.lock` | held while an ingest or a rebuild runs; asked about, never taken | the engine |
+| `logs/runs.jsonl` | one record per engine run: versions, steps, warnings, checks, error. The Engine tab lists the last ten and the status row reads the last ingest's | the engine |
+| `logs/app.log` | this app's own log, rotated at 4 MB with two old files kept (`app.log.1`, `app.log.2`) | this app (`src-tauri/src/applog.rs`) |
+| `diagnose/<timestamp>/` | what `prudence diagnose` writes; the Engine tab's Diagnose runs it and reveals the folder | the engine |
+
+`PRUDENCE_CONFIG_DIR` is the engine's and the shell does not read
 it, so setting it isolates the CLI and not this app; what isolates this app's own state
 is `PRUDENCE_UI_MEMORY=off`, and the two scripts set it.
 
@@ -142,7 +154,12 @@ had a `PRUDENCE_DB`; it is gone, because the engine does not honour that name an
 variable of exactly that shape is how an agent once wrote to the founder's real store.
 
 The shell writes what it did on standard error: which material each surface got, where the
-panel landed, how long the page took, and every tray event it received.
+panel landed, how long the page took, and every tray event it received. What an agent needs
+later goes to `logs/app.log` as well, one line per event (`time level target message
+key=value`): the app starting, every engine invocation with its exit code and seconds but
+never its output, every store announcement with its revision, every contract check, every
+settings write (never a value that is a path), and every failure in the words the reader was
+shown.
 
 ### Pictures
 
@@ -196,6 +213,8 @@ apps/desktop/
       model.rs         what `prudence config model` prints, read
       timer.rs         the timed ingest: one thread, outliving every window
       activity.rs      whether a run is going and how the last one ended, whoever started it
+      runlog.rs        the engine's run log, read from its end; `prudence diagnose`
+      applog.rs        this app's own log, `logs/app.log`, rotated by size
       ui_state.rs      what the window remembers between launches
       harness.rs       the automation, behind `--features harness`, absent from a release
       platform/        everything true of one operating system and not the other

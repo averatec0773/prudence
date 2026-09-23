@@ -139,6 +139,26 @@ export function engineReadiness() {
   return core().invoke("engine_readiness");
 }
 
+/* --- what the engine recorded about its runs ------------------------------------------ */
+
+/** The last `count` records of the engine's run log, newest first, and how many finished
+ *  lines could not be read. `src-tauri/src/runlog.rs` reads the file. */
+export function engineRuns(count) {
+  return core().invoke("engine_runs", { count: Number(count) });
+}
+
+/** Run `prudence diagnose` and answer with the folder it wrote, or why there is none. The
+ *  command is a constant in the shell; this sends nothing. */
+export function diagnose() {
+  return core().invoke("engine_diagnose");
+}
+
+/** Show a folder in the file manager **by name**: `logs`, or `diagnose` for the bundle the
+ *  last diagnosis wrote. The shell owns the paths, as it owns the About tab's addresses. */
+export function reveal(name) {
+  return core().invoke("reveal", { name: String(name) });
+}
+
 /* --- the model settings ---------------------------------------------------------------
  *
  * The app never calls a model. These read what `prudence config model` prints and set the

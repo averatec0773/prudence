@@ -637,9 +637,12 @@ pub fn run_bounded(
         command.process_group(0);
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| EngineError::Launch(error.to_string()))?;
+    let began = Instant::now();
+    let mut child = command.spawn().map_err(|error| {
+        let error = EngineError::Launch(error.to_string());
+        invoked(arguments, began, Err(&error));
+        error
+    })?;
 
     // Both pipes drained on their own threads, so a child that fills stderr cannot wedge
     // the reader, and each is capped. **Scoped** threads, so the stderr reader may borrow
@@ -688,10 +691,11 @@ pub fn run_bounded(
             exit,
         )
     });
-    let exit = exit?;
+    let exit = exit.inspect_err(|error| invoked(arguments, began, Err(error)))?;
 
     let json = serde_json::from_str::<Value>(&stdout).ok();
     let status = exit.code().unwrap_or(-1);
+    invoked(arguments, began, Ok(status));
 
     if !exit.success() && json.is_none() {
         return Err(EngineError::Failed {
@@ -710,6 +714,28 @@ pub fn run_bounded(
         stderr,
         status,
     })
+}
+
+/// One invocation, in the app log: the arguments, how it ended and how long it took.
+///
+/// **Never the output.** Not the executable's path either, which carries the user's name
+/// and says nothing the arguments do not; a failure's words are logged by whoever shows
+/// them (`Engine::run`, `Engine::read`), so they are logged once.
+fn invoked(arguments: &[&str], began: Instant, ended: Result<i32, &EngineError>) {
+    let command = arguments.join(" ");
+    let seconds = format!("{:.2}", began.elapsed().as_secs_f64());
+    match ended {
+        Ok(exit) => {
+            tracing::info!(target: "engine", command, exit, seconds = %seconds, "engine ran")
+        }
+        Err(error) => tracing::error!(
+            target: "engine",
+            command,
+            kind = error.kind(),
+            seconds = %seconds,
+            "engine did not run to an exit"
+        ),
+    }
 }
 
 /// The version string the executable reports, and nothing derived from it.
@@ -976,18 +1002,21 @@ impl Engine {
         let Some(found) = self.locator.locate(remembered, SHELL_TIMEOUT) else {
             return Err(EngineError::NotFound);
         };
-        version_of(&found.path)?;
-        // Logged like a run is, and for the same reason: the shell's standard error is the
-        // only place anybody can see what a menu bar app asked the engine.
-        eprintln!("[engine] {} {}", found.path.display(), arguments.join(" "));
-        let answer = run(&found.path, arguments, &[])?;
-        eprintln!(
-            "[engine] {} exit {} ({} bytes)",
-            arguments.join(" "),
-            answer.status,
-            answer.stdout.len()
-        );
-        Ok(answer.stdout)
+        // The invocation itself is logged by `run_bounded`; what is logged here is a
+        // failure, with the engine's own words, because the command that asked turns it
+        // into one word for the page and the words would otherwise be nowhere.
+        version_of(&found.path)
+            .and_then(|_| run(&found.path, arguments, &[]))
+            .map(|answer| answer.stdout)
+            .inspect_err(|error| {
+                tracing::error!(
+                    target: "engine",
+                    command = arguments.join(" "),
+                    kind = error.kind(),
+                    detail = ?error.detail(),
+                    "engine failed"
+                );
+            })
     }
 
     /// Is this path an engine? The picker's answer, and the reason a chosen path is
@@ -1009,6 +1038,28 @@ impl Engine {
     /// with nothing to report to passes a closure that does nothing; neither changes what
     /// is run.
     pub fn run(
+        &self,
+        remembered: Option<&str>,
+        action: Action,
+        force: bool,
+        started: &dyn Fn(),
+        report: &Reporter,
+    ) -> RunOutcome {
+        let outcome = self.attempt(remembered, action, force, started, report);
+        // Every way a run fails ends here, in the words the run report shows the reader.
+        if let Some(kind) = &outcome.error_kind {
+            tracing::error!(
+                target: "engine",
+                action = action.name(),
+                kind = %kind,
+                detail = ?outcome.error.as_deref().unwrap_or(""),
+                "run failed"
+            );
+        }
+        outcome
+    }
+
+    fn attempt(
         &self,
         remembered: Option<&str>,
         action: Action,
@@ -1045,19 +1096,14 @@ impl Engine {
         // whole of it; the picker exists so the user can name an executable, and nothing
         // here can make naming one free.
         if let Err(error) = version_of(&found.path) {
-            eprintln!(
-                "[engine] refusing to run {}: {}",
-                found.path.display(),
-                error.detail()
-            );
             return RunOutcome::failed(action, &error);
         }
 
         let arguments = action.arguments(force);
-        eprintln!("[engine] {} {}", found.path.display(), arguments.join(" "));
         match run_reporting(&found.path, &arguments, &[], report) {
             Ok(answer) => {
-                eprintln!("[engine] {} exit {}", action.name(), answer.status);
+                // What the engine said besides its answer, on standard error only: output
+                // is never written to the app log, whose tail leaves the machine.
                 if !answer.stderr.trim().is_empty() {
                     eprintln!("[engine] stderr: {}", clipped(&answer.stderr));
                 }
@@ -1087,10 +1133,7 @@ impl Engine {
                     Action::Review => describe_review(answer.json.as_ref()),
                 }
             }
-            Err(error) => {
-                eprintln!("[engine] {} failed: {}", action.name(), error.detail());
-                RunOutcome::failed(action, &error)
-            }
+            Err(error) => RunOutcome::failed(action, &error),
         }
     }
 }

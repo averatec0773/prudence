@@ -217,11 +217,12 @@ The surface is the commands `lib.rs` hands `generate_handler!`: read the store, 
 shell about itself, log a line, fit the panel to its content, hide the panel, open and
 close the window, remember the section, quit; the ones the engine needs (where it is, what
 it is doing now, run an action, choose the executable, forget the choice, install or
-update it, the repositories it records and a change to one, whether a review is ready);
-two for the model settings (read them, set the prose language); five for the app's own
-settings (read them, and one per setting); and one that opens a link **by name**, because
-the shell owns the addresses and a command that took a URL would open whatever it was
-handed. `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts that the
+update it, the repositories it records and a change to one, whether a review is ready,
+the last records of its run log, and `prudence diagnose`); two for the model settings
+(read them, set the prose language); five for the app's own settings (read them, and one
+per setting); one that opens a link **by name**, because the shell owns the addresses and
+a command that took a URL would open whatever it was handed; and one that reveals a folder
+by name on the same rule (`logs`, or the bundle the last diagnosis wrote). `test/bridge.test.mjs` parses both `bridge.js` and `lib.rs` and asserts that the
 names and the **argument names** match, because renaming a Rust parameter breaks the page
 at runtime with no error on either side.
 
@@ -826,6 +827,65 @@ the file's own identity, which is its path, its length and its modification time
 - **Removed when:** it does not need to be. A second invalidation path (after a run, say)
   would hide a watcher defect rather than fix one.
 
+### An open run record is "interrupted" when the shell sees no run
+
+`store/runs.js`, `statusNote`, and `ui/engine-runs.js`, `entry`. The engine writes a
+record when a command starts and completes it when it ends, so a record with `ended_at`
+null is either running or was cut off, and the app tells the two apart by what
+`activity.rs` knows: a run of its own, or an ingest or rebuild holding `ingest.lock`.
+
+- **Assumes:** the engine completes the record before it releases the lock, and every
+  command whose record is still open while it runs is one the shell can see.
+- **When it breaks:** a `review` or an `init` started in a terminal holds no lock, so while
+  it runs its row in Recent runs says "interrupted" (the status row is unaffected: it reads
+  ingests only). And an engine that completes the record a moment after releasing the lock
+  shows "Last ingest was interrupted" until the store's next announcement re-reads the log,
+  which the end of that same ingest makes within a second.
+- **Removed when:** the engine writes its process id into the open record, so the shell
+  can ask whether that process is still alive instead of inferring it.
+
+### The status row looks for the last ingest in the last fifty records
+
+`ui/activity.js`, `LOOKBACK`. Reviews, scans and the Repositories screen's level changes
+write records too, so the newest record is often not an ingest.
+
+- **Assumes:** fewer than fifty non-ingest records land between two ingests.
+- **When it breaks:** the row says nothing about an ingest's warnings that the Engine tab
+  would still list.
+- **Removed when:** the shell answers "the last record of this command" itself, which is a
+  second question for `runlog.rs` and not needed at today's volumes.
+
+### Only the live run log is read, never its rotated files
+
+`runlog.rs`, `read`. The engine rotates `runs.jsonl` by size.
+
+- **Assumes:** the live file holds at least the last ten runs.
+- **When it breaks:** straight after a rotation, Recent runs lists fewer than ten runs and
+  the status row may find no ingest to speak about.
+- **Removed when:** the engine's rotation keeps a floor of records in the live file, or the
+  reader walks on into `runs.jsonl.1`.
+
+### The diagnosis's folder is the one that was not there before
+
+`runlog.rs`, `made`. `prudence diagnose` writes `<data dir>/diagnose/<timestamp>/`, and the
+shell lists that directory before and after the run rather than reading the path out of
+what the command printed, whose wording is the engine's to change.
+
+- **Assumes:** nothing else writes a bundle while this one runs.
+- **When it breaks:** two diagnoses at once (one from a terminal) show the newer of the two
+  folders, which is still a complete bundle.
+- **Removed when:** `prudence diagnose --json` prints the folder, and the shell decodes it.
+
+### The watcher's log line carries the revision the pages are replacing
+
+`watcher.rs`. The store is read when a page asks, after the announcement, so at the moment
+the watcher announces there is no new revision yet. Its line says which revision the pages
+held, and the `store read` line that follows says the one they got.
+
+- **Assumes:** a reader of `app.log` pairs the two lines, which are adjacent in practice.
+- **Removed when:** the watcher reads the snapshot itself before announcing, which would
+  also let it skip an announcement whose revision did not move.
+
 ## Working on the founder's machine
 
 Two rules that exist because each was broken once.
@@ -879,11 +939,13 @@ Grown by each batch. Batch 1 adds the window shell only.
 | The panel's range choice | Plain labels on the range block's caption row, right-aligned: Today, 7 days, 30 days, 90 days, the app's own quiet `.btn.plain`, the chosen one in ink and the rest quiet. One click swaps the sentence, the bar and the numbers under it for the day count it names; the row itself is drawn whole at first paint, so switching moves nothing else. Remembered in the app's UI state and restored on the next open, on the same rule as the window's section | `src/ui/panel.js`, `store/payload.js`, `src-tauri/src/ui_state.rs` |
 | The window shell | The system's titlebar overlaid as the toolbar, a sidebar with five entries and the status row at its foot, the heading and the screen's pickers on one fixed row, one screen at a time | `src/ui/window.js`, `src/window.css` |
 | The toolbar's actions | `Review now` (flat) and `Ingest now` (accent), the panel's words, on the right of the titlebar row. While any run goes, wherever it was started, the run takes their place in its compact form; then how it ended for four seconds; then the buttons. **One declared box** (248 by 26 pt) in every state, so nothing beside it moves and nothing under it grows | `src/ui/activity.js`, `ui/activity.css` |
-| The status row | The foot of the sidebar card: "Last ingest 13h ago" (the narrow relative form, the full stamp on the pointer, said again every minute), the same run in its compact form without its count, or the same outcome line. Reserved height, never grows | same files |
+| The status row | The foot of the sidebar card: "Last ingest 13h ago" (the narrow relative form, the full stamp on the pointer, said again every minute), the same run in its compact form without its count, or the same outcome line. Reserved height (34 pt, two caption lines), never grows. Idle, what the engine's run log says about the **last ingest** is a quiet caption on a second line under the age, "3 warnings" (warnings plus failed checks, `store/runs.js`), or replaces the age, "Last ingest was interrupted" (wrapping onto the second line, since in English it is wider than the row), when that record never ended and no run is going. A second line and not "· 3 warnings" after the age: the row has 148 pt of text and "Last ingest 13h ago" takes about 118 of them, so the first build showed "Last ing..." and the count. The caption is a chromeless button in the idle line's ink, the accent under the pointer, and opens Settings on the Engine tab. An engine with no run log adds nothing and says nothing | same files, `store/runs.js` |
+| Recent runs | The Engine tab's card of the engine's last ten runs, newest first, from `logs/runs.jsonl`: a hairline-separated `details` per run whose line is the time, the command (monospaced, the one value that yields), and how long it took or "interrupted" in ink, with the files parsed and skipped and the warning and failed-check counts under it. Open, it shows every warning (kind, count, sample as the engine wrote it), every failed check with the numbers it compared, and the error. Which rows are open survives a rebuild. Not drawn at all when the engine keeps no run log | `src/ui/engine-runs.js`, `ui/engine-runs.css`, `store/runs.js`, `src-tauri/src/runlog.rs` |
+| Diagnosis | The card under it: one plain label, Diagnose, that runs `prudence diagnose` through the shell, then the folder it wrote with a Reveal; a failure in the engine's own words; and where the logs are, with its own Reveal. The answer outlives a rebuild of the screen, because the diagnosis itself moves the store's files | same files |
 | The run report | A card at the foot of the window for the two outcomes a line cannot carry: a failure in the engine's own words, and a review the engine declined, with Write anyway. Content, so opaque, and it waits for the reader. Only runs this window started report here | same files |
 | `miniStack` | One row of a stacked bar: the composition of a whole, in a single line. It takes its parts in the caller's fixed order with their colours (the purposes on the Review screen, the buckets on the panel), and a `total` when the whole holds something none of the parts names | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
-| The engine block | Configuration only: where `prudence` is and whether it was found or chosen, with the picker, its version against the store's, and the Install or Update button with uv's own output under it. Install and Update are disabled while any run goes | `src/ui/engine-section.js`, `ui/engine-section.css` |
+| The engine block | Configuration: where `prudence` is and whether it was found or chosen, with the picker, its version against the store's, and the Install or Update button with uv's own output under it. Install and Update are disabled while any run goes | `src/ui/engine-section.js`, `ui/engine-section.css` |
 | The tab strip | The Settings screen's four tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
 | A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
 | `shareBars` | Shares, as horizontal bars on one axis: what each row is, how far it reaches, and the figure printed beside it. Drawn by the Review screen and the Observations screen, which had one each until this sheet | `src/design/charts.js` |

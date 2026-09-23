@@ -17,7 +17,9 @@
  *   the two buttons again. The area has one declared size in every state, so nothing
  *   beside it moves and nothing under it grows.
  * - `statusRow`, the foot of the sidebar: when the store was last ingested, or the same
- *   run in its compact form, or the same outcome line. Reserved height, never grows.
+ *   run in its compact form, or the same outcome line. Reserved height, never grows. Idle,
+ *   it also says what the engine's own record of the last ingest holds when that is worth
+ *   a look (`store/runs.js`, `statusNote`): its warnings, or that it never finished.
  * - `runReport`, a card at the foot of the window for the two outcomes a line cannot
  *   carry: a failure in the engine's own words, and a review the engine declined, with
  *   the decision to write one anyway. It is the only one of the three that waits for the
@@ -37,8 +39,9 @@
 
 import { runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
-import { relative, sessions as sessionPhrase, stamp as timeStamp } from "../text/fmt.js";
-import { t } from "../text/strings.js";
+import { statusNote } from "../store/runs.js";
+import { count, relative, sessions as sessionPhrase, stamp as timeStamp } from "../text/fmt.js";
+import { plural, t } from "../text/strings.js";
 
 /** How long the outcome of a run is said in the toolbar and the status row before they
  *  go back to what they say when nothing is running. Long enough to read one line, short
@@ -50,6 +53,11 @@ export const OUTCOME_SHOWN = 4000;
  *  screen; the store's own changes redraw it too, so this only covers the quiet hours. */
 export const CLOCK = 60_000;
 
+/** How many of the engine's run records the status row reads to find the last ingest.
+ *  The app's own scans and reviews write records too, so the newest one is often not an
+ *  ingest; this is enough to reach past a day of them. */
+export const LOOKBACK = 50;
+
 /**
  * What the toolbar asks the shell. `ui/wiring.js` fills it in; a test sets a fake one.
  *
@@ -58,6 +66,7 @@ export const CLOCK = 60_000;
  *   onActivity: (handler: (activity: any) => void) => Promise<() => void>,
  *   onProgress: (handler: (progress: any) => void) => Promise<() => void>,
  *   run: (action: string, force: boolean) => Promise<any>,
+ *   runs?: (count: number) => Promise<any>,
  * }} ActivityPort
  */
 
@@ -79,6 +88,9 @@ export const ACTIVITY = {
   sayUntil: 0,
   /** @type {ReturnType<typeof setTimeout> | null} */
   lapse: null,
+  /** The engine's run records as the shell last read them, newest first, or null before
+   *  the first answer. An engine that keeps none answers with an empty list. */
+  runs: /** @type {any[] | null} */ (null),
   /** Whoever draws from this, by place. `kind` is `state` for a run starting or ending
    *  and `progress` for a line inside one; only the first can change a screen.
    *  @type {Map<string, (kind: "state"|"progress", before: Activity) => void>} */
@@ -122,6 +134,8 @@ function tell(kind, before) {
 export function take(next, at = Date.now()) {
   const before = ACTIVITY.now;
   ACTIVITY.now = { ...idle(), ...next };
+  // A run ended, so its record in the engine's run log has ended too.
+  if (before.running && !ACTIVITY.now.running) readRuns();
   if (before.running && !ACTIVITY.now.running && ACTIVITY.now.outcome) {
     ACTIVITY.sayUntil = at + OUTCOME_SHOWN;
     if (ACTIVITY.lapse) clearTimeout(ACTIVITY.lapse);
@@ -156,7 +170,30 @@ export function follow() {
   if (!port) return;
   port.onActivity((next) => take(next));
   port.onProgress((progress) => progressed(progress));
-  port.read().then((next) => take(next ?? {}));
+  // What is running first, then the records: a record still open is an interruption only
+  // once the shell has said nothing is running.
+  port.read().then((next) => {
+    take(next ?? {});
+    readRuns();
+  });
+}
+
+/**
+ * Read the engine's run records again, and let the status row say what they hold.
+ *
+ * A file read in the shell, not a subprocess, and nothing the store watcher sees, so it is
+ * asked whenever the row may have something new to say: when a run ends, and whenever the
+ * row is rebuilt, which is every time the store moves. The port settles rather than
+ * rejects (`ui/wiring.js`), and an answer that could not be read leaves the row as it was.
+ */
+export function readRuns() {
+  const port = ACTIVITY.port;
+  if (!port?.runs) return Promise.resolve();
+  return port.runs(LOOKBACK).then((answer) => {
+    if (!answer) return;
+    ACTIVITY.runs = Array.isArray(answer.runs) ? answer.runs : [];
+    ACTIVITY.mounts.get("status")?.("state", ACTIVITY.now);
+  });
 }
 
 /** Say the status row's relative time again. The window calls this every `CLOCK`. */
@@ -279,23 +316,73 @@ function lastIngest(stamp) {
 }
 
 /**
+ * What the run log adds to the idle line, as a quiet caption that opens the Engine tab: a
+ * plain button, because it goes somewhere. The interrupted form takes the age's place,
+ * since "13h ago" would date an ingest that never finished writing.
+ *
+ * The count is a line of its own under the age, not "· 3 warnings" after it: the row has
+ * 148 points of text, and "Last ingest 13h ago" alone takes 118 of them.
+ *
+ * @param {{ kind: "interrupted" } | { kind: "warnings", count: number }} note
+ * @param {() => void} open
+ */
+function noteButton(note, open) {
+  const text =
+    note.kind === "interrupted"
+      ? t("activity.interrupted")
+      : plural("runs.warnings", note.count, count(note.count));
+  // The interrupted sentence is the whole row and may take both of its lines: "Last ingest
+  // was interrupted" is wider than the sidebar in English.
+  const button = el("button", {
+    class: note.kind === "interrupted" ? "status-note is-sentence" : "status-note",
+    type: "button",
+    text,
+  });
+  button.title = t("activity.note.help");
+  button.addEventListener("click", open);
+  return button;
+}
+
+/**
  * The foot of the sidebar: the last ingest, a run while one goes, its outcome for a moment.
  *
+ * Idle, the line may carry one more thing from the engine's own record of the last ingest
+ * (`statusNote`). `open` is what clicking it does, which is the window's to decide; with
+ * nothing to open, nothing is added.
+ *
  * @param {any} data the payload, for `app_status.last_ingest_at`
+ * @param {() => void} [open]
  */
-export function statusRow(data) {
+export function statusRow(data, open) {
   const root = el("div", { class: "status-row", role: "status" });
 
   const draw = () => {
     root.innerHTML = "";
     const at = phase(ACTIVITY.now, ACTIVITY.sayUntil, Date.now());
-    if (at === "running") root.appendChild(running(ACTIVITY.now));
-    else if (at === "outcome") root.appendChild(outcomeLine(ACTIVITY.now.outcome));
-    else root.appendChild(lastIngest(data?.status?.last_ingest_at));
+    if (at === "running") {
+      root.appendChild(running(ACTIVITY.now));
+      return;
+    }
+    if (at === "outcome") {
+      root.appendChild(outcomeLine(ACTIVITY.now.outcome));
+      return;
+    }
+    const note = open ? statusNote(ACTIVITY.runs ?? [], Boolean(ACTIVITY.now.running)) : null;
+    if (!open || !note) {
+      root.appendChild(lastIngest(data?.status?.last_ingest_at));
+      return;
+    }
+    const lines = el("div", { class: "status-lines" });
+    if (note.kind !== "interrupted") lines.appendChild(lastIngest(data?.status?.last_ingest_at));
+    lines.appendChild(noteButton(note, open));
+    root.appendChild(lines);
   };
 
   ACTIVITY.mounts.set("status", draw);
   draw();
+  // Rebuilt with the window, which is every time the store moves: the moment an ingest
+  // from anywhere has finished writing, and so the moment its record is complete.
+  readRuns();
   return root;
 }
 

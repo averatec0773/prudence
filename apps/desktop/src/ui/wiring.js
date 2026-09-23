@@ -13,6 +13,7 @@
 
 import * as Bridge from "../bridge.js";
 import { ACTIVITY, follow, runReport } from "./activity.js";
+import { RUNS } from "./engine-runs.js";
 import { ENGINE } from "./engine-section.js";
 import { REPOSITORIES } from "./repositories.js";
 import { REVIEW_NOW } from "./review.js";
@@ -59,6 +60,16 @@ export function wireWindow() {
     onProgress: (handler) =>
       reported("progress events", Bridge.onEngineProgress(handler)).then((off) => off ?? (() => {})),
     run: (action, force) => Bridge.runEngine(action, force),
+    runs: (count) => reported("run log", Bridge.engineRuns(count)),
+  };
+
+  // The Engine tab's run records and diagnosis. `runs` and `diagnose` reject, because the
+  // cards say a failure themselves; `reveal` only opens a folder, and a refusal of that
+  // is a line on the shell's standard error.
+  RUNS.port = {
+    runs: (count) => Bridge.engineRuns(count),
+    diagnose: () => Bridge.diagnose(),
+    reveal: (name) => reported("reveal", Bridge.reveal(name)),
   };
 
   REPOSITORIES.port = {

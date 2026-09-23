@@ -36,6 +36,12 @@ thiserror = "2"
 # a second crate would not know it.
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 tauri-plugin-autostart = "2.5.1"
+# The app's own log, `<data dir>/logs/app.log`. `tracing` is already in the tree through
+# Tauri; the subscriber's `fmt` layer is what writes a line per event. The file is rotated
+# by `applog.rs` and not by `tracing-appender`, whose rotation is by the clock only and
+# whose writer is a channel and a thread this app does not need: the rule here is a size.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 tauri-plugin-opener = "2.5.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]

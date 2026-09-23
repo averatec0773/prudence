@@ -261,10 +261,13 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                             // is, which is why it sits on the one line that says the
                             // store moved.
                             crate::store::invalidate();
+                            // The revision the pages are about to replace; the read they
+                            // make next logs the one that replaces it (`store read`).
+                            let before = crate::store::revision().unwrap_or(0);
                             if let Err(error) = app.emit(STORE_CHANGED, ()) {
-                                eprintln!("[watch] could not announce: {error}");
+                                tracing::error!(target: "watcher", revision = before, error = %error, "the store changed and the pages could not be told");
                             } else {
-                                eprintln!("[watch] the store changed; the pages will re-read");
+                                tracing::info!(target: "watcher", revision = before, "the store changed; the pages will re-read");
                             }
                         }
                         Step::Retry => due = Some(Instant::now() + QUIET),
@@ -273,7 +276,7 @@ pub fn watch(app: &AppHandle, database: PathBuf) {
                                 Some(Err(error)) => error.to_string(),
                                 _ => String::new(),
                             };
-                            eprintln!("[watch] gave up after {RETRIES} tries: {why}");
+                            tracing::error!(target: "watcher", tries = RETRIES, error = %why, "the store changed and would not read; waiting for the next change");
                         }
                     }
                 }

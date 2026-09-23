@@ -80,7 +80,14 @@ pub fn database_file() -> PathBuf {
     data_dir().join("prudence.db")
 }
 
-fn data_dir() -> PathBuf {
+/// Where the engine keeps its logs, `runs.jsonl` and this app's own `app.log` both: the
+/// `logs` directory beside the store.
+pub fn logs_dir() -> PathBuf {
+    data_dir().join("logs")
+}
+
+/// The engine's data directory: the store, its lock, its logs and its diagnose bundles.
+pub fn data_dir() -> PathBuf {
     if let Some(dir) = env_path("PRUDENCE_DATA_DIR") {
         return dir;
     }
@@ -263,6 +270,7 @@ pub fn snapshot(path: &Path) -> Result<Value, StoreError> {
     // flag again, and the next ask re-reads rather than trusting what was half-written.
     STALE.store(false, Ordering::SeqCst);
 
+    let began = std::time::Instant::now();
     let fresh = match read(path) {
         Ok(value) => value,
         Err(error) => {
@@ -270,6 +278,8 @@ pub fn snapshot(path: &Path) -> Result<Value, StoreError> {
             // error kept in this cache would be handed to every page until the next file
             // event rather than being retried.
             STALE.store(true, Ordering::SeqCst);
+            // The sentence every page draws in place of its figures.
+            tracing::error!(target: "store", error = %error, "the store could not be read");
             return Err(error);
         }
     };
@@ -280,6 +290,12 @@ pub fn snapshot(path: &Path) -> Result<Value, StoreError> {
         Some(previous) => previous.revision + 1,
         None => 1,
     };
+    tracing::info!(
+        target: "store",
+        revision,
+        ms = began.elapsed().as_millis() as u64,
+        "store read"
+    );
     let mut payload = fresh;
     if let Some(object) = payload.as_object_mut() {
         object.insert("revision".into(), json!(revision));
@@ -289,6 +305,11 @@ pub fn snapshot(path: &Path) -> Result<Value, StoreError> {
         payload: payload.clone(),
     });
     Ok(payload)
+}
+
+/// The revision the pages were last handed, or none before the first read.
+pub fn revision() -> Option<u64> {
+    cache().lock().unwrap().as_ref().map(|found| found.revision)
 }
 
 /// Are these the same figures? The stored payload carries `revision` and the fresh one
@@ -391,14 +412,19 @@ fn contract_version(connection: &Connection) -> Result<u32, StoreError> {
         Err(error) => return Err(StoreError::Read(error.to_string())),
     };
 
-    let Some(found) = found else {
-        return Err(StoreError::contract(NO_CONTRACT));
-    };
-
-    match found.trim().parse::<u32>() {
+    let found = found.unwrap_or_else(|| NO_CONTRACT.to_string());
+    let verdict = match found.trim().parse::<u32>() {
         Ok(version) if contract::SUPPORTED.contains(&version) => Ok(version),
         _ => Err(StoreError::contract(&found)),
-    }
+    };
+    tracing::info!(
+        target: "contract",
+        found = %found,
+        supported = ?contract::SUPPORTED,
+        verdict = if verdict.is_ok() { "read" } else { "refused" },
+        "contract checked"
+    );
+    verdict
 }
 
 fn block(connection: &Connection, sql: &str) -> Result<Block, StoreError> {

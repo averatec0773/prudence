@@ -375,6 +375,37 @@ test("the Engine tab carries the engine block and where the store is", () => {
   assert.ok(text.includes(String(STATUS.app_contract_version)), "the contract is missing");
 });
 
+/* The status row's note about the last ingest sends the reader here, to the tab where the
+   run records are, whichever tab they left open. */
+test("the status row can open the Engine tab, and the Engine tab carries the run records", async () => {
+  const { openSettingsTab } = /** @type {any} */ (await import("../src/ui/settings.js"));
+  const { RUNS, forget } = /** @type {any} */ (await import("../src/ui/engine-runs.js"));
+  fakePort();
+  ENGINE.port = null;
+  RUNS.port = {
+    runs: () => Promise.resolve({ runs: [{ run_id: "a", command: ["ingest"], ended_at: null }], unreadable: 0 }),
+    diagnose: () => Promise.resolve({}),
+    reveal: () => Promise.resolve(),
+  };
+  try {
+    open(screenFor(), "general");
+    openSettingsTab("nowhere");
+    openSettingsTab("engine");
+    const screen = screenFor();
+    assert.deepEqual(
+      screen.tree.findAll(".tab").map((node) => node.getAttribute("aria-selected")),
+      ["false", "true", "false", "false"]
+    );
+    await new Promise(setImmediate);
+    const pane = screen.tree.findAll(".tab-pane").filter((one) => !one.hidden)[0];
+    assert.ok(pane.textContent.includes(Str.t("runs.title")), "no Recent runs on the Engine tab");
+    assert.ok(pane.textContent.includes(Str.t("diagnose.action")), "no Diagnose on the Engine tab");
+  } finally {
+    RUNS.port = null;
+    forget();
+  }
+});
+
 test("a version number is printed ungrouped, and a step that never ran is left out", () => {
   fakePort();
   const grouped = screenFor({ status: { ...STATUS, parser_version: 1234 } });

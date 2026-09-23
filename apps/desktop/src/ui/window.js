@@ -19,6 +19,7 @@ import { rangeName } from "../text/fmt.js";
 import { DEFAULT_RANGE, RANGES } from "../store/overview.js";
 import { ACTIVITY, CLOCK, ingesting, runActions, statusRow, tick } from "./activity.js";
 import { SCREENS, screenExists, screenFor } from "./screens.js";
+import { openSettingsTab } from "./settings.js";
 
 /** The sidebar's rows, and the keyboard's order, are the route table's order. The keys
  *  are what the shell remembers, so they are not display strings. */
@@ -129,8 +130,15 @@ function sidebar() {
     return button;
   });
   // At the foot of the card: when the store was last ingested, or the run that is
-  // ingesting it now, from wherever it was started.
-  card.appendChild(statusRow(state.data));
+  // ingesting it now, from wherever it was started. What the engine recorded about the
+  // last ingest, when there is something to see, opens the Engine tab where it is listed.
+  card.appendChild(
+    statusRow(state.data, () => {
+      openSettingsTab("engine");
+      state.scroll.settings = 0;
+      show("settings");
+    })
+  );
   return el("aside", { class: "sidebar" }, [card]);
 }
 

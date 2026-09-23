@@ -1,0 +1,144 @@
+/* Rules only the Engine tab's Recent runs and Diagnosis cards need.
+ *
+ * Shared pieces (card, data table, buttons, the fact block) live in `design/components.css`,
+ * `app.css` and `ui/settings.css`. Put a rule here only when these two cards are the only
+ * thing that wants it.
+ *
+ * No design token may be declared here. A test asserts it.
+ */
+
+.runs-holder[hidden] {
+  display: none;
+}
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One run: a hairline between two and never above the first, the same rhythm as a
+   setting row. */
+.run-entry {
+  padding: var(--s2) 0;
+}
+
+.run-entry + .run-entry {
+  border-top: 0.5px solid var(--separator);
+}
+
+/* The line that says what the run was. The time, the command and how long it took on one
+   row; the counts under them. The command is the one value that may be long, so it is
+   the one that gives way.
+
+   A grid, so the summary is no longer a list item and the system's disclosure marker is
+   gone with it; the triangle is drawn here instead, in the marker's own quiet ink, and
+   turns when the row is open. */
+.run-summary {
+  display: grid;
+  grid-template-columns: 10px auto minmax(0, 1fr) auto;
+  column-gap: var(--s3);
+  row-gap: 2px;
+  align-items: baseline;
+  cursor: default;
+}
+
+.run-summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-summary::before {
+  content: "\25B6";
+  font-size: 8px;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.run-entry[open] > .run-summary::before {
+  transform: rotate(90deg);
+}
+
+.run-when {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-caption);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-took {
+  font-size: var(--t-footnote);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* A run that never finished is the one thing in the line said in ink: it is why the
+   reader came here from the sidebar. */
+.run-took.is-interrupted {
+  color: var(--text);
+  font-weight: 590;
+}
+
+.run-facts {
+  grid-column: 3 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--s3);
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
+
+.run-facts.is-flagged {
+  color: var(--text-2);
+}
+
+/* What opens under a run: the engine's own values, indented past the triangle. */
+.run-recorded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2) 0 var(--s1) calc(10px + var(--s3));
+}
+
+.run-head {
+  font-size: var(--t-caption);
+  font-weight: 590;
+  color: var(--text-2);
+}
+
+/* A sample or a check's numbers is JSON as the engine wrote it, so it is monospaced and
+   wraps anywhere rather than widening the card. */
+.run-table td {
+  overflow-wrap: anywhere;
+}
+
+.run-table td:last-child {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-caption);
+}
+
+.run-error {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-caption);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.diagnose-said {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.diagnose-said:empty {
+  display: none;
+}

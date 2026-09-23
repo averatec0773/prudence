@@ -381,6 +381,7 @@ test("the wiring fills in every port, the Review seam, and puts the run report o
   const { SETTINGS } = /** @type {any} */ (await import("../src/ui/settings.js"));
   const { REPOSITORIES } = /** @type {any} */ (await import("../src/ui/repositories.js"));
   const { ACTIVITY } = /** @type {any} */ (await import("../src/ui/activity.js"));
+  const { RUNS } = /** @type {any} */ (await import("../src/ui/engine-runs.js"));
   const before = document.body.children.length;
   try {
     wireWindow();
@@ -398,8 +399,11 @@ test("the wiring fills in every port, the Review seam, and puts the run report o
     for (const name of ["scan", "level"]) {
       assert.equal(typeof REPOSITORIES.port[name], "function", `the repositories port has no ${name}`);
     }
-    for (const name of ["read", "onActivity", "onProgress", "run"]) {
+    for (const name of ["read", "onActivity", "onProgress", "run", "runs"]) {
       assert.equal(typeof ACTIVITY.port[name], "function", `the toolbar's port has no ${name}`);
+    }
+    for (const name of ["runs", "diagnose", "reveal"]) {
+      assert.equal(typeof RUNS.port[name], "function", `the run log's port has no ${name}`);
     }
     assert.equal(document.body.children.length, before + 1);
     assert.equal(document.body.children[before].className, "run-report");
@@ -409,6 +413,7 @@ test("the wiring fills in every port, the Review seam, and puts the run report o
     SETTINGS.port = null;
     REPOSITORIES.port = null;
     ACTIVITY.port = null;
+    RUNS.port = null;
   }
 });
 

@@ -33,11 +33,12 @@
 
 /* --- the status row ------------------------------------------------------------------- */
 
-/* At the foot of the sidebar card, under the five sections, at the height of the compact
-   bar whatever it holds. Its text lines up with the sections' own labels. */
+/* At the foot of the sidebar card, under the five sections, at one height whatever it
+   holds: two caption lines, which is the tallest thing it holds (the age with the run
+   log's note under it). Its text lines up with the sections' own labels. */
 .status-row {
   margin-top: auto;
-  height: 26px;
+  height: 34px;
   flex: none;
   display: flex;
   align-items: center;
@@ -92,6 +93,56 @@
 
 .run-outcome.is-idle {
   color: var(--text-3);
+}
+
+/* What the engine's run log adds to the idle line: "3 warnings" on a line under the age,
+   or "Last ingest was interrupted" in the age's place. Under it rather than after it: the
+   row has 148 points of text and the age alone takes most of them. */
+.status-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  width: 100%;
+}
+
+/* A quiet caption that is also a way to the Engine tab, so it is a button with no chrome:
+   the idle line's own ink, the accent only under the pointer, the same rule as
+   `.btn.plain`. Qualified by the row because `window.css` draws every button in the
+   sidebar card as a section row, and each of those properties is taken back here. */
+.status-row .status-note {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  transition: none;
+  text-align: left;
+  font: inherit;
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* "Last ingest was interrupted" is the whole row and is wider than it in English, so it
+   wraps onto the second of the row's two lines rather than losing its last word. */
+.status-row .status-note.is-sentence {
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.status-row .status-note:hover {
+  background: none;
+  color: var(--accent);
+}
+
+.status-row .status-note:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* --- the report ------------------------------------------------------------------------
