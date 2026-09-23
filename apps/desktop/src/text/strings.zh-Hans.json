@@ -325,7 +325,6 @@
     "settings.openAtLogin.refused": "本机拒绝登记这个登录项：",
     "settings.repositories.batch.failed": "引擎拒绝了 %1$@，它之后的仓库都没有改动。在它之前已经改好的仓库保持已改的状态。",
     "settings.repositories.batch.label": "把所选仓库设为",
-    "settings.repositories.batch.running": "正在更改第 %1$@ 个，共 %2$@ 个",
     "settings.repositories.batch.selected": "已选 %1$@ 个",
     "settings.repositories.column.first": "最早",
     "settings.repositories.column.last": "最近",

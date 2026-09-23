@@ -32,7 +32,7 @@ const FIXTURE = join(app, "fixtures/store.db");
 import * as Str from "../src/text/strings.js";
 // `any`, deliberately, as in the other screen tests: the tree this returns is the shim's
 // and asking it for `find` is the whole point of the shim.
-const { SETTINGS, TABS, settings, sourcesOf } = /** @type {any} */ (
+const { BATCH, SETTINGS, TABS, settings, sourcesOf } = /** @type {any} */ (
   await import("../src/ui/settings.js")
 );
 const { ENGINE } = /** @type {any} */ (await import("../src/ui/engine-section.js"));
@@ -165,6 +165,16 @@ function fakePort(overrides = {}) {
   // handed the answer from before it.
   MODEL_ANSWER.forget();
   REPOSITORY_SCAN.forget();
+  // A batch outlives the screen it started on (`BATCH` in `ui/settings.js`), which means
+  // it can outlive one test too: a test that ends mid-batch, or fails an assertion before
+  // it finishes, leaves `BATCH.running` true for the next one unless it is put back here.
+  BATCH.running = false;
+  BATCH.keys = [];
+  BATCH.index = 0;
+  BATCH.name = null;
+  BATCH.scan = null;
+  BATCH.failure = null;
+  BATCH.onChange = null;
   const asked = {
     language: [],
     appearance: [],
@@ -873,7 +883,7 @@ test("select-all takes the group it is in and not the other one", async () => {
   assert.equal(rowFor(screen, "beatos").find(".tick").checked, false, "the other group was taken");
 });
 
-test("a batch runs the command once per repository, in order, and re-reads the list once", async () => {
+test("a batch runs the command once per repository, in order, and asks the engine no more", async () => {
   const { screen, asked } = await repositoriesTab();
   const before = asked.scans;
   choose(screen, ["beatos", "averatec-career", "offeros"]);
@@ -885,7 +895,11 @@ test("a batch runs the command once per repository, in order, and re-reads the l
     ["root:742d2192", "metadata-only"],
     ["root:2c3f8baf", "metadata-only"],
   ]);
-  assert.equal(asked.scans - before, 1, "the list was read once per command");
+  // Not once per command, and not once at the end either: `repositoryLevel` is already
+  // the engine's own fresh scan (`engine_repository_level` in `src-tauri/src/lib.rs` runs
+  // `init --scan --json` itself before answering), so a read on top of it would ask for
+  // exactly what the last command had just said.
+  assert.equal(asked.scans - before, 0, "the batch read the list on top of its own answers");
 
   // Drawn from the engine's answer: all three are in the recorded block at that level.
   const recorded = screen.tree.findAll(".repo-table")[0];
@@ -899,44 +913,196 @@ test("a batch runs the command once per repository, in order, and re-reads the l
   assert.deepEqual(ticked, [Str.t("settings.repositories.level.metadataOnly.short")]);
 });
 
-test("a batch says which one it is on while it runs", async () => {
-  const { screen, asked } = await repositoriesTab();
-  choose(screen, ["beatos", "averatec-career", "offeros"]);
-
-  // A command that does not answer yet, which is the only way to look at a run mid-way.
-  const real = SETTINGS.port.repositoryLevel;
-  let release = null;
+/** A command that does not answer yet, which is the only way to look at a run mid-way,
+ *  and answers with a real fresh scan when it is released: `repositoryLevel`'s own answer
+ *  is already the engine's whole scan (see `startBatch`), so a stub that resolved with
+ *  nothing would not exercise what the bar, or a row, is actually drawn from. */
+function heldOpenLevel(asked, initial) {
+  let working = initial.map((row) => ({ ...row }));
+  const releases = [];
   SETTINGS.port.repositoryLevel = (key, level) => {
     asked.levels.push([key, level]);
     return new Promise((resolve) => {
-      release = resolve;
+      releases.push(() => {
+        working = working.map((row) =>
+          row.repoKey === key
+            ? { ...row, enabled: level !== "off", level: level === "off" ? null : level }
+            : row
+        );
+        resolve(working);
+      });
     });
   };
+  return releases;
+}
+
+test("a batch's bar names the repository being changed, in the engine's own count, in both languages", async () => {
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      const { screen, asked } = await repositoriesTab();
+      choose(screen, ["beatos", "averatec-career", "offeros"]);
+      const releases = heldOpenLevel(asked, SCAN);
+
+      pressInBar(screen, Str.t("settings.repositories.level.full"));
+      await settled();
+
+      const atOne = bar(screen);
+      assert.ok(
+        atOne.textContent.includes("beatos"),
+        `the bar does not name the repository being changed: ${atOne.textContent}`
+      );
+      assert.ok(
+        atOne.textContent.includes(
+          Str.t("engine.progress.count", "1", "3", Str.t("engine.unit.repositories"))
+        ),
+        `the count is not the engine's own: ${atOne.textContent}`
+      );
+      const fillAtOne = atOne.find(".progress-fill");
+      assert.ok(fillAtOne, "no fill bar while the batch runs");
+      assert.ok(
+        Math.abs(parseFloat(fillAtOne.style.width) - 100 / 3) < 0.01,
+        `the fill at 1 of 3 is ${fillAtOne.style.width}`
+      );
+      // And nothing may be pressed twice while it runs.
+      assert.ok(rowFor(screen, "beatos").findAll("button").every((node) => node.disabled));
+
+      releases[0]();
+      await settled();
+
+      const atTwo = bar(screen);
+      assert.ok(atTwo.textContent.includes("averatec-career"), atTwo.textContent);
+      assert.ok(
+        atTwo.textContent.includes(
+          Str.t("engine.progress.count", "2", "3", Str.t("engine.unit.repositories"))
+        ),
+        atTwo.textContent
+      );
+      const fillAtTwo = atTwo.find(".progress-fill");
+      assert.ok(
+        Math.abs(parseFloat(fillAtTwo.style.width) - 200 / 3) < 0.01,
+        `the fill at 2 of 3 is ${fillAtTwo.style.width}`
+      );
+
+      releases[1]();
+      await settled();
+      releases[2]();
+      await settled();
+      assert.equal(bar(screen).find(".progress-fill"), null, "a fill bar is still on the screen");
+    } finally {
+      Str.setLang("en");
+    }
+  }
+});
+
+test("a row shows its own new level as soon as its own change lands, not when the whole batch does", async () => {
+  const { screen, asked } = await repositoriesTab();
+  choose(screen, ["beatos", "averatec-career"]);
+  const releases = heldOpenLevel(asked, SCAN);
+
+  // Both start away from "off": full and metadata-only respectively, so a move to "off"
+  // is visible on both the moment it lands.
+  pressInBar(screen, Str.t("settings.choice.off"));
+  await settled();
+
+  releases[0]();
+  await settled();
+
+  const beatosNow = rowFor(screen, "beatos")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(beatosNow, [Str.t("settings.choice.off")], "the first row did not flip");
+
+  const careerStill = rowFor(screen, "averatec-career")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(
+    careerStill,
+    [Str.t("settings.repositories.level.metadataOnly.short")],
+    "the second row flipped before its own command landed"
+  );
+
+  releases[1]();
+  await settled();
+
+  const careerNow = rowFor(screen, "averatec-career")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(careerNow, [Str.t("settings.choice.off")], "the second row did not flip");
+});
+
+test("a second batch cannot start while one runs", async () => {
+  const { screen, asked } = await repositoriesTab();
+  choose(screen, ["beatos", "averatec-career"]);
+  const releases = heldOpenLevel(asked, SCAN);
 
   pressInBar(screen, Str.t("settings.repositories.level.full"));
   await settled();
-  assert.ok(
-    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "1", "3")),
-    bar(screen).textContent
-  );
-  // And nothing may be pressed twice while it runs.
-  assert.ok(rowFor(screen, "beatos").findAll("button").every((node) => node.disabled));
+  assert.equal(asked.levels.length, 1);
 
-  release();
+  // The shim fires a click on a disabled button the way a real browser never would, so
+  // this presses `startBatch`'s own guard rather than the DOM's.
+  pressInBar(screen, Str.t("settings.choice.off"));
   await settled();
-  assert.ok(
-    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "2", "3")),
-    bar(screen).textContent
-  );
+  assert.equal(asked.levels.length, 1, "a second batch started while the first was running");
 
-  SETTINGS.port.repositoryLevel = real;
-  release();
+  releases[0]();
   await settled();
-  assert.equal(
-    bar(screen).textContent.includes(Str.t("settings.repositories.batch.running", "3", "3")),
-    false,
-    "the run finished and the counter is still on the screen"
-  );
+  releases[1]();
+  await settled();
+});
+
+test("the batch bar's progress row is reserved: present but empty until a batch runs", async () => {
+  const { screen } = await repositoriesTab();
+  choose(screen, ["beatos"]);
+  const slot = bar(screen).find(".repo-batch-progress");
+  assert.ok(slot, "the bar has no reserved row for its progress");
+  assert.equal(slot.children.length, 0, "the reserved row already holds something while idle");
+  assert.equal(slot.textContent, "", "the reserved row says something while idle");
+});
+
+test("a batch keeps running when the screen it started on is torn down, and the tab it comes back to shows what it did", async () => {
+  const { screen, asked } = await repositoriesTab();
+  choose(screen, ["beatos", "averatec-career"]);
+  const releases = heldOpenLevel(asked, SCAN);
+
+  pressInBar(screen, Str.t("settings.choice.off"));
+  await settled();
+  assert.equal(asked.levels.length, 1);
+
+  // The screen this batch started on is torn down the way `window.js` tears the whole
+  // Settings tree down on a switch to another screen (`nodes.screen.innerHTML = ""`): a
+  // brand new tree, built from a closure that has never heard of this batch.
+  const torn = screenFor({}, INFO, asked);
+  open(torn, "repositories");
+  await settled();
+
+  // The command the batch is mid-way through still lands: nothing cancelled it.
+  releases[0]();
+  await settled();
+  assert.equal(asked.levels.length, 2, "the batch stopped when its screen was torn down");
+
+  // The new tree, which never pressed a button, shows the batch it reattached to: the
+  // second repository still being named, its own controls dead.
+  const bar2 = bar(torn);
+  assert.ok(bar2, "the tab that came back shows no bar for a batch that is running");
+  assert.ok(bar2.textContent.includes("averatec-career"), bar2.textContent);
+  assert.ok(rowFor(torn, "averatec-career").findAll("button").every((node) => node.disabled));
+
+  releases[1]();
+  await settled();
+
+  // Finished: the outcome is drawn from the engine's own last answer, in the tab the
+  // reader came back to, and no batch is left running for the next test to trip over.
+  assert.equal(bar(torn), null, "the bar stayed after the batch it belongs to finished");
+  const careerTicked = rowFor(torn, "averatec-career")
+    .findAll("button")
+    .filter((node) => node.getAttribute("aria-checked") === "true")
+    .map((node) => node.textContent);
+  assert.deepEqual(careerTicked, [Str.t("settings.choice.off")]);
 });
 
 test("a refusal stops the batch where it is, in the engine's own words", async () => {
@@ -951,7 +1117,7 @@ test("a refusal stops the batch where it is, in the engine's own words", async (
     ["root:df32e8a9", "full"],
     ["root:742d2192", "full"],
   ]);
-  assert.equal(asked.scans - before, 1, "the list was not re-read after the refusal");
+  assert.equal(asked.scans - before, 0, "the list was read on top of the batch's own answers");
 
   const said = bar(screen).textContent;
   assert.ok(
@@ -972,6 +1138,38 @@ test("a refusal stops the batch where it is, in the engine's own words", async (
     screen.tree.findAll(".repo-table")[1].textContent.includes("offeros"),
     "a repository the batch never reached was drawn as changed"
   );
+});
+
+/* --- the level control's own layout ------------------------------------------------------
+ *
+ * The founder's screenshot of this control in Chinese: the three segments were not equal,
+ * the selected one's highlight ended before its own label did, and "完整" hung off the
+ * control's right edge. A DOM test cannot measure a pixel (see the row's own layout tests
+ * above), so what it can guard is the declaration: the segments are equal, nothing may
+ * wrap, and the column is wide enough for the widest label in either language.
+ */
+
+test("the level control's three segments are declared equal, and the column fits the widest label", () => {
+  const css = readFileSync(join(app, "src/ui/settings.css"), "utf8");
+
+  const at = css.indexOf(".repo-table td .segmented button {");
+  assert.notEqual(at, -1, "no rule for the level control's own buttons");
+  const open = css.indexOf("{", at);
+  const close = css.indexOf("}", open);
+  const body = css.slice(open + 1, close);
+  assert.match(body, /flex:\s*1 1 0/, "the three segments are not declared equal");
+  assert.match(body, /min-width:\s*0/, "a floor under the segments is back, fighting the equal flex");
+  assert.match(body, /white-space:\s*nowrap/, "a label may wrap out of its own segment");
+  assert.match(body, /text-align:\s*center/, "a label is not centred in its own segment");
+
+  const level = css.indexOf(".repo-table .c-level {");
+  assert.notEqual(level, -1, "no width declared for the level column");
+  const lopen = css.indexOf("{", level);
+  const lclose = css.indexOf("}", lopen);
+  const width = Number((css.slice(lopen + 1, lclose).match(/width:\s*(\d+)px/) ?? [])[1]);
+  // Three segments of "元数据" plus the control's own padding and gaps: see the CSS
+  // comment above `.repo-table .repo-level` for the arithmetic.
+  assert.ok(width >= 176, `the level column is ${width}px, too narrow for 元数据 x 3`);
 });
 
 /* --- how often the engine is asked ------------------------------------------------------

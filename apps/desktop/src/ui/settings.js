@@ -34,7 +34,7 @@
  * against a fake shell in `test/settings.test.mjs`.
  */
 
-import { emptyState, panel } from "../design/components.js";
+import { emptyState, panel, runProgress } from "../design/components.js";
 import { el } from "../design/dom.js";
 import { MODEL_ANSWER, REPOSITORY_SCAN } from "../store/asked.js";
 import { engineSection } from "./engine-section.js";
@@ -778,11 +778,20 @@ function repositoryTable({ title, note, rows, change, busy, picked, pick, pickAl
  *
  * At the foot of the card and only while something is selected: it is a control, so it
  * takes the frost where the platform has one, and it says how many rows it is about
- * before it offers to change them. While a batch runs it counts, because the engine is
+ * before it offers to change them. While a batch runs it says which repository is being
+ * changed and how far through the list that is, in the same bar `runProgress` draws on
+ * the Engine tab and the panel: a determinate bar per repository, because the engine is
  * being run once per repository and a bar that said nothing would be a bar that looks
  * stuck on a list of twenty.
  *
- * @param {{ chosen: number, busy: boolean, progress: {done: number, total: number}|null,
+ * `progress`'s row is **reserved, never revealed**: it is in the bar whether or not a
+ * batch is running, empty when it is not, at the height its answer needs. Filling it
+ * while the bar is already on screen (every button click that starts a batch) then
+ * changes no node and no height, the same rule `app.css`'s `.pop-reserve` keeps for the
+ * panel's own footer.
+ *
+ * @param {{ chosen: number, busy: boolean,
+ *           progress: {name: string|null, current: number, total: number}|null,
  *           failure: {name: string, message: string}|null,
  *           onLevel: (level: string) => void }} options
  */
@@ -791,13 +800,9 @@ function batchBar({ chosen, busy, progress, failure, onLevel }) {
   const line = el("div", { class: "repo-actions-line" }, [
     el("div", {
       class: "repo-actions-count",
-      text: progress
-        ? t(
-            "settings.repositories.batch.running",
-            count(progress.done + 1),
-            count(progress.total)
-          )
-        : t("settings.repositories.batch.selected", count(chosen)),
+      // While a batch runs, what it is doing is in the reserved row below instead: a
+      // second sentence here would say the same thing twice.
+      text: progress ? "" : t("settings.repositories.batch.selected", count(chosen)),
     }),
   ]);
 
@@ -818,6 +823,22 @@ function batchBar({ chosen, busy, progress, failure, onLevel }) {
   line.appendChild(set);
   bar.appendChild(line);
 
+  const slot = el("div", { class: "repo-batch-progress" });
+  if (progress) {
+    slot.appendChild(
+      runProgress({
+        // No `step`: the batch is not one of the engine's eleven, so `runProgress` falls
+        // back to this label as it is, which is the one thing to say here, the
+        // repository's own name.
+        label: progress.name ?? "",
+        current: progress.current,
+        total: progress.total,
+        unit: "repositories",
+      })
+    );
+  }
+  bar.appendChild(slot);
+
   // The engine's own words for what it refused, under the app's sentence for what that
   // left behind. English on a Chinese interface, like every other message from something
   // that is not this app.
@@ -830,6 +851,99 @@ function batchBar({ chosen, busy, progress, failure, onLevel }) {
     );
   }
   return bar;
+}
+
+/**
+ * A batch level-change in flight, kept outside any screen's own tree.
+ *
+ * A switch to another screen throws the whole Settings tree away and rebuilds it from
+ * nothing (`window.js`: `nodes.screen.innerHTML = ""`), which used to throw this away
+ * too: the loop below kept running, because nothing had cancelled the promises it was
+ * awaiting, but it drew into detached nodes nobody could see, and the tab it came back to
+ * built a fresh closure that had never heard of it, with no bar and no disabled controls.
+ * The founder's own instruction is that a batch **finishes** rather than stops, so what
+ * it needs in order to keep saying what it is doing lives here instead, the way
+ * `store/asked.js` keeps the engine's own answers against the store rather than in a
+ * screen's closure. The Repositories tab reattaches to this on every render rather than
+ * starting a batch of its own, and `startBatch` itself refuses to run two at once.
+ *
+ * Exported for the same reason `SETTINGS` is: a batch that outlives the screen it started
+ * on also outlives one test's `fakePort()`, so `test/settings.test.mjs` resets it between
+ * tests the same way it resets `SETTINGS.port` and the two memos in `store/asked.js`.
+ */
+export const BATCH = {
+  running: false,
+  keys: /** @type {string[]} */ ([]),
+  index: 0,
+  name: /** @type {string | null} */ (null),
+  scan: /** @type {any[] | null} */ (null),
+  failure: /** @type {{ name: string, message: string } | null} */ (null),
+  // Whichever render is currently mounted, if any: called after every step this batch
+  // takes, so a mounted screen redraws from what just happened rather than from a poll.
+  onChange: /** @type {(() => void) | null} */ (null),
+};
+
+/**
+ * The same command, once per ticked repository, in the order the list is in.
+ *
+ * Sequential and not in parallel: `prudence init --enable` writes `config.toml`, and two
+ * of them at once is two processes writing one file.
+ *
+ * **Each call is already the engine's whole answer, so there is no second read to make.**
+ * `engine_repository_level` runs the change and then runs `init --scan --json` itself
+ * (`src-tauri/src/lib.rs`), so its own response already is a fresh scan; a row is drawn
+ * from it the moment it lands rather than waiting for the whole run to finish, which is
+ * also what lets a row flip to its new level as soon as its own change has, rather than
+ * all of them flipping together at the end. The last call's answer already is the final
+ * state, so the loop that used to read the whole list once more when it was done is gone:
+ * that call cost exactly what every `repositoryLevel` call already costs, for nothing a
+ * `repositoryLevel` call had not just answered.
+ *
+ * A refusal stops the run where it is. `BATCH.scan` is the last answer that landed, so
+ * the repositories before the refusal are already drawn as changed and stay that way;
+ * nothing after it touched `BATCH.scan` at all.
+ *
+ * @param {any} port
+ * @param {any} data
+ * @param {any[]} scan the list this batch started from, for the first step's own label
+ * @param {string[]} keys
+ * @param {string} level
+ */
+async function startBatch(port, data, scan, keys, level) {
+  if (BATCH.running) return;
+  BATCH.running = true;
+  BATCH.keys = keys;
+  BATCH.scan = scan;
+  BATCH.failure = null;
+
+  for (const [index, key] of keys.entries()) {
+    BATCH.index = index;
+    // Counted, and named, before the call rather than after it, so the bar and its label
+    // name the repository being changed while it is being changed.
+    const row = (BATCH.scan ?? []).find((one) => String(one.repoKey) === key);
+    BATCH.name = row ? basename(row.path) : key;
+    BATCH.onChange?.();
+    try {
+      const next = await port.repositoryLevel(key, String(level));
+      if (Array.isArray(next)) {
+        BATCH.scan = next;
+        // `prudence init --enable` writes `config.toml`, which no store stamp sees, so
+        // the engine's fresh answer is handed to the memo rather than left to expire.
+        REPOSITORY_SCAN.keep(data, next);
+      }
+      BATCH.onChange?.();
+    } catch (error) {
+      BATCH.failure = {
+        name: row ? basename(row.path) : key,
+        message: String(/** @type {any} */ (error)?.message ?? error),
+      };
+      break;
+    }
+  }
+
+  BATCH.running = false;
+  BATCH.name = null;
+  BATCH.onChange?.();
 }
 
 /**
@@ -910,17 +1024,14 @@ function repositories(state) {
     return el("div", { class: "tab-body" }, [card]);
   }
 
-  // The scan in hand, what is ticked, and whether a change is in flight. All of it lives
-  // in this render's own closure rather than in the module: which tab is open is
-  // navigation and is kept between renders, and none of this is.
+  // The scan in hand, what is ticked, and whether a single change is in flight. All of it
+  // lives in this render's own closure rather than in the module: which tab is open is
+  // navigation and is kept between renders, and none of this is. A running **batch** is
+  // the one exception, kept in `BATCH` above rather than here, for the reason given there.
   let scan = /** @type {any[]} */ ([]);
   let busy = false;
   /** @type {Set<string>} */
   const picked = new Set();
-  /** @type {{done: number, total: number}|null} */
-  let progress = null;
-  /** @type {{name: string, message: string}|null} */
-  let failure = null;
 
   // One node, kept between draws and emptied each time: it is at the foot of the card,
   // under the list and the method, and a node appended per draw would stack up.
@@ -934,16 +1045,19 @@ function repositories(state) {
   };
 
   const draw = () => {
-    fillRepositories(body, scan, { change, busy, picked, pick, pickAll });
+    const running = BATCH.running;
+    fillRepositories(body, scan, { change, busy: busy || running, picked, pick, pickAll });
     actions.innerHTML = "";
-    if (picked.size || progress || failure) {
+    if (picked.size || running || BATCH.failure) {
       actions.appendChild(
         batchBar({
           chosen: picked.size,
-          busy,
-          progress,
-          failure,
-          onLevel: (level) => void runBatch(level),
+          busy: running,
+          progress: running
+            ? { name: BATCH.name, current: BATCH.index + 1, total: BATCH.keys.length }
+            : null,
+          failure: BATCH.failure,
+          onLevel: (level) => beginBatch(level),
         })
       );
     }
@@ -957,30 +1071,39 @@ function repositories(state) {
     draw();
   };
 
+  // Reattach to a batch that is already running, or one that finished while this tab was
+  // on another screen, instead of starting this render's own idea of one: `BATCH.scan` is
+  // the engine's own latest answer, so it is drawn the same way any other answer is. Only
+  // the render mounted last is attached; an older one left holding this closure draws
+  // into detached nodes, which costs nothing and is seen by nobody.
+  BATCH.onChange = () => {
+    if (BATCH.scan) show(BATCH.scan);
+    else draw();
+  };
+
   function pick(key, on) {
-    if (busy) return;
+    if (busy || BATCH.running) return;
     if (on) picked.add(key);
     else picked.delete(key);
-    failure = null;
+    // A refusal the reader has moved on from is not a refusal about this change.
+    BATCH.failure = null;
     draw();
   }
 
   function pickAll(keys, on) {
-    if (busy) return;
+    if (busy || BATCH.running) return;
     for (const key of keys) {
       if (on) picked.add(key);
       else picked.delete(key);
     }
-    failure = null;
+    BATCH.failure = null;
     draw();
   }
 
   /** Ask the engine to change one repository, and redraw from **its** answer. */
   function change(row, level) {
-    if (busy || !SETTINGS.port) return;
+    if (busy || BATCH.running || !SETTINGS.port) return;
     busy = true;
-    // A refusal the reader has moved on from is not a refusal about this change.
-    failure = null;
     // The scan already in hand, drawn again with every control dead: the engine is being
     // asked, and a control that answers a second click before the first one has landed is
     // a control that can be left disagreeing with the config.
@@ -999,59 +1122,16 @@ function repositories(state) {
       });
   }
 
-  /**
-   * The same command, once per ticked repository, in the order the list is in.
-   *
-   * Sequential and not in parallel: `prudence init --enable` writes `config.toml`, and two
-   * of them at once is two processes writing one file. The engine is then asked for the
-   * whole list **once**, and the rows are drawn from that answer: what was clicked is not
-   * evidence of anything, and a repository the engine silently left alone would otherwise
-   * show as changed.
-   *
-   * A refusal stops the run where it is. The repositories before it are already changed
-   * and stay changed, which is what the sentence under the bar says, and the re-scan is
-   * what makes that visible rather than claimed.
-   */
-  async function runBatch(level) {
-    if (busy || !SETTINGS.port) return;
+  /** Start a batch, unless one is already running. `startBatch` itself is the guard that
+   *  survives a screen switch; this is only the first line of defence, and the buttons
+   *  being disabled while `BATCH.running` is the second: nothing offers a third click. */
+  function beginBatch(level) {
+    if (busy || BATCH.running || !SETTINGS.port) return;
     const keys = scan
       .filter((row) => row.path && picked.has(String(row.repoKey)))
       .map((row) => String(row.repoKey));
     if (!keys.length) return;
-
-    busy = true;
-    failure = null;
-
-    for (const [index, key] of keys.entries()) {
-      // Counted before the call rather than after it, so the line names the repository
-      // being changed while it is being changed.
-      progress = { done: index, total: keys.length };
-      draw();
-      try {
-        await SETTINGS.port.repositoryLevel(key, String(level));
-      } catch (error) {
-        const row = scan.find((one) => String(one.repoKey) === key);
-        failure = {
-          name: row ? basename(row.path) : key,
-          message: String(/** @type {any} */ (error)?.message ?? error),
-        };
-        break;
-      }
-    }
-
-    progress = null;
-    try {
-      // Asked directly, not through the memo: the whole point of the re-read is that the
-      // list on screen has to come from the engine after the writes rather than from the
-      // clicks. The answer then becomes what the memo serves.
-      const next = await SETTINGS.port.repositories();
-      busy = false;
-      REPOSITORY_SCAN.keep(data, next);
-      show(next);
-    } catch {
-      busy = false;
-      failed();
-    }
+    void startBatch(SETTINGS.port, data, scan, keys, level);
   }
 
   // Asked for when the tab is drawn, and filled when the engine answers: it is a

@@ -325,7 +325,6 @@
     "settings.openAtLogin.refused": "This machine would not register the login item:",
     "settings.repositories.batch.failed": "The engine refused %1$@, so nothing after it was changed. The repositories changed before it stay changed.",
     "settings.repositories.batch.label": "Set selected to",
-    "settings.repositories.batch.running": "Changing %1$@ of %2$@",
     "settings.repositories.batch.selected": "%1$@ selected",
     "settings.repositories.column.first": "First",
     "settings.repositories.column.last": "Last",

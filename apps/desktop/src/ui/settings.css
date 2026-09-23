@@ -257,8 +257,15 @@
   width: 80px;
 }
 
+/* Wide enough for three equal segments of the widest label in either language
+   ("元数据") with room to spare, measured against `.segmented`'s own padding and gap
+   below: 3 segments x 56px + 2 gaps x 2px + the control's own 2px x 2 padding = 176px.
+   The founder's screenshot of this column at 152px had "完整" hanging off its right edge
+   and the selected segment's highlight ending before "元数据" did; the column was simply
+   too narrow for the label it had to hold, in a `table-layout: fixed` table where no cell
+   may grow to ask for more. */
 .repo-table .c-level {
-  width: 152px;
+  width: 176px;
 }
 
 /* A figure, a day and a control are one line each or they are not readable. The class is
@@ -326,8 +333,17 @@ table.data.repo-table th.n {
   margin-top: 2px;
 }
 
-/* The three segments are equal and each one is a line. `flex: 1 1 0` is what makes them
-   equal; the floor is what stops 元数据 from wrapping when the window is narrow. */
+/* The three segments are equal, each one a line, and the highlight is exactly the
+   segment's own box. `flex: 1 1 0` is what makes the three equal; `min-width: 0` is what
+   lets them be, rather than fighting a floor of their own. A floor used to sit here at
+   44px, on the reasoning that it stopped a label wrapping: `white-space: nowrap` is what
+   actually does that, and the floor's real effect was to let a button be assigned less
+   width than its own nowrap label needed, in a `table-layout: fixed` column with no room
+   to grow. The label then painted past its own box: the selected segment's highlight (the
+   box's own background) stopped where the box did, short of where the label's own last
+   character landed, and "完整" (Full), the narrowest margin of the three, ran past the
+   control's right edge. `.c-level`'s width above is the other half of the fix: wide
+   enough that no floor is needed at all. */
 .repo-table .repo-level {
   padding-right: 0;
 }
@@ -339,7 +355,7 @@ table.data.repo-table th.n {
 
 .repo-table td .segmented button {
   flex: 1 1 0;
-  min-width: 44px;
+  min-width: 0;
   padding-left: var(--s1);
   padding-right: var(--s1);
   text-align: center;
@@ -438,6 +454,17 @@ table.data.repo-table th.n {
   align-items: center;
   gap: var(--s2);
   flex-wrap: wrap;
+}
+
+/* Reserved, never revealed: this row is in the bar whether or not a batch is running, at
+   the height `runProgress` needs, so a click that starts one fills a row already there
+   rather than growing the card. `app.css`'s `.pop-reserve` is the same rule for the
+   panel's own footer, and the height below is the same shape of formula: one line of
+   `runProgress`'s own caption row, its gap, and its track. */
+.repo-batch-progress {
+  min-height: calc(var(--t-caption) * 1.4 + 4px + 3px);
+  display: flex;
+  align-items: center;
 }
 
 .repo-actions-label {
