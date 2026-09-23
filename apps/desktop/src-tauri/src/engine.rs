@@ -1865,6 +1865,7 @@ mod tests {
     /// A click turned away because a run is already going must not be told it started:
     /// `activity.rs` records what is running from this call, and a refused run that called
     /// it would overwrite the running one's record with its own action.
+    #[cfg(unix)]
     #[test]
     fn a_run_refused_as_busy_is_never_told_it_started() {
         let engine = Engine {
@@ -1893,6 +1894,7 @@ mod tests {
 
     /// A run that takes the flag is told so before anything else happens, even one that
     /// then finds no engine: whoever was told it started is always told how it ended.
+    #[cfg(unix)]
     #[test]
     fn a_run_that_takes_the_flag_is_told_it_started() {
         let engine = Engine {
