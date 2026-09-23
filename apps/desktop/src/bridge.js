@@ -67,6 +67,12 @@ export function setSection(section) {
   return core().invoke("section_set", { section: String(section) });
 }
 
+/** Which of the panel's four ranges is chosen, so the next launch opens on it. The same
+ *  rule as `setSection`: the shell drops a value this build no longer offers. */
+export function setPanelRange(range) {
+  return core().invoke("panel_range_set", { range: String(range) });
+}
+
 export function quit() {
   return core().invoke("app_quit");
 }

@@ -109,6 +109,11 @@ const SHARED_TEXT = {
     // As above: a chart's own unit, and a header the engine wrote.
     ["chart.unit.tokens", "review.header.tokens"],
     ["common.dateWithRelative", "menu.stamped"],
+    // The panel's range caption ("最近 30 天") and the Overview's summary sentence's own
+    // window phrase ("...，最近 30 天，..."): the same words, because Chinese has no case
+    // to tell a heading from a phrase inside a sentence apart. English does: "Last %1$@"
+    // against "last %1$@", a capital the heading needs and the sentence must not have.
+    ["menu.lastRangeDays", "overview.window.last"],
     ["menu.noReview", "review.empty.title"],
     ["observation.didNot", "observation.side.didNot"],
     ["observation.outcome.rework", "overview.legend.reworkName"],

@@ -20,6 +20,7 @@ import {
   listSeparator,
   percent,
   projects,
+  rangeName,
   sessions,
   commits,
   tokenPhrase,
@@ -34,12 +35,45 @@ import {
   stampedAgo,
 } from "../text/sentences.js";
 import { PRODUCT_NAME, t } from "../text/strings.js";
-import { bucketShares, lastSevenDays, today } from "../store/payload.js";
+import { bucketShares, daysWindow, today } from "../store/payload.js";
 import { readiness } from "../store/readiness.js";
 
 /** Set by `render`, so the size report can run again when the content changes. `why` is
  *  what asked for it, which is only ever read by a harness build's timing log. */
 let refit = /** @type {(why?: string) => number|undefined} */ (() => undefined);
+
+/**
+ * The panel's own range choices: a day count and the catalogue key for its label.
+ *
+ * Distinct from the window's seven ranges (`store/overview.js`): this block draws no
+ * chart, so there is no reason for a bucket to become a week past sixty days, and 60
+ * days, 365 days and "all" are not questions asked here. Every choice is the same rule
+ * this block always summed under its one fixed name ("Last 7 days"): a local day, today
+ * and the ones before it (`store/payload.js`, `daysWindow`).
+ */
+const PANEL_RANGES = [
+  { key: "1d", days: 1 },
+  { key: "7d", days: 7 },
+  { key: "30d", days: 30 },
+  { key: "90d", days: 90 },
+];
+
+const DEFAULT_PANEL_RANGE = "7d";
+
+function panelRangeOf(key) {
+  return PANEL_RANGES.find((range) => range.key === key) ?? panelRangeOf(DEFAULT_PANEL_RANGE);
+}
+
+/**
+ * Which range the block is drawn over.
+ *
+ * Remembered here for the session, the same way `PANEL_RUN` outlives a redraw the store
+ * watcher causes: `render` runs again on every store change, and a choice made mid-session
+ * must not be thrown back to whatever the shell answered at boot. `restored` is flipped
+ * once `render` has read `info.panel_range`, the one time this is allowed to move without
+ * a click; a test resets both, the same way it resets `PANEL_RUN`.
+ */
+export const PANEL_RANGE = { key: DEFAULT_PANEL_RANGE, restored: false };
 
 function text(content, className) {
   return el("span", { class: className ?? "", text: content });
@@ -87,9 +121,14 @@ function todayBlock(data) {
   return wrap;
 }
 
+/** "Today", or "Last 7 days" / "Last 30 days" / "Last 90 days": the caption keeps naming
+ *  the range in force, the same words the picker beside it offers. */
+function rangeCaption(range) {
+  return range.days === 1 ? t("menu.today") : t("menu.lastRangeDays", rangeName(range));
+}
+
 /**
- * The last seven days: what the replies did in words, the same mix as a bar, and the three
- * totals.
+ * What the replies did over a range, in words, the same mix as a bar, and the totals.
  *
  * **The sentence is the legend.** It used to be stated in words, drawn as a bar, and then
  * named a third time by a swatch legend under it: three rows for one fact in a 360 pt
@@ -97,13 +136,18 @@ function todayBlock(data) {
  * 40%, run 33%, read 20%, talk 7%"), which is what makes the bar readable and returns a
  * row. Colour is identity here, as it is everywhere: it says which bucket this is and
  * never whether a share is good.
+ *
+ * One range among four (`PANEL_RANGES`); `rangeSection` below is what lets the reader
+ * choose which, and calls this again for whichever they picked.
  */
-function weekBlock(data) {
-  const week = lastSevenDays(data);
+function rangeBody(data, range) {
+  const week = daysWindow(data, range.days);
   const shares = bucketShares(week);
   const summary = shares.length
     ? list(shares.map((part) => `${bucket(part.bucket)} ${percent(part.share)}`))
-    : t("menu.noTokensSevenDays");
+    : range.days === 1
+      ? t("menu.noTokensToday")
+      : t("menu.noTokensInRange", rangeName(range));
 
   const wrap = el("div", { class: "week-row" });
 
@@ -126,11 +170,11 @@ function weekBlock(data) {
   wrap.appendChild(
     miniStack({
       parts: BUCKETS.map((key) => ({ value: week.byBucket[key], colour: bucketColour(key) })),
-      // The whole seven days, so tokens in a bucket this build does not know stay as
-      // unfilled track rather than being shared out among the four.
+      // The whole range, so tokens in a bucket this build does not know stay as unfilled
+      // track rather than being shared out among the four.
       total: week.total,
       height: 8,
-      caption: `${t("menu.lastSevenDays")}: ${summary} (${tokenPhrase(week.total)}, ${sessions(week.sessions)})`,
+      caption: `${rangeCaption(range)}: ${summary} (${tokenPhrase(week.total)}, ${sessions(week.sessions)})`,
     })
   );
   if (week.total) {
@@ -144,6 +188,68 @@ function weekBlock(data) {
   }
 
   return wrap;
+}
+
+/**
+ * The block's caption row and the range block itself: the caption naming the range in
+ * force on the left, the picker on the right, one click switching the sentence, the bar
+ * and the numbers under it.
+ *
+ * **The picker's own row never changes shape.** All four choices are drawn at first
+ * paint, plain labels of the app's own quiet button (`.btn.plain`, `DESIGN.md`'s "the
+ * plain button is quiet ink with the accent only under the pointer"), the chosen one in
+ * ink and the rest quiet; a click only ever changes which one is ink, so the row this
+ * caption sits on is exactly as tall after a switch as before it, and nothing about it
+ * ever has to be reserved the way the two late rows in the footer are.
+ */
+function rangeSection(data) {
+  const caption = el("span", { class: "k", text: "" });
+  const body = el("div");
+  const picker = el("div", { class: "range-choices", role: "radiogroup", "aria-label": t("scope.range") });
+
+  /** @type {{ button: HTMLElement, range: { key: string, days: number } }[]} */
+  const choices = [];
+
+  function paint() {
+    const range = panelRangeOf(PANEL_RANGE.key);
+    caption.textContent = rangeCaption(range);
+    for (const { button, range: choice } of choices) {
+      const chosen = choice.key === PANEL_RANGE.key;
+      button.className = `btn plain range-choice${chosen ? " is-chosen" : ""}`;
+      button.setAttribute("aria-checked", String(chosen));
+    }
+    body.innerHTML = "";
+    body.appendChild(rangeBody(data, range));
+    refit("range");
+  }
+
+  PANEL_RANGES.forEach((range, index) => {
+    if (index) picker.appendChild(el("span", { class: "range-sep", text: " · " }));
+    const button = el("button", {
+      class: "btn plain range-choice",
+      type: "button",
+      role: "radio",
+      text: range.days === 1 ? t("menu.today") : rangeName(range),
+    });
+    // No guard against re-clicking the range already chosen: `ui/window.js`'s own range
+    // picker sets and redraws unconditionally too, and a button that sometimes does
+    // nothing is the one thing "no surface may leave a button wired to nothing"
+    // (`test/panel.test.mjs`) exists to catch.
+    button.addEventListener("click", () => {
+      PANEL_RANGE.key = range.key;
+      if (Bridge.attached()) Bridge.setPanelRange(range.key).catch(() => {});
+      paint();
+    });
+    choices.push({ button, range });
+    picker.appendChild(button);
+  });
+
+  paint();
+
+  return el("div", { class: "pop-block" }, [
+    el("div", { class: "pop-block-head" }, [caption, picker]),
+    body,
+  ]);
 }
 
 function observationBlock(data) {
@@ -442,11 +548,22 @@ export const page = {
   name: "panel",
   /** @param {HTMLElement} container */
   render(container, { data, info }) {
+    // Restored once, the first time this build hears from the shell; a choice made
+    // mid-session (`rangeSection`'s `paint`) is not this app's to overwrite on the next
+    // store change, which is the only other thing that calls `render` again.
+    if (!PANEL_RANGE.restored) {
+      const remembered = info?.panel_range;
+      PANEL_RANGE.key = PANEL_RANGES.some((range) => range.key === remembered)
+        ? remembered
+        : DEFAULT_PANEL_RANGE;
+      PANEL_RANGE.restored = true;
+    }
+
     const pop = el("div", { class: "popover" }, [head(data)]);
 
     const body = el("div", { class: "pop-body" }, [
       block(t("menu.today"), todayBlock(data)),
-      block(t("menu.lastSevenDays"), weekBlock(data)),
+      rangeSection(data),
       el("div", { class: "pop-sep" }),
       block(t("menu.latestObservation"), observationBlock(data)),
       el("div", { class: "pop-sep" }),

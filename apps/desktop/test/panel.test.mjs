@@ -33,7 +33,7 @@ const app = join(here, "..");
 import * as Str from "../src/text/strings.js";
 import { readPayload } from "../src/store/payload.js";
 import { projects } from "../src/text/fmt.js";
-const { page, PANEL_RUN } = /** @type {any} */ (await import("../src/ui/panel.js"));
+const { page, PANEL_RUN, PANEL_RANGE } = /** @type {any} */ (await import("../src/ui/panel.js"));
 const { forget } = /** @type {any} */ (await import("../src/store/readiness.js"));
 
 for (const language of Str.LANGUAGES) {
@@ -67,6 +67,11 @@ const DATA = readPayload({
 function draw() {
   PANEL_RUN.running = null;
   PANEL_RUN.at = null;
+  // The range picker restores from `info.panel_range` exactly once (`PANEL_RANGE.restored`)
+  // and keeps whatever is chosen across every redraw after that, the same way `PANEL_RUN`
+  // outlives one; without this a choice made in an earlier test leaks into the next one.
+  PANEL_RANGE.key = "7d";
+  PANEL_RANGE.restored = false;
   // A readiness answer is remembered against the store it was taken for, and every test
   // here draws the same store; without this the second one reads the first one's answer.
   forget();
@@ -156,12 +161,19 @@ function event(overrides = {}) {
   };
 }
 
-test("the panel draws its five buttons", () => {
+/** The footer's action grid, leaving out the range picker's own buttons: this is the set
+ *  the guard test below still presses every one of, but the range choice is a different
+ *  kind of button (`.range-choice`) and has its own tests. */
+function actionButtonsOf(container) {
+  return buttons(container).filter((node) => !node.className.includes("range-choice"));
+}
+
+test("the panel draws its five action buttons", () => {
   PANEL_RUN.port = null;
   PANEL_RUN.running = null;
   const container = draw();
   assert.deepEqual(
-    buttons(container).map((node) => node.textContent),
+    actionButtonsOf(container).map((node) => node.textContent),
     [
       Str.t("menu.openPrudence"),
       Str.t("menu.reviewNow"),
@@ -208,14 +220,16 @@ function today() {
   ).padStart(2, "0")}`;
 }
 
-function drawWith(payload) {
+function drawWith(payload, info) {
   PANEL_RUN.running = null;
   PANEL_RUN.at = null;
+  PANEL_RANGE.key = "7d";
+  PANEL_RANGE.restored = false;
   forget();
   /** @type {any} */ (document).body.children = [];
   const container = document.createElement("div");
   /** @type {any} */ (document).body.appendChild(container);
-  page.render(/** @type {any} */ (container), { data: readPayload(payload) });
+  page.render(/** @type {any} */ (container), { data: readPayload(payload), info });
   return /** @type {any} */ (container);
 }
 
@@ -310,6 +324,185 @@ test("the bar under the sentence draws the four buckets in their colours", () =>
     .findAll("rect")
     .map((node) => node.getAttribute("fill"));
   assert.deepEqual(fills, ["change", "run", "read", "talk"].map((key) => `var(--b-${key})`));
+});
+
+/* --- the range choice: Today, 7, 30 or 90 days ------------------------------------------
+ *
+ * The founder's own design: plain labels on the caption row, right-aligned, the chosen
+ * one in ink and the rest quiet; one click switches the sentence, the bar and the numbers
+ * under it, and the caption keeps naming the range in force. The choice is remembered in
+ * the app's UI state and restored on the next open (`src-tauri/src/ui_state.rs`).
+ */
+
+/** N days ago, in the same `yyyy-MM-dd` shape `today()` above already returns. */
+function daysAgo(n) {
+  const at = new Date();
+  at.setDate(at.getDate() - n);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(
+    at.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/** A session that started at `hour` on the day `day()` names. */
+function sessionAt(day, hour) {
+  const [y, m, d] = day.split("-").map(Number);
+  return { started_at: new Date(y, m - 1, d, hour).toISOString() };
+}
+
+/**
+ * One bucket today, a different one ten days ago: inside the 7-day window only the first
+ * is there at all, and the 30-day window carries both. Round numbers on purpose, so the
+ * shares below are exact and nothing here depends on how a rounding rule breaks a tie.
+ */
+function rangeFixture() {
+  return {
+    status: { engine_version: "0.4.0" },
+    usage: {
+      columns: ["day", "project", "repo_key", "bucket", "total_tokens", "heuristic_tokens", "sessions"],
+      rows: [
+        [today(), "a", "root:a", "change", 100, 0, 1],
+        [daysAgo(10), "a", "root:a", "run", 300, 0, 1],
+      ],
+    },
+    activity: {
+      columns: ["day", "project", "repo_key", "active_minutes", "sessions", "measured_sessions"],
+      rows: [
+        [today(), "a", "root:a", 60, 1, 1],
+        [daysAgo(10), "a", "root:a", 120, 1, 1],
+      ],
+    },
+    commits: [],
+    sessions: [sessionAt(today(), 9), sessionAt(daysAgo(10), 9)],
+    outcomes: [],
+    observations: [],
+    reviews: [],
+    projects: [{ key: "root:a", name: "a" }],
+  };
+}
+
+function rangeChoices(container) {
+  return container.findAll(".range-choice").map((node) => ({
+    label: node.textContent,
+    chosen: node.className.split(/\s+/).includes("is-chosen"),
+    checked: node.getAttribute("aria-checked"),
+  }));
+}
+
+/** The block's caption, its sentence, and its three numbers, as the reader sees them. */
+function rangeReading(container) {
+  const block = container.find(".pop-block-head");
+  const row = container.find(".week-row");
+  const figures = row.find(".week-figures");
+  return {
+    caption: block.find(".k").textContent,
+    sentence: row.find(".obs-line").textContent,
+    figures: figures ? figures.children.map((node) => node.textContent) : [],
+  };
+}
+
+test("the range picker offers Today, 7, 30 and 90 days, and opens on 7", () => {
+  const expected = {
+    en: ["Today", "7 days", "30 days", "90 days"],
+    "zh-Hans": ["今天", "7 天", "30 天", "90 天"],
+  };
+  for (const language of Str.LANGUAGES) {
+    Str.setLang(language);
+    try {
+      const container = draw();
+      const choices = rangeChoices(container);
+      assert.deepEqual(choices.map((c) => c.label), expected[language]);
+      assert.deepEqual(choices.map((c) => c.chosen), [false, true, false, false]);
+      assert.deepEqual(choices.map((c) => c.checked), ["false", "true", "false", "false"]);
+    } finally {
+      Str.setLang("en");
+    }
+  }
+});
+
+test(
+  "choosing 30 days re-renders the sentence, the bar and the numbers from the 30-day " +
+    "rows, and the caption follows, in both languages",
+  () => {
+    const expected = {
+      en: {
+        label: "30 days",
+        caption: "Last 30 days",
+        sentence: "change 25%, run 75%",
+        figures: ["400 tokens", "2 sessions", "3.0 hours"],
+      },
+      "zh-Hans": {
+        label: "30 天",
+        caption: "最近 30 天",
+        sentence: "改动 25%，运行 75%",
+        figures: ["400 token", "2 个会话", "3.0 小时"],
+      },
+    };
+    for (const language of Str.LANGUAGES) {
+      Str.setLang(language);
+      try {
+        const container = drawWith(rangeFixture());
+        // The default: today's row alone, one bucket, all of it.
+        assert.equal(rangeReading(container).sentence, `${Str.t("bucket.change")} 100%`);
+
+        pressed(container, expected[language].label);
+        const now = rangeReading(container);
+        assert.equal(now.caption, expected[language].caption);
+        assert.equal(now.sentence, expected[language].sentence);
+        assert.deepEqual(now.figures, expected[language].figures);
+        assert.deepEqual(
+          rangeChoices(container).map((c) => c.chosen),
+          [false, false, true, false],
+          `${language}: 30 days is not the ink one after being chosen`
+        );
+      } finally {
+        Str.setLang("en");
+      }
+    }
+  }
+);
+
+test("the panel's range choice restores from the shell, and a click remembers the next one", async () => {
+  const container = drawWith(rangeFixture(), { panel_range: "90d" });
+  assert.deepEqual(
+    rangeChoices(container).map((c) => c.chosen),
+    [false, false, false, true],
+    "the shell's remembered range did not restore"
+  );
+
+  // The same fake `__TAURI__` the button guard test uses: a module's exported bindings
+  // are read-only, so this is where every `bridge.js` call ends up.
+  const reached = [];
+  /** @type {any} */ (globalThis).__TAURI__ = {
+    core: {
+      invoke: (name, args) => {
+        reached.push([name, args]);
+        return Promise.resolve();
+      },
+    },
+  };
+  try {
+    pressed(container, "30 days");
+    await settled();
+  } finally {
+    delete (/** @type {any} */ (globalThis).__TAURI__);
+  }
+  assert.deepEqual(reached, [["panel_range_set", { range: "30d" }]]);
+});
+
+/* A node test has no layout (`DESIGN.md`, "the panel's two late rows"); what is asserted
+   here, the same way it is for the readiness row, is the property the equal height rests
+   on. The picker's own row is drawn whole at first paint and a click only ever changes
+   which button carries `is-chosen`, so its node count cannot move; the block under it is
+   built from the same four buckets in both windows here, so its node count does not
+   either. */
+test("switching the range changes no node in the picker's own row", () => {
+  const container = drawWith(rangeFixture());
+  const head = container.find(".pop-block-head");
+  const before = nodeCount(head);
+
+  pressed(container, "30 days");
+
+  assert.equal(nodeCount(container.find(".pop-block-head")), before, "the picker's row changed shape");
 });
 
 /* --- what a run says while it is going ------------------------------------------------

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  daysWindow,
   lastSevenDays,
   localDay,
   bucketShares,
@@ -149,4 +150,79 @@ test("a week with nothing measured has no shares rather than shares of zero", ()
   assert.equal(week.total, 0);
   assert.equal(week.hours, 0);
   assert.deepEqual(bucketShares(week), []);
+});
+
+/* `daysWindow` generalises `lastSevenDays`: the panel's range choice asks it for Today
+   (one local day) and for 30 and 90 local days too, on the same rule. */
+test("lastSevenDays is daysWindow's seven-day case", () => {
+  const now = new Date(2026, 8, 21, 10, 0, 0);
+  const data = readPayload({
+    usage: {
+      columns: ["day", "bucket", "total_tokens"],
+      rows: [
+        ["2026-09-21", "change", 400],
+        ["2026-09-15", "read", 200],
+      ],
+    },
+    sessions: [],
+  });
+  assert.deepEqual(lastSevenDays(data, now), daysWindow(data, 7, now));
+});
+
+/* "Today" is one local day, not a six-day-wide window collapsed to a point: the row from
+   yesterday must not leak in. */
+test("a one-day window is today alone", () => {
+  const now = new Date(2026, 8, 21, 10, 0, 0);
+  const data = readPayload({
+    usage: {
+      columns: ["day", "bucket", "total_tokens"],
+      rows: [
+        ["2026-09-21", "change", 400],
+        ["2026-09-20", "run", 9999],
+      ],
+    },
+    sessions: [],
+  });
+  const day = daysWindow(data, 1, now);
+  assert.equal(day.start, "2026-09-21");
+  assert.equal(day.end, "2026-09-21");
+  assert.equal(day.total, 400);
+});
+
+/* The 30-day and 90-day cases the panel's picker offers, over the same fixture shape as
+   the seven-day test above: local days summed by the bucket view, local days summed by
+   the activity view for hours, sessions counted as rows in the same window. */
+test("the 30-day and 90-day windows sum the same way the seven-day one always did", () => {
+  const now = new Date(2026, 8, 21, 10, 0, 0);
+  const data = readPayload({
+    usage: {
+      columns: ["day", "bucket", "total_tokens"],
+      rows: [
+        ["2026-09-21", "change", 400],
+        // 30 days back from 21 September is 23 August; 90 days back is 24 June.
+        ["2026-08-25", "run", 300],
+        ["2026-07-01", "read", 200],
+        ["2026-06-01", "talk", 9999], // outside even the 90-day window
+      ],
+    },
+    activity: {
+      columns: ["day", "active_minutes"],
+      rows: [
+        ["2026-09-21", 60],
+        ["2026-08-25", 30],
+      ],
+    },
+    sessions: [],
+  });
+
+  const thirty = daysWindow(data, 30, now);
+  assert.equal(thirty.start, "2026-08-23");
+  assert.equal(thirty.total, 700);
+  assert.deepEqual(thirty.byBucket, { change: 400, run: 300, read: 0, talk: 0 });
+  assert.equal(thirty.hours, 1.5);
+
+  const ninety = daysWindow(data, 90, now);
+  assert.equal(ninety.start, "2026-06-24");
+  assert.equal(ninety.total, 900);
+  assert.deepEqual(ninety.byBucket, { change: 400, run: 300, read: 200, talk: 0 });
 });

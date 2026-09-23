@@ -39,6 +39,16 @@ pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
 /// than rounded, which is the same rule the section and the frame follow.
 pub const INGEST_INTERVALS: &[u32] = &[0, 15, 30, 60, 360];
 
+/// The panel's four range choices: today, and the last 7, 30 or 90 local days
+/// (`store/payload.js`, `daysWindow`). Distinct from the window's seven ranges
+/// (`store/overview.js`): the panel draws no chart, so 60 days, 365 days and "all" are
+/// not questions asked here.
+pub const PANEL_RANGES: &[&str] = &["1d", "7d", "30d", "90d"];
+
+/// The range the panel opens on before anything has been chosen or remembered. The same
+/// window "Last 7 days" always summed here.
+pub const DEFAULT_PANEL_RANGE: &str = "7d";
+
 /// The window's floor, from `MainWindowController` in the Swift app.
 pub const MIN_WIDTH: f64 = 900.0;
 pub const MIN_HEIGHT: f64 = 600.0;
@@ -72,6 +82,10 @@ pub struct UiState {
     /// How often the shell runs an ingest on its own, in minutes. `None` and `0` are off.
     #[serde(default)]
     pub ingest_every_minutes: Option<u32>,
+    /// Which of the panel's four ranges was last chosen. `None` and a value this build no
+    /// longer offers both mean the default, on the same rule as the section.
+    #[serde(default)]
+    pub panel_range: Option<String>,
 }
 
 impl UiState {
@@ -129,6 +143,16 @@ impl UiState {
         self.ingest_every_minutes
             .filter(|value| INGEST_INTERVALS.contains(value))
             .unwrap_or(0)
+    }
+
+    /// The remembered panel range, or the default when there is none and when this build
+    /// no longer has the one that was stored.
+    pub fn usable_panel_range(&self) -> &str {
+        one_of(
+            self.panel_range.as_deref(),
+            PANEL_RANGES,
+            DEFAULT_PANEL_RANGE,
+        )
     }
 }
 
@@ -239,6 +263,16 @@ impl Memory {
             return false;
         }
         self.state.lock().unwrap().ingest_every_minutes = Some(minutes);
+        true
+    }
+
+    /// Remember which of the panel's four ranges is chosen, on the same rule as the
+    /// section: a value this build does not offer is refused rather than stored.
+    pub fn set_panel_range(&self, range: &str) -> bool {
+        if !PANEL_RANGES.contains(&range) {
+            return false;
+        }
+        self.state.lock().unwrap().panel_range = Some(range.to_string());
         true
     }
 
@@ -412,5 +446,47 @@ mod tests {
         assert_eq!(state.usable_language(), "system");
         assert_eq!(state.usable_appearance(), "system");
         assert_eq!(state.usable_ingest_minutes(), 0);
+    }
+
+    /* --- the panel's range choice ------------------------------------------------------ */
+
+    #[test]
+    fn nothing_remembered_opens_the_panel_on_seven_days() {
+        assert_eq!(UiState::default().usable_panel_range(), "7d");
+    }
+
+    #[test]
+    fn every_range_the_panel_offers_round_trips() {
+        for range in PANEL_RANGES {
+            let state = UiState {
+                panel_range: Some((*range).to_string()),
+                ..UiState::default()
+            };
+            assert_eq!(state.usable_panel_range(), *range);
+        }
+    }
+
+    #[test]
+    fn a_panel_range_this_build_does_not_have_falls_back_to_seven_days() {
+        let state = UiState {
+            panel_range: Some("60d".into()),
+            ..UiState::default()
+        };
+        assert_eq!(state.usable_panel_range(), "7d");
+    }
+
+    /// `Memory::set_panel_range` refuses a range outside `PANEL_RANGES` rather than
+    /// storing it and dropping it on the way out, the same rule `set_language` follows.
+    #[test]
+    fn set_panel_range_refuses_what_this_build_does_not_offer() {
+        let memory = Memory {
+            path: None,
+            state: Mutex::new(UiState::default()),
+            enabled: true,
+        };
+        assert!(memory.set_panel_range("30d"));
+        assert_eq!(memory.read().usable_panel_range(), "30d");
+        assert!(!memory.set_panel_range("60d"));
+        assert_eq!(memory.read().usable_panel_range(), "30d");
     }
 }

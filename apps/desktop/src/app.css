@@ -66,7 +66,10 @@ body {
   gap: 3px;
 }
 
-.pop-block > .k {
+/* A descendant selector, not `>`: the range block's caption sits inside `.pop-block-head`
+   beside the picker (below) rather than as `.pop-block`'s own first child, and it keeps
+   the same look as every other block's caption. */
+.pop-block .k {
   font-size: var(--t-caption);
   color: var(--text-3);
 }
@@ -94,6 +97,39 @@ body {
 
 .btn.plain:hover {
   color: var(--accent);
+}
+
+/* The range block's caption row: the caption naming the range in force on the left, the
+   picker on the right. Only this block carries one; every other block's caption keeps
+   its own line above its content. */
+.pop-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+/* Today · 7 days · 30 days · 90 days: the app's own plain button (`.btn.plain`, above),
+   at the caption's own size, so the row reads as part of the caption line rather than as
+   a control competing with it. The chosen one is ink; the rest are `.btn.plain`'s own
+   quiet colour and take the accent under the pointer like every other plain button. */
+.range-choices {
+  display: flex;
+  align-items: baseline;
+}
+
+.range-choices .btn.plain {
+  font-size: var(--t-caption);
+  padding: 0 2px;
+}
+
+.range-choice.is-chosen {
+  color: var(--text);
+}
+
+.range-sep {
+  font-size: var(--t-caption);
+  color: var(--text-3);
 }
 
 /* The panel arrives, rather than appearing.

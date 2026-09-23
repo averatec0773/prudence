@@ -470,26 +470,33 @@ test("a review's dates are the reader's, wherever the review is named", () => {
 });
 
 /**
- * The panel's second block is a rolling seven days, so it must not be captioned with a
- * word that names a calendar week.
+ * The panel's second block is a rolling window of local days (today, 7, 30 or 90 of
+ * them, the reader's own choice), so it must not be captioned with a word that names a
+ * calendar week.
  *
- * `store/payload.js`'s `lastSevenDays` counts from today backwards, which is what
- * `prudence usage --last 7d` counts; the Overview's chart buckets by ISO week, which is a
- * different question. The panel said "This week" over the first of the two.
+ * `store/payload.js`'s `daysWindow` counts from today backwards, which is what
+ * `prudence usage --last 7d` counts for its 7-day case; the Overview's chart buckets by
+ * ISO week, which is a different question. The panel said "This week" over the first of
+ * the two.
  */
-test("the panel's rolling seven days is not captioned as a calendar week", () => {
+test("the panel's rolling range block is not captioned as a calendar week", () => {
   const panelSource = readFileSync(join(app, "src/ui/panel.js"), "utf8");
   assert.match(
     panelSource,
-    /block\(t\("menu\.lastSevenDays"\), weekBlock\(data\)\)/,
-    "the panel's seven-day block is captioned with something else again"
+    /rangeSection\(data\)/,
+    "the panel's range block is captioned with something else again"
   );
   for (const language of Str.LANGUAGES) {
     Str.setLang(language);
     assert.doesNotMatch(
-      Str.t("menu.lastSevenDays"),
+      Str.t("menu.lastRangeDays", "7"),
       /this week|本周/i,
-      `the seven-day caption names a calendar week in ${language}`
+      `the range caption names a calendar week in ${language}`
+    );
+    assert.doesNotMatch(
+      Str.t("menu.today"),
+      /this week|本周/i,
+      `the today caption names a calendar week in ${language}`
     );
   }
   Str.setLang("en");

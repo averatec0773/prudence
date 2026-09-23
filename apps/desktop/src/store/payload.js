@@ -136,22 +136,25 @@ export function today(data, now = new Date()) {
 }
 
 /**
- * The last seven local days: today and the six before it.
+ * The last `days` local days: today and the `days - 1` before it.
  *
- * Not the ISO week: the dropdown is a rolling seven days, and the Overview chart's ISO
- * weeks are a different question asked of the same view. Not quite
- * `prudence usage --last 7d` either, which counts back 168 hours from this moment in UTC:
- * a view of local days cannot draw a line through the middle of one, so this starts at
- * local midnight six days ago and the two can differ by the replies of part of one day.
+ * Not the ISO week: this is a rolling window, and the Overview chart's ISO weeks are a
+ * different question asked of the same view. Not quite `prudence usage --last 7d` either
+ * when `days` is 7, which counts back 168 hours from this moment in UTC: a view of local
+ * days cannot draw a line through the middle of one, so this starts at local midnight and
+ * the two can differ by the replies of part of one day.
  *
  * Tokens are sums of one column of `app_usage_by_bucket_day`, and hours of one column of
  * `app_activity_by_day`, because active time belongs to a session and one session's
  * replies sit in several buckets. A bucket this build does not know stays in the total
  * and in no share (`design/buckets.js`).
+ *
+ * The panel's range block (`ui/panel.js`) asks this for each of its four choices; `days`
+ * is 1 for "Today", which is one local day and not a window at all.
  */
-export function lastSevenDays(data, now = new Date()) {
+export function daysWindow(data, days, now = new Date()) {
   const end = localDay(now);
-  const start = daysBefore(end, 6);
+  const start = days <= 1 ? end : daysBefore(end, days - 1);
   const byBucket = emptyMix();
   let total = 0;
   let minutes = 0;
@@ -178,6 +181,13 @@ export function lastSevenDays(data, now = new Date()) {
     hours: minutes / 60,
     sessions: sessionsBetween(data.sessions, start, end),
   };
+}
+
+/** The seven-day case of `daysWindow`, kept under its own name: it is what "Last 7 days"
+ *  always meant here before the panel's range choice existed, and it is still the
+ *  default the picker opens on. */
+export function lastSevenDays(data, now = new Date()) {
+  return daysWindow(data, 7, now);
 }
 
 /**

@@ -127,6 +127,10 @@ pub struct ShellInfo {
     settings: AppSettings,
     /// The section the window last had, or null when this build no longer has it.
     section: Option<String>,
+    /// Which of the panel's four ranges was last chosen, remembered like the section and
+    /// restored the same way. Always one of `ui_state::PANEL_RANGES`: a stored value this
+    /// build no longer offers already fell back to the default inside `usable_panel_range`.
+    panel_range: String,
     /// Whether this build carries the automation hooks. The page exposes its own test
     /// entry point only when it does.
     harness: bool,
@@ -183,6 +187,7 @@ fn shell_info(app: AppHandle, shell: State<'_, Shell>) -> ShellInfo {
         settings,
         section: scripted_section()
             .or_else(|| shell.memory.read().usable_section().map(str::to_string)),
+        panel_range: shell.memory.read().usable_panel_range().to_string(),
         harness: cfg!(feature = "harness"),
         scroll: scripted_scroll(),
         press: scripted_press(),
@@ -258,6 +263,14 @@ fn scripted_section() -> Option<String> {
 #[tauri::command]
 fn section_set(shell: State<'_, Shell>, section: String) {
     shell.memory.set_section(&section);
+}
+
+/// The panel's current range choice, so the next launch opens on it. A value outside
+/// `ui_state::PANEL_RANGES` is refused rather than stored; the page never sends one, since
+/// it only ever offers the four the picker draws.
+#[tauri::command]
+fn panel_range_set(shell: State<'_, Shell>, range: String) {
+    shell.memory.set_panel_range(&range);
 }
 
 /* --- the engine ---------------------------------------------------------------------- */
@@ -824,6 +837,7 @@ pub fn run() {
             window_open,
             window_close,
             section_set,
+            panel_range_set,
             engine_status,
             engine_activity,
             engine_run,
