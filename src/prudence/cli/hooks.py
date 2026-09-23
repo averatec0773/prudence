@@ -3,14 +3,19 @@
 The hooks are the only thing Prudence writes into the user's world, so this command
 shows its work: the backup it took, the unified diff of what changed in the settings
 file, and the exact command it wired up. Nothing is installed until the user runs this.
+Installing and removing are recorded in the run log (`cli/recording.py`), once the user
+has said yes.
 """
 
 from __future__ import annotations
+
+import time
 
 import click
 
 from prudence import config as config_module
 from prudence import hooks as hooks_module
+from prudence.cli.recording import recorded
 from prudence.cli.render import size
 from prudence.paths import claude_settings_file, database_file, spool_file
 from prudence.store import db, spool
@@ -41,13 +46,25 @@ def install(yes: bool) -> None:
         click.echo(f"This edits {settings} (a backup is written first).")
         click.confirm("Install the Prudence hooks?", abort=True)
 
-    connection = db.connect()
-    try:
-        result = hooks_module.install(connection)
-    except hooks_module.SettingsProblem as error:
-        raise click.ClickException(str(error)) from error
-    finally:
-        connection.close()
+    with recorded() as run:
+        started = time.monotonic()
+        connection = db.connect()
+        try:
+            result = hooks_module.install(connection)
+        except hooks_module.SettingsProblem as error:
+            raise click.ClickException(str(error)) from error
+        finally:
+            connection.close()
+        run.step(
+            "install",
+            time.monotonic() - started,
+            {
+                "added": len(result.added),
+                "already": len(result.already),
+                "enabled_roots": result.enabled_roots,
+                "backup": result.backup is not None,
+            },
+        )
 
     click.echo(f"Hook script: {result.script_path}")
     click.echo(f"Enabled roots: {result.enabled_roots} in {result.enabled_path}")
@@ -70,10 +87,21 @@ def uninstall(yes: bool) -> None:
     if not yes:
         click.echo(f"This edits {settings}.")
         click.confirm("Remove the Prudence hooks?", abort=True)
-    try:
-        result = hooks_module.uninstall()
-    except hooks_module.SettingsProblem as error:
-        raise click.ClickException(str(error)) from error
+    with recorded() as run:
+        started = time.monotonic()
+        try:
+            result = hooks_module.uninstall()
+        except hooks_module.SettingsProblem as error:
+            raise click.ClickException(str(error)) from error
+        run.step(
+            "uninstall",
+            time.monotonic() - started,
+            {
+                "removed": len(result.removed),
+                "restored": result.restored_from is not None,
+                "changed_since_backup": result.changed_since_backup,
+            },
+        )
     if not result.removed:
         click.echo(f"No Prudence hook entries in {result.settings_path}.")
         return

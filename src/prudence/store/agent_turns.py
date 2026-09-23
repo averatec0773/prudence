@@ -27,8 +27,15 @@ because the call and the reply are in different files.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+
+# Why a subagent's replies could not be placed by a call, for the run log's
+# `unattached_subagent` warning: nothing named a dispatching call, a call was named and is
+# in none of the session's files, or the calls found are themselves in no turn.
+NO_CALL_NAMED = "no_dispatching_call_named"
+CALL_NOT_FOUND = "dispatching_call_not_found"
+CALL_WITHOUT_TURN = "dispatching_call_has_no_turn"
 
 
 @dataclass(frozen=True)
@@ -102,4 +109,25 @@ class AgentTurns:
                 found.append((call.at or "", turn_id))
         found.sort()
         self._timelines[agent_id] = found
+        return found
+
+    def unattached(self, agent_ids: Iterable[str]) -> list[tuple[str, str]]:
+        """The agents among `agent_ids` that no call placed, each with the reason.
+
+        Their records fell back to the prompt id they carry (`turn_of`), which is the
+        link the module docstring says is not to be trusted, so each is worth a warning.
+        """
+        found = []
+        for agent_id in sorted(set(agent_ids)):
+            if self._timeline(agent_id):
+                continue
+            named = [self._dispatch.get(agent_id), *self._sends.get(agent_id, ())]
+            named = [call_id for call_id in named if call_id]
+            if not named:
+                reason = NO_CALL_NAMED
+            elif not any(call_id in self._calls for call_id in named):
+                reason = CALL_NOT_FOUND
+            else:
+                reason = CALL_WITHOUT_TURN
+            found.append((agent_id, reason))
         return found

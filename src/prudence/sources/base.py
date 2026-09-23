@@ -47,6 +47,15 @@ SUBAGENT = "subagent"
 TOOL_RESULT = "tool-result"
 FILE_HISTORY = "file-history"
 
+# The record type an adapter gives a line that is not a record at all (not JSON, or cut
+# short). The store counts it like any type it does not know, and the run log reports it
+# as an unreadable line rather than as a new record type.
+UNREADABLE = "unreadable"
+
+# How deep `key_shape` looks into a record: its own keys and the keys of each object
+# directly under them.
+KEY_SHAPE_DEPTH = 2
+
 
 @dataclass(frozen=True)
 class SessionFile:
@@ -172,6 +181,10 @@ class Event:
 
     `dispatch_id` is set on every event of a subagent's log when the agent wrote down
     which tool call started it: the id of that call in the parent's log.
+
+    `offset` is where the record's line starts in its file. `key_shape` is set only on a
+    record of a type the adapter does not know: the record's keys (`key_shape` below),
+    never a value, so that a format change can be described without reading it.
     """
 
     record_id: str
@@ -191,6 +204,27 @@ class Event:
     message_id: str | None = None
     dispatch_id: str | None = None
     payloads: tuple[Payload, ...] = field(default_factory=tuple)
+    offset: int | None = None
+    key_shape: tuple[str, ...] = ()
+
+
+def key_shape(record: dict, depth: int = KEY_SHAPE_DEPTH) -> tuple[str, ...]:
+    """A record's keys, and the keys of the objects under them, as sorted dotted paths.
+
+    `{"type": "x", "data": {"a": 1}}` is `("data", "data.a", "type")`. Keys only: no
+    value is read beyond asking whether it is an object.
+    """
+    found: set[str] = set()
+
+    def walk(value: dict, prefix: str, level: int) -> None:
+        for key, item in value.items():
+            path = f"{prefix}{key}"
+            found.add(path)
+            if level < depth and isinstance(item, dict):
+                walk(item, f"{path}.", level + 1)
+
+    walk(record, "", 1)
+    return tuple(sorted(found))
 
 
 @dataclass(frozen=True)

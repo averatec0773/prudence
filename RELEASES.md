@@ -155,6 +155,22 @@ Engine changes in the same release:
   (275 sessions, 5,855 parsed files, 9,097 commits) a full rebuild went from 2,854 s to
   287 s, and an ingest with nothing new reads no file and takes 49 s, 34 s of it the
   HEAD measurements every run repeats.
+- **A run log, self-checks, and a bundle for diagnosis.** Every `ingest`, `rebuild`,
+  `review`, config change by `init`, `hooks install` and `uninstall`, `export` and
+  `import` now leaves a record in `<data dir>/logs/runs.jsonl`: the command, the engine's
+  versions, the machine, the store's size, each step's seconds and counts, warnings and
+  self-checks, and the error and exit code. The record is written when the command starts
+  and completed when it ends, so a run that was killed halfway stays visible as
+  interrupted. Warnings are data, not output: record types the parser does not know (with
+  their keys, never their values), lines that are not records, subagents no call
+  dispatched, tools bucketed by a guess, and failed checks. Seven self-checks run at the
+  end of every ingest and rebuild (token totals across tables, a turn for every response,
+  subagent tokens attached, every `app_*` view answering with its contract, the contract
+  version, a repository for every session, current versions on every row); a failure is
+  the summary's last line, and `--strict` turns it into exit code 3. `prudence logs` shows
+  the runs one per line, and `prudence diagnose` writes a folder of the last records,
+  `status --json`, the config, the machine and the app's log tail, with the home directory
+  stripped and no transcript text in any of it.
 
 ## Before 0.1.0
 

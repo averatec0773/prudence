@@ -103,7 +103,7 @@ from pathlib import Path
 
 from prudence import sources
 from prudence.sources import base
-from prudence.store import buckets, parse_plan, parse_pool, parse_state, repos
+from prudence.store import buckets, parse_plan, parse_pool, parse_state, repos, run_warnings
 from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
@@ -347,6 +347,8 @@ class _Reply:
     usage: base.Usage | None = None
     usage_record: str | None = None  # the first record that reported the usage
     kinds: list[tuple[str, bool]] = field(default_factory=list)
+    # The calls whose kind is only a guess from the tool's name, for the run log.
+    guessed: list[tuple[str | None, str]] = field(default_factory=list)
     files: set[str] = field(default_factory=set)
     commands: int = 0
 
@@ -391,6 +393,7 @@ def build(
     progress: progress_module.Step | None = None,
     incremental: bool = False,
     workers: int = 1,
+    warnings: run_warnings.Warnings | None = None,
 ) -> BuildStats:
     """Build the session tables from the archive. Idempotent; safe to run at any time.
 
@@ -406,6 +409,9 @@ def build(
     time, it committed two thousand times, and those commits were most of its cost on
     the founder's store (216 s of it against 62 s in one transaction, one worker). The
     write lock is held for as long, which is seconds for an ingest.
+
+    What the parse met and could not fully read goes to `warnings`, from the files it
+    read: a pass an incremental parse throws away (`outcome.discard`) reports nothing.
     """
     started = time.monotonic()
     stats = BuildStats(workers=max(1, workers))
@@ -449,6 +455,8 @@ def build(
             if not missed:
                 break
             reparsed = previous.closure(reparsed | missed)
+    if warnings is not None:
+        _report(fold, warnings)
     repos.save_discoveries(connection, resolver)
     _count_tables(connection, stats)
     stats.elapsed = time.monotonic() - started
@@ -506,6 +514,13 @@ class _Fold:
         self.links: set[tuple[str, str]] = set()
         self.cascade: set[str] = set()
         self.unknown: dict[str, dict[tuple[str, str | None], list]] = {}
+        # For the run log only (`_report`): the key shapes of the unknown records, the
+        # lines that were not records, the subagents no call placed, and the calls whose
+        # bucket is a guess (tool name -> calls, tokens resting on the guess).
+        self.shapes: dict[str, set[tuple[str, ...]]] = {}
+        self.unreadable: list[tuple[str, str, int | None]] = []
+        self.unattached: list[tuple[str, str, str]] = []
+        self.heuristic: dict[str | None, list[int]] = {}
         self.produced: dict[tuple[str, str], str] = {}
         self.read: set[str] = set()
         self._stored_records: dict[str, str] = {}
@@ -678,6 +693,10 @@ def _read_file(
     fold.prefetch(events)
     for event in events:
         if not event.known_type:
+            if event.record_type == base.UNREADABLE:
+                fold.unreadable.append((session.session_id, archived.path, event.offset))
+            else:
+                fold.shapes.setdefault(event.record_type, set()).add(event.key_shape)
             entry = unknown.setdefault((event.record_type, event.source_version), [0, None])
             entry[0] += 1
             if entry[1] is None:
@@ -838,6 +857,8 @@ def _note_reply_call(reply: _Reply, call: base.ToolCall) -> None:
     """One tool call's part in its reply's bucket, and the two counts beside it."""
     kind = buckets.call_kind(call.tool_name, call.shell_command)
     reply.kinds.append(kind)
+    if kind[1]:
+        reply.guessed.append((call.tool_name, kind[0]))
     if kind[0] == buckets.CHANGE and call.file_path:
         reply.files.add(call.file_path)
     if call.shell_command is not None:
@@ -928,7 +949,7 @@ def _flush_session(
         notes.append(f"replayed {session.replayed} records")
     if session.mapping_method != "cwd":
         notes.append(f"repository by {session.mapping_method}")
-    _resolve_agent_turns(session)
+    _resolve_agent_turns(session, fold)
     connection.executemany(
         "INSERT OR IGNORE INTO record__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         session.records,
@@ -960,7 +981,7 @@ def _flush_session(
             for tool_use_id, call in sorted(session.tool_calls.items())
         ],
     )
-    _flush_replies(connection, session)
+    _flush_replies(connection, session, fold)
     _flush_edits(connection, session, resolver, key)
     _flush_commands(connection, session)
     connection.execute(
@@ -984,11 +1005,12 @@ def _flush_session(
     )
 
 
-def _resolve_agent_turns(session: _Session) -> None:
+def _resolve_agent_turns(session: _Session, fold: _Fold) -> None:
     """Give every subagent record's call and reply the turn of the call that started it.
 
     Done once the session's every file is read, because the dispatching call is in the
     parent's transcript (or another agent's log) and the replies are in the agent's own.
+    An agent no call places is noted on `fold` for the run log.
     """
     turns = AgentTurns(
         {
@@ -1005,15 +1027,21 @@ def _resolve_agent_turns(session: _Session) -> None:
     for reply in session.replies.values():
         if reply.link is not None:
             reply.turn_id = turns.turn_of(reply.link)
+    agents = [reply.link.agent_id for reply in session.replies.values() if reply.link]
+    for agent_id, reason in turns.unattached(agents):
+        fold.unattached.append((agent_id, session.session_id, reason))
 
 
-def _flush_replies(connection: sqlite3.Connection, session: _Session) -> None:
+def _flush_replies(connection: sqlite3.Connection, session: _Session, fold: _Fold) -> None:
     """One `usage` row and one `response` row per reply of the model.
 
     `usage` keeps its shape (the first record that reported the usage names the row) but
     now holds the reply's final counts; `response` adds the bucket, the turn and the
     counts of calls by kind. A reply with no usage at all (a format that wrote none) has
     no `usage` row and NULL tokens on its `response` row, which is not zero.
+
+    Every call bucketed by a guess is counted on `fold` under its tool, and a reply whose
+    bucket rests on the guess adds its tokens under each tool that made the guess.
     """
     usage_rows: list[tuple] = []
     response_rows: list[tuple] = []
@@ -1045,6 +1073,7 @@ def _flush_replies(connection: sqlite3.Connection, session: _Session) -> None:
             bucket, guessed = None, False
         else:
             bucket, guessed = buckets.bucket_of(reply.kinds)
+        _note_guesses(fold, reply, bucket if guessed else None, counts)
         by_kind = Counter(kind for kind, _ in reply.kinds)
         response_rows.append(
             (
@@ -1072,6 +1101,34 @@ def _flush_replies(connection: sqlite3.Connection, session: _Session) -> None:
         " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         response_rows,
     )
+
+
+def _note_guesses(fold: _Fold, reply: _Reply, guessed_bucket: str | None, counts: tuple) -> None:
+    """One reply's calls bucketed by the name heuristic, onto `fold.heuristic`."""
+    tokens = sum(count or 0 for count in counts)
+    for tool_name, _ in reply.guessed:
+        fold.heuristic.setdefault(tool_name, [0, 0])[0] += 1
+    for tool_name in {tool for tool, kind in reply.guessed if kind == guessed_bucket}:
+        fold.heuristic[tool_name][1] += tokens
+
+
+def _report(fold: _Fold, warnings: run_warnings.Warnings) -> None:
+    """What this parse met and could not fully read, onto the run's warnings."""
+    for found in fold.unknown.values():
+        for (record_type, version), (count, first_seen) in found.items():
+            if record_type == base.UNREADABLE:
+                continue
+            warnings.unknown_record_type(
+                record_type, version, count, first_seen, fold.shapes.get(record_type, set())
+            )
+    for session_id, path, offset in fold.unreadable:
+        warnings.unreadable_line(session_id, path, offset)
+    for agent_id, session_id, reason in fold.unattached:
+        warnings.unattached_subagent(agent_id, session_id, reason)
+    for tool_name, (calls, tokens) in sorted(
+        fold.heuristic.items(), key=lambda item: item[0] or ""
+    ):
+        warnings.heuristic_bucket(tool_name, calls, tokens)
 
 
 def _flush_edits(

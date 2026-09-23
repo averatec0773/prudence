@@ -114,3 +114,23 @@ def spool_file() -> Path:
 def reports_dir() -> Path:
     """Where a surface writes a Markdown report for the user to open, e.g. the menu bar."""
     return data_dir() / "reports"
+
+
+def logs_dir() -> Path:
+    """Where the engine and the app say what they did: shapes, counts and timings only."""
+    return data_dir() / "logs"
+
+
+def runs_log_file() -> Path:
+    """One JSON line per step of a command's life (`store/runlog.py`)."""
+    return logs_dir() / "runs.jsonl"
+
+
+def app_log_file() -> Path:
+    """What the desktop app writes about its own work. The engine only reads its tail."""
+    return logs_dir() / "app.log"
+
+
+def diagnose_dir() -> Path:
+    """Where `prudence diagnose` writes a bundle, one folder per run."""
+    return data_dir() / "diagnose"

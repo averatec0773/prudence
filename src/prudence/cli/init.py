@@ -6,17 +6,22 @@ code in a personal store because a tool defaulted to "all".
 
 Both forms exist for the same reason: the interactive prompt is how a person does it,
 and the `--enable` form is how a test or a script does it.
+
+A change to the config is recorded in the run log (`cli/recording.py`); a scan is not,
+because it changes nothing.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import click
 
 from prudence import config as config_module
+from prudence.cli.recording import recorded
 from prudence.cli.render import date, size
 from prudence.scan import NO_REPOSITORY, ProjectGroup, ScanResult, scan
 
@@ -62,7 +67,14 @@ def init(
     if as_json and (enable_tokens or disable_tokens):
         raise click.UsageError("--json lists the scan; it cannot enable or disable anything.")
     if enable_tokens or disable_tokens:
-        _apply(config, enable_tokens, disable_tokens, level)
+        with recorded() as run:
+            started = time.monotonic()
+            _apply(config, enable_tokens, disable_tokens, level)
+            run.step(
+                "config",
+                time.monotonic() - started,
+                {"enabled": len(enable_tokens), "disabled": len(disable_tokens)},
+            )
         return
     result = scan()
     if as_json:
@@ -188,7 +200,7 @@ def _resolve(result: ScanResult, token: str) -> ProjectGroup:
 def _interactive(result: ScanResult, config: config_module.Config) -> None:
     click.echo("")
     click.echo("Enable repositories one at a time. Press Enter on an empty line to finish.")
-    changed = False
+    changed = 0
     while True:
         token = click.prompt("Repository", default="", show_default=False).strip()
         if not token:
@@ -204,9 +216,12 @@ def _interactive(result: ScanResult, config: config_module.Config) -> None:
             default="full",
         )
         _enable_group(config, group, level)
-        changed = True
+        changed += 1
     if changed:
-        config_module.save(config)
+        with recorded() as run:
+            started = time.monotonic()
+            config_module.save(config)
+            run.step("config", time.monotonic() - started, {"enabled": changed, "disabled": 0})
         click.echo(f"Config: {config.path}")
         click.echo("Run `prudence ingest` to record them.")
     else:

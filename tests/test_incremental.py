@@ -566,7 +566,8 @@ def test_status_says_what_the_last_ingest_read_and_how_long_each_step_took(
         "facts",
         "observations",
         "views",
-    ]
+        "checks",
+    ], "the self-checks' own time follows the steps'"
     assert json.loads(result.output)["last_rebuild"] is None
 
     text = CliRunner().invoke(main, ["status"])

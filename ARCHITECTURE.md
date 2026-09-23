@@ -64,6 +64,13 @@ src/prudence/
     labels.py     the founder's own verdict on a sampled commit; user-authored, never rebuilt
     pipeline.py   the order the eleven steps run in, so ingest and rebuild agree, and
                    the record of the last run of each that `prudence status` prints
+    checks.py     the self-checks run after the last step: named predicates over the
+                   tables just written, each with the numbers it compared
+    run_warnings.py  what a run met and kept going past (unknown record types, lines
+                   that are not records, undispatched subagents, guessed buckets, failed
+                   checks), as kinds, counts and shape-only samples
+    runlog.py     `logs/runs.jsonl`: a start line and an end line per command that
+                   changes something, folded by `run_id`; rotation, reading, states
     meta.py       the one key/value table a rebuild does not touch; holds the contract
                    version the app checks before it renders anything
     app_views.py  the `app_*` SQL views, the only thing a surface other than the CLI
@@ -92,7 +99,8 @@ src/prudence/
                   changes_after_compaction.py are the waste facts over `response`
                   (docs/reference/usage-buckets.md): counts of what tokens went into,
                   which overlap and are never summed with each other
-  cli/            one file per command; thin, calls the engine
+  cli/            one file per command; thin, calls the engine. `recording.py` is the
+                   one place a command meets the run log (`with recorded() as run:`)
   mcp/            the MCP server: server.py (FastMCP, stdio), the only place `mcp` is
                    imported; started by `cli/mcp.py`
 apps/desktop/     the desktop app (Rust shell, HTML frontend): the menu-bar panel and
@@ -172,6 +180,53 @@ appears unless it is named, with the reason, in that module's `NOT_DERIVED`. The
 difference a rebuild may show on real data is a kept mark whose history before the mark
 was rewritten since it was measured: the ingest keeps the first reading, as intended, and
 a rebuild reads the rewritten history.
+
+## The run log, warnings and self-checks
+
+Every command that changes something (`ingest`, `rebuild`, `review`, `init` when it
+changes the config, `hooks install` and `uninstall`, `export`, `import`) leaves a record in
+`<data dir>/logs/runs.jsonl` (`store/runlog.py`), written through `cli/recording.py`. The
+record is two appended lines with one `run_id`: the first when the command starts, with
+`ended_at` null, the second when it leaves, however it leaves (a return, a `ctx.exit`, an
+exception, Ctrl-C), with the exit code and, on failure, the error's type, message and
+traceback as `file:line in function`. A process killed outright writes no second line, so
+its record keeps `ended_at` null and `prudence logs` shows it as interrupted (or running,
+while its process is). The first line is appended rather than rewritten in place because
+several processes write the file, and a rewrite would lose a line another one appended
+in between. The file is renamed to `runs.1.jsonl` at 8 MB and two files are kept.
+
+A record carries the command and its arguments, the engine, parser, bucket rule and app
+contract versions, the machine (operating system, architecture, Python, cores), the
+store's size, each step's seconds and counts, the warnings and the self-checks. Warnings
+(`store/run_warnings.py`) are collected by the steps through one `Warnings` object on
+the pipeline's result and printed by nothing: `unknown_record_type` (per type, the union
+of the records' keys two levels deep, first seen, count), `unreadable_line` (session,
+file id, offset), `unattached_subagent` (agent, session, reason), `heuristic_bucket`
+(tool, calls, tokens resting on the guess) and `check_failed`. They describe what this
+run read: an ingest that parsed nothing new warns about nothing, and a rebuild reports
+the whole archive. The self-checks (`store/checks.py`) run after the last step of every
+ingest and rebuild: token totals agree across `usage`, `response` and
+`app_usage_by_bucket_day`; every response has a turn; every subagent token is attached;
+every `app_*` view answers with its contract's columns; the stored contract version is
+the code's; a session has no repository only when the parse found none; and every derived
+row carries this code's versions. A failure is a bug in the pipeline, not in the data; it
+is a `check_failed` warning and the last line of the summary, and `--strict` makes it
+exit code 3.
+
+**The log holds no text.** Nothing read from a transcript is written to it: counts, ids,
+names, keys, offsets and timings only. A name a transcript supplies (a record type, a
+key, a tool) is written only if it looks like an identifier and as `<other>` otherwise, a
+file is named by a hash of its archive path, every string has the home directory written
+as `~`, and the one free-form string, an error's message, is Prudence's or a library's
+own, cut at 500 characters. `tests/test_runlog.py` plants one sentinel string in every
+place a transcript can carry text and asserts it never reaches the log, and that every
+string in a record is a timestamp, a name or one of the few fields free by design.
+
+`prudence logs` prints one line per run, newest first (`--last`, `--json`,
+`--interrupted`). `prudence diagnose` writes `<data dir>/diagnose/<time>/` with the last
+20 records, `status --json`, the config and the machine with the home directory stripped,
+the tail of the app's `logs/app.log` when there is one, and a README; it refuses to copy
+the store, the spool or anything under the agent's own directory.
 
 ## Rules
 

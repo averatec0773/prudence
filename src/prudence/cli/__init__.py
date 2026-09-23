@@ -8,6 +8,7 @@ import click
 from prudence import __version__
 from prudence.cli.ask import ask
 from prudence.cli.classify import classify
+from prudence.cli.diagnose import diagnose
 from prudence.cli.explain import explain
 from prudence.cli.export import export, import_bundle
 from prudence.cli.facts import facts
@@ -15,6 +16,7 @@ from prudence.cli.forget import forget
 from prudence.cli.hooks import hooks
 from prudence.cli.ingest import ingest
 from prudence.cli.init import init
+from prudence.cli.logs import logs
 from prudence.cli.mcp import mcp
 from prudence.cli.menubar import menubar
 from prudence.cli.observations import observations
@@ -54,6 +56,8 @@ main.add_command(facts)
 main.add_command(classify)
 main.add_command(show)
 main.add_command(status)
+main.add_command(logs)
+main.add_command(diagnose)
 main.add_command(forget)
 main.add_command(export)
 main.add_command(import_bundle)

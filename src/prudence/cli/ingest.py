@@ -3,6 +3,10 @@
 Archiving and parsing are one command because they are one promise: after `ingest`,
 what the agent wrote is in the archive and the tables agree with it. They are separate
 functions because only the first is irreversible.
+
+Every ingest is recorded in the run log (`cli/recording.py`) from its first line, so an
+ingest that was killed halfway is still there afterwards. The self-checks the pipeline
+runs at the end are the summary's last line; `--strict` makes a failed one exit 3.
 """
 
 from __future__ import annotations
@@ -15,12 +19,16 @@ import click
 
 from prudence import config as config_module
 from prudence import hooks as hooks_module
+from prudence.cli.recording import recorded
 from prudence.cli.render import size
 from prudence.facts import registry as facts_registry
 from prudence.paths import enabled_list_file
 from prudence.reviews import first_look
-from prudence.store import db, parse_pool, pipeline
+from prudence.store import checks, db, parse_pool, pipeline, run_warnings, runlog
 from prudence.store import progress as progress_module
+
+# The exit code of an `ingest --strict` or `rebuild --strict` whose self-checks failed.
+CHECKS_FAILED_EXIT = 3
 
 WORKERS_HELP = (
     "Processes that read archived files while parsing. Defaults to the number of cores"
@@ -39,6 +47,21 @@ def workers_option(function):
     )(function)
 
 
+def strict_option(function):
+    """`--strict`, shared by `ingest` and `rebuild`."""
+    return click.option(
+        "--strict",
+        is_flag=True,
+        help=f"Exit with code {CHECKS_FAILED_EXIT} when a self-check fails at the end.",
+    )(function)
+
+
+def exit_if_strict(result: pipeline.Result, strict: bool) -> None:
+    """Leave with `CHECKS_FAILED_EXIT` when asked to and a self-check failed."""
+    if strict and result.checks_failed():
+        click.get_current_context().exit(CHECKS_FAILED_EXIT)
+
+
 @click.command()
 @click.option("--json", "as_json", is_flag=True, help="Print what each step did as JSON.")
 @click.option(
@@ -48,18 +71,21 @@ def workers_option(function):
     help="Write one JSON progress line per step to stderr while the ingest runs.",
 )
 @workers_option
-def ingest(as_json: bool, show_progress: bool, workers: int) -> None:
+@strict_option
+def ingest(as_json: bool, show_progress: bool, workers: int, strict: bool) -> None:
     """Record everything new from the enabled repositories."""
-    config = config_module.load()
-    if not config.repositories:
-        raise click.UsageError(
-            "No repository is enabled. Run `prudence init` to choose what is recorded."
-        )
-    try:
-        with db.ingest_lock():
-            _run(config, as_json, show_progress, workers)
-    except db.Locked as error:
-        raise click.ClickException(str(error)) from error
+    with recorded() as run:
+        config = config_module.load()
+        if not config.repositories:
+            raise click.UsageError(
+                "No repository is enabled. Run `prudence init` to choose what is recorded."
+            )
+        try:
+            with db.ingest_lock():
+                result = _run(config, run, as_json, show_progress, workers)
+        except db.Locked as error:
+            raise click.ClickException(str(error)) from error
+        exit_if_strict(result, strict)
 
 
 def progress_sink(enabled: bool) -> progress_module.Sink | None:
@@ -80,27 +106,33 @@ def progress_sink(enabled: bool) -> progress_module.Sink | None:
 
 def _run(
     config: config_module.Config,
+    run: runlog.Run,
     as_json: bool = False,
     show_progress: bool = False,
     workers: int = 1,
-) -> None:
+) -> pipeline.Result:
+    result = pipeline.Result()
+    run.attach(result)
     connection = db.connect()
     try:
-        result = pipeline.run(
+        pipeline.run(
             connection,
             config,
             with_archive=True,
             progress=progress_sink(show_progress),
             workers=workers,
+            result=result,
         )
         _refresh_enabled(connection)
         if as_json:
             click.echo(json.dumps(summary(result), indent=2, default=str))
-            return
-        for line in report(result) + first_look.after_ingest(connection):
+            return result
+        lines = report(result, checks_line=False) + first_look.after_ingest(connection)
+        for line in lines + [checks.summary_line(result.checks)]:
             click.echo(line)
     finally:
         connection.close()
+    return result
 
 
 def summary(result: pipeline.Result) -> dict:
@@ -115,7 +147,10 @@ def summary(result: pipeline.Result) -> dict:
 
 
 def _plain(value):
-    """A dataclass tree as plain JSON types, with every mapping key a string."""
+    """A dataclass tree as plain JSON types, with every mapping key a string.
+
+    The run's warnings are the list the run log writes (`Warnings.as_list`).
+    """
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {
             field.name: _plain(getattr(value, field.name)) for field in dataclasses.fields(value)
@@ -124,6 +159,8 @@ def _plain(value):
         return {str(key): _plain(item) for key, item in value.items()}
     if isinstance(value, list | tuple | set):
         return [_plain(item) for item in value]
+    if isinstance(value, run_warnings.Warnings):
+        return value.as_list()
     return value
 
 
@@ -139,8 +176,12 @@ def _refresh_enabled(connection) -> None:
     hooks_module.write_enabled(hooks_module.enabled_roots(connection))
 
 
-def report(result: pipeline.Result) -> list[str]:
-    """What each step of the pipeline did, in the order it did it."""
+def report(result: pipeline.Result, checks_line: bool = True) -> list[str]:
+    """What each step of the pipeline did, in the order it did it, then the self-checks.
+
+    `checks_line` False leaves the self-checks' line off, for a caller that prints more
+    lines after these and wants that one last.
+    """
     lines = []
     archived = result.archived
     if archived is not None:
@@ -269,4 +310,6 @@ def report(result: pipeline.Result) -> list[str]:
         f"pooled over all of them, from {joined.sessions} sessions with lines that could be "
         f"followed, {joined.elapsed:.1f} s."
     )
+    if checks_line:
+        lines.append(checks.summary_line(result.checks))
     return lines

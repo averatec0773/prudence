@@ -36,12 +36,19 @@ view's text alone; each swap drops `x` and renames `x__new` to `x`, so the name 
 holds exists again by the time anything reads it. The views themselves are replaced once
 at the end, inside one transaction, so a store always has either the previous contract
 or the new one.
+
+After the last step the self-checks run (`store/checks.py`); they are not a step, because
+they write nothing and a client counting steps should not wait for them, but their time
+is kept beside the steps' as `checks`. What the steps met and kept going past, and every
+check that failed, is on `Result.warnings` for the run log (`store/runlog.py`); nothing
+here prints it.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -51,6 +58,7 @@ from prudence.store import (
     app_views,
     archive,
     attribution,
+    checks,
     commits,
     derived,
     hand_edits,
@@ -59,6 +67,7 @@ from prudence.store import (
     observations,
     outcomes,
     repos,
+    run_warnings,
     spool,
 )
 from prudence.store import progress as progress_module
@@ -120,8 +129,33 @@ class Result:
         default_factory=observations.ObservationStats
     )
     repositories: int = 0
-    # Wall-clock seconds per step, in the order they ran.
+    # Wall-clock seconds per step, in the order they ran, filled in as each one finishes,
+    # and then the self-checks' own time under `checks`.
     steps: dict[str, float] = field(default_factory=dict)
+    # The step that raised, when one did; the steps before it are in `steps`.
+    failed_step: str | None = None
+    checks: list[checks.Check] = field(default_factory=list)
+    warnings: run_warnings.Warnings = field(default_factory=run_warnings.Warnings)
+
+    def checks_failed(self) -> int:
+        return sum(1 for check in self.checks if not check.passed)
+
+    def step_counts(self) -> dict[str, object]:
+        """Each step's own statistics, by step name, for the run log to keep the counts of."""
+        return {
+            "repositories": {"repositories": self.repositories},
+            ARCHIVE: self.archived,
+            "parse": self.parsed,
+            "hooks": self.hooks,
+            "turn_trees": self.turn_trees,
+            "commits": self.harvested,
+            "attribution": self.attributed,
+            "outcomes": self.outcomes,
+            "facts": self.facts,
+            "observations": self.observations,
+            "views": {},
+            "checks": {"checks": len(self.checks), "failed": self.checks_failed()},
+        }
 
 
 def run(
@@ -130,15 +164,42 @@ def run(
     with_archive: bool,
     progress: progress_module.Sink | None = None,
     workers: int = 1,
+    result: Result | None = None,
 ) -> Result:
     """Build everything the store holds, from the sources each step is allowed to read.
 
     `ingest` (with the archive) parses incrementally; `rebuild` reads everything.
-    `workers` is how many processes read archived files during the parse.
+    `workers` is how many processes read archived files during the parse. A caller that
+    needs to know how far a run got when it raises passes its own `result`, which is
+    filled in step by step.
     """
-    result = Result()
+    result = result if result is not None else Result()
     steps = STEPS if with_archive else tuple(name for name in STEPS if name != ARCHIVE)
-    reporter = progress_module.Run(progress, steps, LABELS)
+    reporter = progress_module.Run(progress, steps, LABELS, elapsed=result.steps)
+    try:
+        _steps(connection, config, with_archive, reporter, workers, result)
+    except BaseException:
+        result.failed_step = reporter.current
+        raise
+    started = time.monotonic()
+    result.checks = checks.run(connection)
+    result.steps["checks"] = round(time.monotonic() - started, 3)
+    for check in result.checks:
+        if not check.passed:
+            result.warnings.check_failed(check.name, check.numbers)
+    meta.set_meta(connection, LAST_RUN_KEYS[with_archive], json.dumps(_run_record(result)))
+    return result
+
+
+def _steps(
+    connection: sqlite3.Connection,
+    config: config_module.Config,
+    with_archive: bool,
+    reporter: progress_module.Run,
+    workers: int,
+    result: Result,
+) -> None:
+    """The eleven steps, in order, each one's statistics onto `result`."""
     # The swaps below rename tables the `app_*` views name; see the module docstring for
     # why that is allowed to happen under them rather than after they are taken down.
     connection.execute("PRAGMA legacy_alter_table=ON")
@@ -165,6 +226,7 @@ def run(
                 progress=step,
                 incremental=with_archive,
                 workers=workers,
+                warnings=result.warnings,
             )
         with reporter.step("hooks") as step:
             result.hooks = spool.build(connection, resolver, progress=step)
@@ -197,9 +259,6 @@ def run(
     # transaction so that a store never holds half a contract.
     with reporter.step("views") as step:
         app_views.replace_app_views(connection, progress=step)
-    result.steps = dict(reporter.elapsed)
-    meta.set_meta(connection, LAST_RUN_KEYS[with_archive], json.dumps(_run_record(result)))
-    return result
 
 
 def _run_record(result: Result) -> dict:

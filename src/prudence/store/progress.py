@@ -137,16 +137,23 @@ class Run:
 
     `steps` is the run's own list, so a `rebuild` that skips the archive reports ten
     steps numbered one to ten rather than eleven with a hole in the middle. `elapsed`
-    holds each finished step's wall-clock seconds, for `prudence status` to show later.
+    holds each finished step's wall-clock seconds, for `prudence status` to show later,
+    and is the caller's own dictionary when it passes one, so that it is there to read
+    even when a step raises. `current` is the step in progress, None between steps.
     """
 
     def __init__(
-        self, sink: Sink | None, steps: tuple[str, ...], labels: dict[str, str] | None = None
+        self,
+        sink: Sink | None,
+        steps: tuple[str, ...],
+        labels: dict[str, str] | None = None,
+        elapsed: dict[str, float] | None = None,
     ) -> None:
         self._sink = sink
         self._steps = steps
         self._labels = labels or {}
-        self.elapsed: dict[str, float] = {}
+        self.elapsed: dict[str, float] = elapsed if elapsed is not None else {}
+        self.current: str | None = None
 
     @contextmanager
     def step(self, name: str) -> Iterator[Step]:
@@ -162,9 +169,11 @@ class Run:
             label=self._labels.get(name, name),
         )
         started = time.monotonic()
+        self.current = name
         yield handle
         handle.done()
         self.elapsed[name] = round(time.monotonic() - started, 3)
+        self.current = None
 
 
 def silent() -> Step:

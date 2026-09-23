@@ -32,6 +32,7 @@ import re
 from collections.abc import Iterable, Iterator
 
 from prudence.sources.base import (
+    UNREADABLE,
     Event,
     FileHead,
     Payload,
@@ -39,16 +40,13 @@ from prudence.sources.base import (
     ToolCall,
     ToolResult,
     Usage,
+    key_shape,
 )
 from prudence.store import edits as edits_module
 
 # Record types this version understands. Anything else is reported as unknown, counted
 # by the store, and otherwise treated as a plain record.
 KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
-
-# What a line that is not a JSON object becomes: a record type of its own, which the store
-# counts like any other type it does not know.
-UNREADABLE = "unreadable"
 
 # The usage keys of a reply, and the `Usage` field each one fills.
 _USAGE_KEYS = {
@@ -114,6 +112,7 @@ def events(
         record_type = record.get("type")
         if not isinstance(record_type, str):
             record_type = "unknown"
+        known_type = record_type in KNOWN_RECORD_TYPES
         uuid = record.get("uuid")
         stable_id = isinstance(uuid, str) and bool(uuid)
         record_id = uuid if stable_id else _derived_id(path, offset)
@@ -124,7 +123,7 @@ def events(
             parent_id=_string_or_none(record.get("parentUuid")),
             timestamp=_string_or_none(record.get("timestamp")),
             record_type=record_type,
-            known_type=record_type in KNOWN_RECORD_TYPES,
+            known_type=known_type,
             subtype=_subtype(record),
             source_version=_string_or_none(record.get("version")),
             sidechain=bool(record.get("isSidechain")),
@@ -135,6 +134,8 @@ def events(
             message_id=_message_id(record, record_id),
             dispatch_id=dispatch_id,
             payloads=_payloads(record, tool_names),
+            offset=offset,
+            key_shape=() if known_type else key_shape(record),
         )
 
 
@@ -211,6 +212,7 @@ def _unreadable(line: bytes, path: str, offset: int, agent_id: str | None) -> Ev
         known_type=False,
         agent_id=agent_id,
         payloads=(usage,) if usage is not None else (),
+        offset=offset,
     )
 
 

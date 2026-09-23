@@ -8,18 +8,22 @@ figure was computed by `store/views` before this file ran; nothing here does ari
 The page is printed and also written to `reports/review-<id>.md`, because a review is
 something a person comes back to and a terminal scrollback is not (journey decision E1,
 now the secondary rendering of the stored row).
+
+Every review is recorded in the run log (`cli/recording.py`), a refused one included.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime
 
 import click
 
 from prudence import config as config_module
 from prudence.cli.observations import repo_key_for
+from prudence.cli.recording import recorded
 from prudence.model import LANGUAGES
 from prudence.paths import database_file, reports_dir
 from prudence.reviews import build as build_module
@@ -64,6 +68,27 @@ def review(
     language: str | None,
 ) -> None:
     """Write a review of one range: what you did, what became of it, and what changed."""
+    with recorded() as run:
+        started = time.monotonic()
+        written = _review(
+            last, since, until, month, project, force, as_json, wants_explain, model_id, language
+        )
+        run.step("review", time.monotonic() - started, {"written": int(written)})
+
+
+def _review(
+    last: str | None,
+    since: str | None,
+    until: str | None,
+    month: str | None,
+    project: str | None,
+    force: bool,
+    as_json: bool,
+    wants_explain: bool | None,
+    model_id: str | None,
+    language: str | None,
+) -> bool:
+    """The command's body. True when a review was written, False when the rule said wait."""
     if not database_file().exists():
         raise click.ClickException("Nothing ingested yet. Run `prudence ingest`.")
     settings = config_module.load()
@@ -93,7 +118,7 @@ def review(
             else:
                 click.echo(ready.reason)
                 click.echo("Run `prudence review --force` to write one anyway.")
-            return
+            return False
 
         for line in write(
             connection,
@@ -106,6 +131,7 @@ def review(
             language=language,
         ):
             click.echo(line)
+        return True
     except sqlite3.OperationalError as error:
         raise click.ClickException(
             f"The derived tables are not built yet ({error}). Run `prudence ingest`."
