@@ -272,6 +272,19 @@ test("contract 3 words the threshold itself, in the reader's language", () => {
   Str.setLang("en");
 });
 
+test("contract 3 words the threshold for the two newest waste facts", () => {
+  // test_fix_loops and giant_turns are both `at_least` splits (observations.py SPLITS),
+  // so the generic operator/value words already cover them; this pins their own numbers.
+  assert.equal(
+    thresholdLine(row({ fact: "test_fix_loops", threshold_op: ">=", threshold_value: 5 })),
+    "at least 5"
+  );
+  assert.equal(
+    thresholdLine(row({ fact: "giant_turns", threshold_op: ">=", threshold_value: 1 })),
+    "at least 1"
+  );
+});
+
 test("a row with no number for its split prints the engine's own words", () => {
   assert.equal(
     thresholdLine(row({ threshold_op: null, threshold_value: null })),

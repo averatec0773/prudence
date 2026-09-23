@@ -17,7 +17,7 @@ import { lang as currentLang, plural, t } from "./strings.js";
 /** @typedef {import("./strings.js").Language} Language */
 
 /**
- * The twelve behaviour facts the engine splits on. A fact not in this list is not an
+ * The fourteen behaviour facts the engine splits on. A fact not in this list is not an
  * error: the engine may grow one, and the sentence says "with <fact>" rather than
  * inventing a phrase for it.
  */
@@ -27,11 +27,13 @@ const SPLITS = [
   "context_resets",
   "files_edited_unread",
   "formatter_runs",
+  "giant_turns",
   "hand_edits_between_turns",
   "prompts_per_active_hour",
   "repeated_errors",
   "sittings",
   "subagent_used",
+  "test_fix_loops",
   "test_runs",
   "tests_before_commit",
 ];
