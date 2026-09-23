@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Iterator
 
 from prudence.sources.base import (
@@ -44,6 +45,27 @@ from prudence.store import edits as edits_module
 # Record types this version understands. Anything else is reported as unknown, counted
 # by the store, and otherwise treated as a plain record.
 KNOWN_RECORD_TYPES = frozenset({"user", "assistant", "system", "attachment"})
+
+# What a line that is not a JSON object becomes: a record type of its own, which the store
+# counts like any other type it does not know.
+UNREADABLE = "unreadable"
+
+# The usage keys of a reply, and the `Usage` field each one fills.
+_USAGE_KEYS = {
+    "input_tokens": b"input_tokens",
+    "output_tokens": b"output_tokens",
+    "cache_read_tokens": b"cache_read_input_tokens",
+    "cache_creation_tokens": b"cache_creation_input_tokens",
+}
+_UNREADABLE_COUNTS = re.compile(
+    rb'"(input_tokens|output_tokens|cache_read_input_tokens|cache_creation_input_tokens)":(\d+)'
+)
+
+# The tools that start a subagent, and the one that hands a running one more work.
+DISPATCH_TOOLS = frozenset({"Agent", "Task"})
+SEND_TOOL = "SendMessage"
+# The line a dispatching call's result ends with when the structured field is missing.
+_AGENT_LINE = re.compile(r"agentId:\s*([0-9A-Za-z-]{6,64})")
 
 # Tool inputs whose file path is a fact worth keeping. Whether it is stored is the
 # store's decision, not this module's: `metadata-only` keeps no paths.
@@ -73,19 +95,28 @@ def events(
     path: str,
     file_session_id: str,
     agent_id: str | None,
+    sidecar: bytes | None = None,
 ) -> Iterator[Event]:
-    """One event per record of one archived transcript, in file order."""
+    """One event per record of one archived transcript, in file order.
+
+    A line that is not a JSON object is reported as a record of type `unreadable`,
+    carrying the token counts that can still be read off its bytes, so that the tokens it
+    spent are counted and shown as a gap rather than silently lost.
+    """
     tool_names: dict[str, str] = {}
+    dispatch_id = _dispatch(sidecar)
     for offset, line in lines:
         record = parse(line)
         if record is None:
+            if line.strip():
+                yield _unreadable(line, path, offset, agent_id)
             continue
         record_type = record.get("type")
         if not isinstance(record_type, str):
             record_type = "unknown"
         uuid = record.get("uuid")
         stable_id = isinstance(uuid, str) and bool(uuid)
-        record_id = uuid if stable_id else hashlib.sha256(f"{path}:{offset}".encode()).hexdigest()
+        record_id = uuid if stable_id else _derived_id(path, offset)
         yield Event(
             record_id=record_id,
             stable_id=stable_id,
@@ -101,6 +132,8 @@ def events(
             prompt_id=_text_or_none(record.get("promptId")),
             cwd=_string_or_none(record.get("cwd")),
             entrypoint=_string_or_none(record.get("entrypoint")),
+            message_id=_message_id(record, record_id),
+            dispatch_id=dispatch_id,
             payloads=_payloads(record, tool_names),
         )
 
@@ -123,6 +156,62 @@ def _payloads(record: dict, tool_names: dict[str, str]) -> tuple[Payload, ...]:
         found.append(usage)
     found.extend(_tool_payloads(record, tool_names))
     return tuple(found)
+
+
+def _derived_id(path: str, offset: int) -> str:
+    return hashlib.sha256(f"{path}:{offset}".encode()).hexdigest()
+
+
+def _message_id(record: dict, record_id: str) -> str | None:
+    """The reply an assistant record is part of: `message.id`, else `requestId`, else itself.
+
+    Claude Code writes one record per content block of a reply (a text block, each tool
+    call), all under one `message.id`; an old version wrote no id at all, and then the
+    record is a reply of its own.
+    """
+    if record.get("type") != "assistant":
+        return None
+    message = record.get("message")
+    found = message.get("id") if isinstance(message, dict) else None
+    return _text_or_none(found) or _text_or_none(record.get("requestId")) or record_id
+
+
+def _dispatch(sidecar: bytes | None) -> str | None:
+    """The tool call that started a subagent, from the `meta.json` beside its log."""
+    if sidecar is None:
+        return None
+    meta = parse(sidecar)
+    return _text_or_none(meta.get("toolUseId")) if meta is not None else None
+
+
+def _unreadable(line: bytes, path: str, offset: int, agent_id: str | None) -> Event:
+    """A line that would not parse: counted, with whatever token counts its bytes show.
+
+    Reading numbers off an unparsed line is a guess about a record nobody can read, so
+    the counts go no further than the coverage gap every surface reports.
+    """
+    counts = dict(_UNREADABLE_COUNTS.findall(line))
+    usage = None
+    if counts:
+        usage = Usage(
+            request_id=None,
+            model=None,
+            **{
+                field: int(counts[key]) if key in counts else None
+                for field, key in _USAGE_KEYS.items()
+            },
+        )
+    return Event(
+        record_id=_derived_id(path, offset),
+        stable_id=False,
+        session_id=None,
+        parent_id=None,
+        timestamp=None,
+        record_type=UNREADABLE,
+        known_type=False,
+        agent_id=agent_id,
+        payloads=(usage,) if usage is not None else (),
+    )
 
 
 def _usage(record: dict) -> Usage | None:
@@ -183,6 +272,14 @@ def _tool_payloads(record: dict, tool_names: dict[str, str]) -> list[Payload]:
                     edit=edits_module.extract_edit(name, payload, None),
                     # The text is reported; `store/derived.py` decides whether it is kept.
                     command=edits_module.extract_command(name, payload, full=True),
+                    shell_command=(
+                        _string_or_none(payload.get("command"))
+                        if name in edits_module.COMMAND_TOOLS
+                        else None
+                    ),
+                    sends_to_agent=(
+                        _text_or_none(payload.get("to")) if name == SEND_TOOL else None
+                    ),
                 )
             )
         elif kind == "tool_result":
@@ -203,9 +300,32 @@ def _tool_payloads(record: dict, tool_names: dict[str, str]) -> list[Payload]:
                     edit=edits_module.extract_edit(tool_names.get(call_id), {}, outcome),
                     exit_code=exit_code,
                     commit_hash=commit_hash,
+                    started_agent=(
+                        _started_agent(outcome, content)
+                        if tool_names.get(call_id) in DISPATCH_TOOLS
+                        else None
+                    ),
                 )
             )
     return found
+
+
+def _started_agent(outcome: object, content: object) -> str | None:
+    """The subagent a dispatching call's result names: the structured field, else the line.
+
+    Recent versions put `agentId` on `toolUseResult`; the text of the result ends with an
+    `agentId: ...` line in versions that do not.
+    """
+    if isinstance(outcome, dict) and _text_or_none(outcome.get("agentId")):
+        return outcome["agentId"]
+    if isinstance(content, list):
+        content = " ".join(
+            block.get("text") or ""
+            for block in content
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        )
+    found = _AGENT_LINE.search(content) if isinstance(content, str) else None
+    return found.group(1) if found else None
 
 
 def _string_or_none(value: object) -> str | None:

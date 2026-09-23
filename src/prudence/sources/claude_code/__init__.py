@@ -8,7 +8,7 @@ history, not a read of the store, so it may ask this agent its own questions).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 from prudence.paths import claude_projects_dir
 from prudence.sources import base
@@ -47,14 +47,18 @@ class ClaudeCode:
     def head(self, lines: Iterable[bytes]) -> base.FileHead:
         return reader.head(lines)
 
+    def agent_logs(self, paths: Sequence[str]) -> list[base.AgentLog]:
+        return discovery.agent_logs(paths)
+
     def events(
         self,
         lines: Iterable[tuple[int, bytes]],
         path: str,
         file_session_id: str,
         agent_id: str | None,
+        sidecar: bytes | None = None,
     ) -> Iterator[base.Event]:
-        return reader.events(lines, path, file_session_id, agent_id)
+        return reader.events(lines, path, file_session_id, agent_id, sidecar)
 
 
 SOURCE = ClaudeCode()

@@ -31,7 +31,7 @@ by nothing today and so is not carried.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -97,9 +97,10 @@ class Prompt:
 class Usage:
     """What one response to the model cost, as the agent reports it.
 
-    `request_id` is the agent's own id for the response. Agents write several records
-    for one response and repeat the usage on each; the store counts the first and skips
-    the rest by this id. Any count the format does not carry is None, never zero.
+    `request_id` is the agent's own id for the request. Agents write several records
+    for one response and repeat the usage on each, and the first of them can carry a
+    partial output count; the store keeps one row per response (`Event.message_id`) with
+    the counts of its last record. Any count the format does not carry is None, never zero.
     """
 
     request_id: str | None
@@ -112,7 +113,13 @@ class Usage:
 
 @dataclass(frozen=True)
 class ToolCall:
-    """A tool the agent invoked, read from the call itself."""
+    """A tool the agent invoked, read from the call itself.
+
+    `shell_command` is the whole command of a shell call, for the bucket rule
+    (`store/buckets.py`) to read in memory; unlike `command.command_text` it is never
+    stored, which is why it is not truncated. `sends_to_agent` names the running subagent
+    a call hands more work to, whose later replies then belong to this call's turn.
+    """
 
     call_id: str
     tool_name: str | None
@@ -120,6 +127,8 @@ class ToolCall:
     input_bytes: int
     edit: EditFacts | None
     command: CommandFacts | None
+    shell_command: str | None = None
+    sends_to_agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +138,10 @@ class ToolResult:
     `error_content` is the failure as the agent wrote it, and it is here only because
     `facts.repeated_errors` counts identical failures: the store keys a digest of it and
     stores that, never the content. It is None unless the call failed.
+
+    `started_agent` is the subagent a dispatching call reports having started, the
+    fallback link from that agent's replies to the turn that asked for them when no file
+    beside the agent's log names the call (`Event.dispatch_id`).
     """
 
     call_id: str
@@ -138,6 +151,7 @@ class ToolResult:
     edit: EditFacts | None
     exit_code: int | None
     commit_hash: str | None
+    started_agent: str | None = None
 
 
 Payload = Prompt | Usage | ToolCall | ToolResult
@@ -149,6 +163,15 @@ class Event:
 
     `session_id` is the session the record declares, which for a record copied into a
     fork is the parent's. None when the format puts no session on this record at all.
+
+    `message_id` names the reply of the model this record is part of: one reply is often
+    written as several records, and they share this id. None for a record that is not
+    part of a reply (a prompt, a tool result, bookkeeping). An adapter falls back to
+    whatever id the format gives the request, then to the record's own id, so every reply
+    has one.
+
+    `dispatch_id` is set on every event of a subagent's log when the agent wrote down
+    which tool call started it: the id of that call in the parent's log.
     """
 
     record_id: str
@@ -165,7 +188,24 @@ class Event:
     prompt_id: str | None = None
     cwd: str | None = None
     entrypoint: str | None = None
+    message_id: str | None = None
+    dispatch_id: str | None = None
     payloads: tuple[Payload, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class AgentLog:
+    """One subagent's own log among a session's archived companion files.
+
+    `agent_id` is the id the agent's records and its parent's calls know it by, and
+    `sidecar` is the file the agent keeps beside its log to say who started it, when
+    there is one. Both are the adapter's reading of its own layout; the store only reads
+    the files it is pointed at.
+    """
+
+    path: str
+    agent_id: str
+    sidecar: str | None = None
 
 
 class Source(Protocol):
@@ -192,18 +232,27 @@ class Source(Protocol):
         """When and where a file's first records say the session ran."""
         ...
 
+    def agent_logs(self, paths: Sequence[str]) -> list[AgentLog]:
+        """Which of a session's archived subagent files are agent logs, in path order.
+
+        Everything else among them (a sidecar, a workflow's journal) is archived like any
+        other file and read by nothing.
+        """
+        ...
+
     def events(
         self,
         lines: Iterable[tuple[int, bytes]],
         path: str,
         file_session_id: str,
         agent_id: str | None,
+        sidecar: bytes | None = None,
     ) -> Iterator[Event]:
         """One event per record of one archived file, in file order.
 
         `lines` is (byte offset, line) as the archive stored them. `path` and
         `file_session_id` identify the file itself, for an adapter that has to derive a
         record id; `agent_id` names the subagent whose file this is, or is None for a
-        session's own transcript.
+        session's own transcript; `sidecar` is the bytes of that agent's `AgentLog.sidecar`.
         """
         ...

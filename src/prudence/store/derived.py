@@ -54,6 +54,37 @@ rather than about the build. A record type whose first record carries no timesta
 to be stamped with `datetime.now()`, so two rebuilds of one archive disagreed on that
 column and the promise that every derived table is reproducible was quietly broken. It
 now falls back to when Prudence first stored the file the record sits in.
+
+Parser version 6 added the `response` table, one row per reply of the model with the
+bucket `store/buckets.py` gives it, and fixed five links it depends on, all found on the
+founder's store on 2026-09-22:
+
+1. **A record without a prompt id belongs to the turn the last prompt opened.** Only the
+   person's prompts carry the turn's id, so every assistant record fell to
+   `<session>:0` and 135 of 2,538 turns had a tool call by that link. `_turn_id` now
+   carries the open turn forward through the session's own transcript.
+2. **A reply's tokens are those of its last record.** One reply is written as several
+   records, and in a subagent's log the first carries a partial output count (3.8M
+   recorded against 17.1M real). `usage` keeps one row per reply and overwrites its
+   counts with each later record's.
+3. **A subagent's replies belong to the turn that dispatched it.** The subagent's own
+   records carry the parent's prompt id at the time they were written, which moves on
+   when the person types again while an agent runs (3,445 replies, 544M tokens, landed
+   on a later turn). The link is now the dispatching call: named by the file beside the
+   agent's log when there is one, else by the agent id the call's result reports, and
+   moved to a later turn by a call that hands the running agent more work. The agent's
+   own prompt id is only the fallback. Resolved in `_AgentTurns` once every file of the
+   session has been read, because the call and the reply are in different files.
+4. **A reply is counted once, by the session that declared it first.** Records carry
+   the reply's id as well as their own, so a copy that got new record ids is still
+   recognised as the same reply and skipped like any replayed record.
+5. **A turn's tokens are the sum of the replies in it.** Nothing attaches usage to a
+   turn by time any more: `response.turn_id` and `usage.turn_id` are the links above.
+
+The same version stopped reading a subagent's sidecar (`agent-<id>.meta.json`) and a
+workflow's journal as if they were transcripts, which put 2,634 records of type
+`unknown`, `started` and `result` into `record` and `unknown_record_type`: the adapter
+now says which companion files are agent logs (`Source.agent_logs`).
 """
 
 from __future__ import annotations
@@ -68,13 +99,14 @@ from dataclasses import dataclass, field
 
 from prudence import sources
 from prudence.sources import base
-from prudence.store import archive, repos
+from prudence.store import archive, buckets, repos
 from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
 from prudence.store import progress as progress_module
+from prudence.store.agent_turns import AgentTurns, Call, Link
 
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 
 TABLES = (
     "session",
@@ -85,6 +117,7 @@ TABLES = (
     "edit_line",
     "command",
     "usage",
+    "response",
     "unknown_record_type",
 )
 
@@ -189,6 +222,29 @@ SCHEMA = {
             cache_creation_tokens INTEGER,
             parser_version INTEGER NOT NULL
         )""",
+    "response": """
+        CREATE TABLE {name}(
+            response_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            turn_id TEXT,
+            agent_id TEXT,
+            started_at TEXT,
+            bucket TEXT,
+            bucket_rule_version INTEGER NOT NULL,
+            heuristic INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cache_read_tokens INTEGER,
+            cache_creation_tokens INTEGER,
+            tool_calls INTEGER NOT NULL DEFAULT 0,
+            change_calls INTEGER NOT NULL DEFAULT 0,
+            run_calls INTEGER NOT NULL DEFAULT 0,
+            read_calls INTEGER NOT NULL DEFAULT 0,
+            talk_calls INTEGER NOT NULL DEFAULT 0,
+            files_changed INTEGER NOT NULL DEFAULT 0,
+            commands INTEGER NOT NULL DEFAULT 0,
+            parser_version INTEGER NOT NULL
+        )""",
     "unknown_record_type": """
         CREATE TABLE {name}(
             type TEXT NOT NULL,
@@ -213,6 +269,8 @@ INDEXES = (
     "CREATE INDEX IF NOT EXISTS command_commit ON command(commit_hash)",
     "CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)",
     "CREATE INDEX IF NOT EXISTS usage_model ON usage(model)",
+    "CREATE INDEX IF NOT EXISTS response_session ON response(session_id)",
+    "CREATE INDEX IF NOT EXISTS response_turn ON response(turn_id)",
 )
 
 
@@ -227,6 +285,7 @@ class BuildStats:
     commands: int = 0
     usage_rows: int = 0
     usage_tokens: int = 0
+    responses: int = 0
     unknown_types: int = 0
     replayed_records: int = 0
     unassigned_sessions: int = 0
@@ -242,6 +301,7 @@ class _ToolCall:
     session_id: str
     record_id: str | None = None
     turn_id: str | None = None
+    link: Link | None = None
     tool_name: str | None = None
     started_at: str | None = None
     file_path: str | None = None
@@ -251,6 +311,29 @@ class _ToolCall:
     error_hash: str | None = None
     edit: edits_module.EditFacts | None = None
     command: edits_module.CommandFacts | None = None
+
+
+@dataclass
+class _Reply:
+    """One reply of the model, from every record that carries its id.
+
+    `usage` is the last record's, because the first can carry a partial output count.
+    `kinds` holds each tool call's bucket and whether the bucket is only a guess. A reply
+    whose record could not be read at all has no tool calls to judge by and is a gap:
+    its tokens are counted and it has no bucket.
+    """
+
+    session_id: str
+    turn_id: str | None
+    link: Link | None
+    agent_id: str | None
+    started_at: str | None
+    gap: bool = False
+    usage: base.Usage | None = None
+    usage_record: str | None = None  # the first record that reported the usage
+    kinds: list[tuple[str, bool]] = field(default_factory=list)
+    files: set[str] = field(default_factory=set)
+    commands: int = 0
 
 
 @dataclass
@@ -271,11 +354,19 @@ class _Session:
     forked_from: str | None = None
     fork_point: str | None = None
     ordinal: int = 0
+    current_turn: str | None = None
     records: list[tuple] = field(default_factory=list)
     turns: dict[str, list] = field(default_factory=dict)
     tool_calls: dict[str, _ToolCall] = field(default_factory=dict)
-    usage: list[tuple] = field(default_factory=list)
-    request_ids: set[str] = field(default_factory=set)
+    replies: dict[str, _Reply] = field(default_factory=dict)
+    # Subagent id -> the call that started it, from the file beside the agent's log and,
+    # as the fallback, from the agent id the call's result reports.
+    dispatched_by_sidecar: dict[str, str] = field(default_factory=dict)
+    dispatched_by_result: dict[str, str] = field(default_factory=dict)
+    # Subagent id -> the calls that handed it more work while it ran.
+    sends: dict[str, list[str]] = field(default_factory=dict)
+    # Subagent id -> the last prompt id its own log carried.
+    agent_prompts: dict[str, str] = field(default_factory=dict)
 
 
 def build(
@@ -295,10 +386,11 @@ def build(
     seen_records: set[str] = set()
     unknown: dict[tuple[str, str | None], list] = {}
     transcripts = _transcripts_in_order(connection, adapter)
-    own_files = {_session_id(row) for row, _ in transcripts}
-    # Sessions with no file of their own, known only from the copy a fork carries. They
-    # outlive the loop because two forks of one deleted parent each carry part of it.
-    orphans: dict[str, _Session] = {}
+    # Sessions with no file of their own, known only from the copy a fork carries, live in
+    # `orphans`; they outlive the loop because two forks of one deleted parent each carry
+    # part of it.
+    ownership = _Ownership({_session_id(row) for row, _ in transcripts}, {}, {})
+    orphans = ownership.orphans
 
     progress.start(len(transcripts), "sessions")
     for row, head in transcripts:
@@ -314,13 +406,13 @@ def build(
             capture_level=levels.get(repo_key, "full"),
             mapping_method=match.method,
         )
-        for archived in _files_of(connection, row):
+        for archived in _files_of(connection, adapter, row):
             _read_file(
                 connection,
                 adapter,
                 archived,
                 session,
-                _Ownership(own_files, orphans),
+                ownership,
                 seen_records,
                 unknown,
                 key,
@@ -354,18 +446,28 @@ class _File:
     path: str
     agent_id: str | None  # the subagent whose file this is; None for the session's own
     archived_at: str  # `archive_file.first_seen`: when Prudence first stored these bytes
+    sidecar: str | None = None  # the archived file beside a subagent's log, if any
 
 
-def _files_of(connection: sqlite3.Connection, row: sqlite3.Row) -> list[_File]:
-    """A session's own file first, then each subagent file with the agent id it carries."""
-    files = [_File(row["path"], None, row["first_seen"])]
-    files += [
-        _File(sub["path"], sub["path"].rsplit("/", 1)[-1].rsplit(".", 1)[0], sub["first_seen"])
+def _files_of(
+    connection: sqlite3.Connection, adapter: base.Source, row: sqlite3.Row
+) -> list[_File]:
+    """A session's own file first, then each subagent log the adapter recognises.
+
+    Which of the archived subagent files are logs, and which agent each belongs to, is
+    the adapter's reading of its own layout; the rest of them are archived and not read.
+    """
+    stored = {
+        sub["path"]: sub["first_seen"]
         for sub in connection.execute(
-            "SELECT path, first_seen FROM archive_file WHERE session_id = ? AND source = ?"
-            " ORDER BY path",
+            "SELECT path, first_seen FROM archive_file WHERE session_id = ? AND source = ?",
             (row["session_id"], base.SUBAGENT),
         )
+    }
+    files = [_File(row["path"], None, row["first_seen"])]
+    files += [
+        _File(log.path, log.agent_id, stored[log.path], log.sidecar)
+        for log in adapter.agent_logs(sorted(stored))
     ]
     return files
 
@@ -411,11 +513,14 @@ class _Ownership:
     """What the ownership rule needs to know beyond the file it is reading.
 
     `own_files` is every session that has a transcript of its own in the archive;
-    `orphans` collects the sessions that do not, built from the copy a fork carries.
+    `orphans` collects the sessions that do not, built from the copy a fork carries;
+    `replies` names the session that claimed each reply id first, so a copy of a reply
+    under new record ids is recognised as the same reply.
     """
 
     own_files: set[str]
     orphans: dict[str, _Session]
+    replies: dict[str, str]
 
 
 def _read_file(
@@ -445,7 +550,10 @@ def _read_file(
     """
     declared = session.session_id
     lines = archive.iter_lines(connection, archived.path)
-    for event in adapter.events(lines, archived.path, session.session_id, archived.agent_id):
+    sidecar = archive.read_file(connection, archived.sidecar) if archived.sidecar else None
+    for event in adapter.events(
+        lines, archived.path, session.session_id, archived.agent_id, sidecar
+    ):
         if not event.known_type:
             entry = unknown.setdefault((event.record_type, event.source_version), [0, None])
             entry[0] += 1
@@ -479,19 +587,32 @@ def _read_file(
                     mapping_method=session.mapping_method,
                 ),
             )
-        if event.record_id in seen_records:
+        if event.record_id in seen_records or _replayed_reply(event, owner, ownership):
             # The second ownership rule: a record two sessions each claim as their own
             # stays with the one that claimed it first, and the files are read oldest
             # first (`_transcripts_in_order`), so that is the session that began earlier.
+            # A copied reply is recognised by its reply id too, whatever its record id.
             session.replayed += 1
             session.resumed = True
             continue
         seen_records.add(event.record_id)
-        _fold_event(owner, event, key)
+        _fold_event(owner, event, key, archived.agent_id)
 
 
-def _fold_event(session: _Session, event: base.Event, key: bytes) -> None:
-    """One record: its own row, its turn, and whatever payloads it carried."""
+def _replayed_reply(event: base.Event, owner: _Session, ownership: _Ownership) -> bool:
+    """Whether this record is part of a reply another session already claimed."""
+    if event.message_id is None:
+        return False
+    return ownership.replies.setdefault(event.message_id, owner.session_id) != owner.session_id
+
+
+def _fold_event(session: _Session, event: base.Event, key: bytes, agent: str | None) -> None:
+    """One record: its own row, its turn, its reply, and whatever payloads it carried.
+
+    `agent` names the subagent whose log the record was read from, None for the
+    session's own transcript. A subagent's record gets its turn later (`Link`), when
+    the call that dispatched the agent can be looked up in whichever file it is in.
+    """
     stamp = event.timestamp
     if stamp:
         if session.first_at is None or stamp < session.first_at:
@@ -503,7 +624,6 @@ def _fold_event(session: _Session, event: base.Event, key: bytes) -> None:
     if session.cwd is None and event.cwd is not None:
         session.cwd = event.cwd
 
-    turn_id = _turn_id(event, session)
     session.record_count += 1
     session.records.append(
         (
@@ -519,22 +639,46 @@ def _fold_event(session: _Session, event: base.Event, key: bytes) -> None:
             PARSER_VERSION,
         )
     )
-    _note_turn(session, turn_id, stamp, event)
+    turn_id: str | None = None
+    link: Link | None = None
+    if agent is None:
+        turn_id = _turn_id(event, session)
+        _note_turn(session, turn_id, stamp, event)
+    else:
+        # Only some of an agent's records carry a prompt id; the rest are in the same
+        # turn as the last one that did, which is the fallback link.
+        if event.prompt_id is not None:
+            session.agent_prompts[agent] = event.prompt_id
+        link = Link(agent, stamp, session.agent_prompts.get(agent))
+        if event.dispatch_id is not None:
+            session.dispatched_by_sidecar[agent] = event.dispatch_id
+    reply = _reply_of(session, event, turn_id, link)
     for payload in event.payloads:
         if isinstance(payload, base.Usage):
-            _note_usage(session, turn_id, event.record_id, payload)
+            if reply is not None:
+                reply.usage = payload
+                reply.usage_record = reply.usage_record or event.record_id
         elif isinstance(payload, base.ToolCall):
-            _note_call(session, turn_id, event.record_id, stamp, payload)
+            _note_call(session, turn_id, link, event.record_id, stamp, payload)
+            if reply is not None:
+                _note_reply_call(reply, payload)
         elif isinstance(payload, base.ToolResult):
             _note_result(session, payload, key)
 
 
 def _turn_id(event: base.Event, session: _Session) -> str:
+    """The turn a record of the session's own transcript belongs to.
+
+    A record carrying a prompt id opens or continues that turn; a prompt without one (an
+    old format) opens the next numbered turn; every other record belongs to the turn open
+    when it was written. Records before the first prompt belong to `<session>:0`.
+    """
     if event.prompt_id is not None:
-        return event.prompt_id
-    if any(isinstance(payload, base.Prompt) for payload in event.payloads):
+        session.current_turn = event.prompt_id
+    elif any(isinstance(payload, base.Prompt) for payload in event.payloads):
         session.ordinal += 1
-    return f"{session.session_id}:{session.ordinal}"
+        session.current_turn = f"{session.session_id}:{session.ordinal}"
+    return session.current_turn or f"{session.session_id}:0"
 
 
 def _note_turn(session: _Session, turn_id: str, stamp: str | None, event: base.Event) -> None:
@@ -549,42 +693,60 @@ def _note_turn(session: _Session, turn_id: str, stamp: str | None, event: base.E
             turn[2] += payload.chars
 
 
-def _note_usage(session: _Session, turn_id: str, record_id: str, usage: base.Usage) -> None:
-    """What one API response cost, counted once however many records reported it.
+def _reply_of(
+    session: _Session, event: base.Event, turn_id: str | None, link: Link | None
+) -> _Reply | None:
+    """The reply this record is part of, opened by its first record.
 
-    An agent writes several records for one response (a text block and a tool call each
-    get their own) and repeats the same usage on all of them under one request id, so
-    the first record of a request is counted and the rest are skipped; on the founder's
-    store that is 157,868 records for 71,763 responses, so counting records would
-    inflate the total by more than half.
+    A record with no reply id is not part of a reply, unless it carries usage: that is a
+    record the adapter could not read, and it becomes a reply of its own with no bucket,
+    so its tokens are counted as a coverage gap rather than lost.
     """
-    if usage.request_id is not None:
-        if usage.request_id in session.request_ids:
-            return
-        session.request_ids.add(usage.request_id)
-    session.usage.append(
-        (
-            record_id,
-            session.session_id,
-            turn_id,
-            usage.request_id,
-            usage.model,
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_creation_tokens,
-            PARSER_VERSION,
+    reply_id = event.message_id
+    gap = reply_id is None
+    if gap:
+        if not any(isinstance(payload, base.Usage) for payload in event.payloads):
+            return None
+        reply_id = event.record_id
+    reply = session.replies.get(reply_id)
+    if reply is None:
+        reply = _Reply(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            link=link,
+            agent_id=link.agent_id if link else None,
+            started_at=event.timestamp,
+            gap=gap,
         )
-    )
+        session.replies[reply_id] = reply
+    return reply
+
+
+def _note_reply_call(reply: _Reply, call: base.ToolCall) -> None:
+    """One tool call's part in its reply's bucket, and the two counts beside it."""
+    kind = buckets.call_kind(call.tool_name, call.shell_command)
+    reply.kinds.append(kind)
+    if kind[0] == buckets.CHANGE and call.file_path:
+        reply.files.add(call.file_path)
+    if call.shell_command is not None:
+        reply.commands += 1
 
 
 def _note_call(
-    session: _Session, turn_id: str, record_id: str, stamp: str | None, call: base.ToolCall
+    session: _Session,
+    turn_id: str | None,
+    link: Link | None,
+    record_id: str,
+    stamp: str | None,
+    call: base.ToolCall,
 ) -> None:
     """A tool the agent invoked, waiting for the result that arrives records later."""
     held = session.tool_calls.setdefault(call.call_id, _ToolCall(session.session_id))
     held.record_id = record_id
     held.turn_id = turn_id
+    held.link = link
+    if call.sends_to_agent is not None:
+        session.sends.setdefault(call.sends_to_agent, []).append(call.call_id)
     held.tool_name = call.tool_name
     held.started_at = stamp
     held.file_path = call.file_path
@@ -602,6 +764,8 @@ def _note_result(session: _Session, result: base.ToolResult, key: bytes) -> None
     wins over the input's, with anything it leaves out filled in from the call.
     """
     held = session.tool_calls.setdefault(result.call_id, _ToolCall(session.session_id))
+    if result.started_agent is not None:
+        session.dispatched_by_result.setdefault(result.started_agent, result.call_id)
     held.is_error = 1 if result.is_error else 0
     held.result_bytes = result.result_bytes
     if session.capture_level == "full" and result.error_content is not None:
@@ -645,6 +809,7 @@ def _flush_session(
         notes.append(f"replayed {session.replayed} records")
     if session.mapping_method != "cwd":
         notes.append(f"repository by {session.mapping_method}")
+    _resolve_agent_turns(session)
     connection.executemany(
         "INSERT OR IGNORE INTO record__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         session.records,
@@ -679,11 +844,7 @@ def _flush_session(
         ],
     )
     stats.tool_calls += len(session.tool_calls)
-    connection.executemany(
-        "INSERT OR REPLACE INTO usage__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", session.usage
-    )
-    stats.usage_rows += len(session.usage)
-    stats.usage_tokens += sum(sum(value or 0 for value in row[5:9]) for row in session.usage)
+    _flush_replies(connection, session, stats)
     _flush_edits(connection, session, stats, resolver, key)
     _flush_commands(connection, session, stats)
     connection.execute(
@@ -707,6 +868,99 @@ def _flush_session(
     )
     stats.sessions += 1
     stats.replayed_records += session.replayed
+
+
+def _resolve_agent_turns(session: _Session) -> None:
+    """Give every subagent record's call and reply the turn of the call that started it.
+
+    Done once the session's every file is read, because the dispatching call is in the
+    parent's transcript (or another agent's log) and the replies are in the agent's own.
+    """
+    turns = AgentTurns(
+        {
+            call_id: Call(call.started_at, call.turn_id, call.link)
+            for call_id, call in session.tool_calls.items()
+        },
+        session.dispatched_by_sidecar,
+        session.dispatched_by_result,
+        session.sends,
+    )
+    for call in session.tool_calls.values():
+        if call.link is not None:
+            call.turn_id = turns.turn_of(call.link)
+    for reply in session.replies.values():
+        if reply.link is not None:
+            reply.turn_id = turns.turn_of(reply.link)
+
+
+def _flush_replies(connection: sqlite3.Connection, session: _Session, stats: BuildStats) -> None:
+    """One `usage` row and one `response` row per reply of the model.
+
+    `usage` keeps its shape (the first record that reported the usage names the row) but
+    now holds the reply's final counts; `response` adds the bucket, the turn and the
+    counts of calls by kind. A reply with no usage at all (a format that wrote none) has
+    no `usage` row and NULL tokens on its `response` row, which is not zero.
+    """
+    usage_rows: list[tuple] = []
+    response_rows: list[tuple] = []
+    for reply_id, reply in sorted(session.replies.items()):
+        usage = reply.usage
+        counts = (
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_creation_tokens,
+            )
+            if usage is not None
+            else (None, None, None, None)
+        )
+        if usage is not None:
+            usage_rows.append(
+                (
+                    reply.usage_record,
+                    session.session_id,
+                    reply.turn_id,
+                    usage.request_id,
+                    usage.model,
+                    *counts,
+                    PARSER_VERSION,
+                )
+            )
+        if reply.gap:
+            bucket, guessed = None, False
+        else:
+            bucket, guessed = buckets.bucket_of(reply.kinds)
+        by_kind = Counter(kind for kind, _ in reply.kinds)
+        response_rows.append(
+            (
+                reply_id,
+                session.session_id,
+                reply.turn_id,
+                reply.agent_id,
+                reply.started_at,
+                bucket,
+                buckets.BUCKET_RULE_VERSION,
+                1 if guessed else 0,
+                *counts,
+                len(reply.kinds),
+                *(by_kind[name] for name in buckets.BUCKETS),
+                len(reply.files),
+                reply.commands,
+                PARSER_VERSION,
+            )
+        )
+    connection.executemany(
+        "INSERT OR REPLACE INTO usage__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", usage_rows
+    )
+    connection.executemany(
+        "INSERT OR REPLACE INTO response__new VALUES"
+        " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        response_rows,
+    )
+    stats.usage_rows += len(usage_rows)
+    stats.usage_tokens += sum(sum(value or 0 for value in row[5:9]) for row in usage_rows)
+    stats.responses += len(response_rows)
 
 
 def _flush_edits(

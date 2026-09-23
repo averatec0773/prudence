@@ -3,6 +3,7 @@ the CLI that read what they produce."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -150,12 +151,18 @@ def test_rebuild_reproduces_session_label(lab: Workspace) -> None:
     assert _labels() == before
 
 
-def test_sessions_and_show_print_the_purpose_as_a_label(lab: Workspace) -> None:
+def test_sessions_print_the_bucket_mix_and_show_keeps_the_purpose(lab: Workspace) -> None:
+    """The purpose label stays in the store for one release; the list prints the mix."""
     record_one_session(lab)
     listed = CliRunner().invoke(main, ["sessions", "--last", "90d"])
     assert listed.exit_code == 0, listed.output
-    assert "purpose" in listed.output and "development" in listed.output
+    assert "chg/run/rd/tlk" in listed.output
+    assert "development" not in listed.output, "the purpose word is off the table"
     assert "not from reading the conversation" in listed.output.replace("\n", " ")
+    as_json = json.loads(CliRunner().invoke(main, ["sessions", "--last", "90d", "--json"]).output)
+    row = as_json["sessions"][0]
+    assert row["purpose"] == "development", "kept in --json for comparison"
+    assert row["bucket_shares"] is None, "the sample session's records carry no usage"
 
     shown = CliRunner().invoke(main, ["show", "--session", SAMPLE_SESSION[:8]])
     assert shown.exit_code == 0, shown.output
@@ -163,21 +170,22 @@ def test_sessions_and_show_print_the_purpose_as_a_label(lab: Workspace) -> None:
     assert "rule version 1" in shown.output
 
 
-def test_usage_renders_tokens_and_hours_by_purpose_project_and_week(lab: Workspace) -> None:
+def test_usage_renders_tokens_by_bucket_project_and_week(lab: Workspace) -> None:
     record_one_session(lab)
     result = CliRunner().invoke(main, ["usage", "--last", "90d"])
     assert result.exit_code == 0, result.output
     output = result.output
-    assert "tokens and active hours by purpose" in output
-    for column in ("input", "output", "cache rd", "cache wr", "share", "active h"):
+    assert "tokens by what each response did" in output
+    for column in ("input", "output", "cache rd", "cache wr", "share", "responses"):
         assert column in output, column
     assert "by project" in output and "by week" in output
     assert "alpha" in output, "the project is named in the second table"
     assert "2026-W" in output, "the week table carries an ISO week"
-    assert "development" in output
+    assert "change" in output and "run" in output, "a Write and a git commit"
+    assert "development" not in output
     flat = output.replace("\n", " ")
-    assert "purpose rule version 1" in flat
-    assert "Nothing in the conversation is read to produce it." in flat
+    assert "bucket rule version 1" in flat
+    assert "Nothing in the conversation is read." in flat
 
 
 def test_usage_accepts_a_project_and_says_when_a_window_is_empty(lab: Workspace) -> None:
@@ -188,15 +196,17 @@ def test_usage_accepts_a_project_and_says_when_a_window_is_empty(lab: Workspace)
 
     empty = CliRunner().invoke(main, ["usage", "--last", "1h"])
     assert empty.exit_code == 0, empty.output
-    assert "No session in the last 1h." in empty.output
+    assert "No response of the model in the last 1h." in empty.output
 
 
-def test_status_prints_the_purpose_distribution_with_its_rule_version(lab: Workspace) -> None:
+def test_status_prints_the_bucket_rule_version_and_the_coverage_gap(lab: Workspace) -> None:
     record_one_session(lab)
     result = CliRunner().invoke(main, ["status"])
     assert result.exit_code == 0, result.output
-    assert "purpose: 1 development" in result.output
-    assert "rule version 1" in result.output
+    assert "buckets: no token counts recorded over 2 responses" in result.output
+    assert "bucket rule version 1" in result.output
+    assert "coverage gap: 0 tokens" in result.output
+    assert "purpose:" not in result.output, "the label is stored, no longer printed"
 
 
 def test_classify_with_a_model_says_it_is_not_implemented(lab: Workspace) -> None:

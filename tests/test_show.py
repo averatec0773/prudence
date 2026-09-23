@@ -24,7 +24,7 @@ def test_show_lists_every_fact_group_with_its_version(lab: Workspace) -> None:
         "archive files",
     ):
         assert group in output, group
-    assert "parser version 5" in output, "each group names the version that produced it"
+    assert "parser version 6" in output, "each group names the version that produced it"
     assert "trust high" in output and "trust medium" in output
 
     assert "capture level        full" in output

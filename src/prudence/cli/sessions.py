@@ -16,9 +16,10 @@ what a Claude Code version older than the usage fields leaves behind; it is not 
 Sittings, not sessions, are how long someone actually sat there: a Desktop session can
 stay open for days, so a gap of more than an hour is counted as a new sitting.
 
-The purpose column is a label, not a measurement: rules over the session's tool mix
-(`facts/purpose.py`), never a reading of the conversation. It is printed as one word
-with no share and no rank beside it, because that is all it is.
+The mix column is where the session's tokens went by what each response did, as four
+whole percentages in the order change/run/read/talk (`store/buckets.py`): rules over each
+response's tool calls, never a reading of the conversation. It replaced the one-word
+purpose label, which `--json` still carries for this release so the two can be compared.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ import click
 from prudence import config as config_module
 from prudence.cli.render import thousands
 from prudence.paths import database_file
-from prudence.store import db, views
+from prudence.store import buckets, db, views
 
 SITTING_GAP = timedelta(minutes=60)
 DEFAULT_WINDOW = "7d"
@@ -104,6 +105,7 @@ def summary(
     tokens = views.usage_map(connection, ids)
     fates = views.outcomes_map(connection, ids)
     purposes = views.purpose_map(connection, ids)
+    mixes = views.bucket_shares_map(connection, ids)
 
     listed = []
     for row in rows:
@@ -117,6 +119,7 @@ def summary(
                 "project": names.get(row["repo_key"], row["repo_key"] or "unassigned"),
                 "started_at": row["first_at"],
                 "purpose": purposes.get(session_id),
+                "bucket_shares": mixes.get(session_id),
                 "sittings": sittings.get(session_id, 1),
                 "prompts": turns.get(session_id, 0),
                 "edits": edits.get(session_id, 0),
@@ -141,7 +144,7 @@ def render(data: dict[str, Any]) -> str:
     if not data["sessions"]:
         return f"No session in the last {data['window']}."
     lines = [
-        f"{'session':<10} {'repository':<20} {'started':<16} {'purpose':<13} {'sit':>4} "
+        f"{'session':<10} {'repository':<20} {'started':<16} {'chg/run/rd/tlk':<14} {'sit':>4} "
         f"{'prompts':>8} {'edits':>6} {'bash':>5} {'tokens':>7} {'commits':>13} "
         f"{'coverage':>9} {'alive 30d':>10}  notes"
     ]
@@ -149,7 +152,7 @@ def render(data: dict[str, Any]) -> str:
         lines.append(
             f"{cell['session_id'][:8]:<10} {cell['project'][:20]:<20} "
             f"{(cell['started_at'] or '')[:16]:<16} "
-            f"{(cell['purpose'] or '-'):<13} "
+            f"{_mix(cell['bucket_shares']):<14} "
             f"{cell['sittings']:>4} {cell['prompts']:>8} "
             f"{cell['edits']:>6} {cell['commands']:>5} "
             f"{thousands(cell['tokens']):>7} {_commits(cell):>13} "
@@ -170,8 +173,10 @@ def _footer(count: int, window: str) -> list[str]:
         "Alive 30d is the share of the session's counted lines still in the same file "
         "thirty days after the commit; a dash means that mark has not happened yet. "
         "`prudence outcomes` prints the rest.",
-        "Purpose is a label from rules over the session's tool mix, not from reading the "
-        "conversation; `prudence usage` groups the tokens and the hours by it.",
+        "chg/run/rd/tlk is the share of the session's tokens in responses that changed a "
+        "file, ran something, only read, or did neither, from each response's tool calls "
+        "and not from reading the conversation; `prudence usage` sums them by project and "
+        "week.",
     ]
 
 
@@ -251,6 +256,13 @@ def _notes(cell: dict[str, Any]) -> str:
     if cell["capture_level"] and cell["capture_level"] != "full":
         notes.insert(0, cell["capture_level"])
     return "; ".join(notes)
+
+
+def _mix(shares: dict[str, float] | None) -> str:
+    """`23/33/27/17`: whole percentages of change, run, read and talk. A dash: no tokens."""
+    if shares is None:
+        return "-"
+    return "/".join(f"{shares[bucket] * 100:.0f}" for bucket in buckets.BUCKETS)
 
 
 def _percent(value: float | None) -> str:

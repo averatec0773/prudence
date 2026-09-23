@@ -181,10 +181,11 @@ def test_a_forks_turns_are_its_own_and_the_parent_keeps_all_of_its(lab: Workspac
     by_session: dict[str, set[str]] = {}
     for session_id, turn_id in turns:
         by_session.setdefault(session_id, set()).add(turn_id)
-    # A record carrying no `promptId` lands in the session's `<id>:<ordinal>` turn, which
-    # is the ordinal rule and not what this test is about: the snapshot record is the one.
-    assert by_session[PARENT] == {"turn-1", "turn-2", "turn-3", f"{PARENT}:0"}
-    assert by_session[FORK] == {"turn-f1", f"{FORK}:0"}, "the copied turns belong to the parent"
+    # A record carrying no `promptId` belongs to the turn open when it was written, and to
+    # `<id>:0` only before the session's first prompt (parser version 6), so the snapshot
+    # record no longer makes a turn of its own.
+    assert by_session[PARENT] == {"turn-1", "turn-2", "turn-3"}
+    assert by_session[FORK] == {"turn-f1"}, "the copied turns belong to the parent"
     counts = dict(_rows("SELECT session_id, record_count FROM session"))
     assert counts[PARENT] == 7, "five of its own history plus the two it wrote afterwards"
     assert counts[FORK] == 3, "only the records it added"

@@ -171,7 +171,7 @@ def test_a_written_date_is_local_midnight_and_the_stamp_is_utc() -> None:
     window = ranges.resolve(None, since="2026-09-08", until="2026-09-15", now=NOW)
     assert window.start == _local("2026-09-08")
     assert ranges.parse(window.start).tzinfo == UTC
-    # The same instant `app_usage_by_purpose_day` calls the start of that local day.
+    # The same instant `app_usage_by_bucket_day` calls the start of that local day.
     assert (
         datetime.fromisoformat(window.start)
         .replace(tzinfo=UTC)

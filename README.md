@@ -49,7 +49,7 @@ Every session with your agents feeds the next one.
 ```
 
 - **Understand the code they wrote.** `prudence ask` answers a question about your own work from your own sessions and cites them; a review says what each period's sessions did and what they were asked for. Reading the agent's work back to you is the roadmap's second promise, and this is where it starts.
-- **See where the time and tokens went, and what became of the code.** Tokens and active hours by purpose per session; every line followed through git: alive at 7, 30 and 90 days, reworked by your own later commits, with the coverage behind every number.
+- **See where the time and tokens went, and what became of the code.** Tokens by what each response of the model did; every line followed through git: alive at 7, 30 and 90 days, reworked by your own later commits, with the coverage behind every number.
 - **Learn which ways of working pay off.** Your sessions with a behaviour against your sessions without it, inside one project, reported only when your own data clears a sample floor and a gap floor.
 - **Hand it back to your agents for the next round.** A review each period says what changed and what to try, and the next review says whether it helped; the Claude Code plugin and the MCP server put the record in front of the agent in its next session.
 - **Keep the record as your own.** Every session archived on your machine, byte for byte, with `show`, `forget` and `export` for all of it; no vendor holds it.
@@ -59,7 +59,7 @@ Every session with your agents feeds the next one.
 - **Ask.** `prudence ask "why do my refactors on this project keep getting reverted"` answers from retrieved evidence and cites session ids.
 - **Reviews.** `prudence review` turns a period into a stored review whose every figure is computed; an optional model-written paragraph on top may only quote those figures and is refused if it invents one or grades you.
 - **Outcomes, not impressions.** For each session: lines still alive at 7, 30 and 90 days, lines reworked by your own later commits, with the coverage and the attribution method behind every number.
-- **Usage by purpose.** Tokens and active hours per session, classified into development, research, debugging, conversation, so a session that produced no code stops looking like a gap.
+- **Usage by what was done.** Every response of the model lands in one of four buckets, from its tool calls alone: it changed a file, ran something, only read, or just talked. Tokens are summed by project and by week, so a session that produced no code shows what it spent its tokens on instead of looking like a gap. No text is read and no threshold is involved, so the same history always gives the same split.
 - **Observations.** Your sessions with a behaviour against your sessions without it, inside one project: "your 16 sessions that compacted their context reworked 28% of their lines; the 33 that did not, 6%." Reported only when your own data clears a sample floor and a gap floor.
 - **Three surfaces.** The CLI, a Claude Code plugin with skills and an MCP server, and a desktop menu-bar app with charts: one codebase, macOS today, Windows to follow.
 - **A record you own.** Every session archived locally, byte for byte, with `show`, `forget` and `export` for all of it.
@@ -101,7 +101,7 @@ prudence init --enable <repo> --level full
 prudence ingest                           # read what the agent recorded; first run prints a "first look"
 prudence sessions --last 30d
 prudence outcomes --project <repo>        # what became of each session's lines
-prudence usage --last 30d                 # tokens and hours by purpose
+prudence usage --last 30d                 # tokens by change, run, read and talk
 prudence observations --project <repo>   # your behaviours against your own outcomes
 prudence review --project <repo>          # a stored review of the period since the last one
 prudence review --explain                 # plus a model-written paragraph, checked against the numbers

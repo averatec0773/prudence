@@ -20,8 +20,8 @@ whose mark passed two months ago was already answered by an earlier review.
 in conflict: a date the user writes or names (`--month 2026-09`, `--since 2026-09-08`) is
 read as local midnight and immediately converted to UTC, so the boundary lands where
 their own day begins and the stamp on the row is still the UTC string every other table
-sorts by. This is the one date convention in the codebase: `app_usage_by_purpose_day`
-buckets a session on `date(first_at, 'localtime')` for exactly the same reason, and a
+sorts by. This is the one date convention in the codebase: `app_usage_by_bucket_day`
+puts a response on `date(started_at, 'localtime')` for exactly the same reason, and a
 review of September now covers precisely the days that view calls September. Before M3's
 third batch this module read those dates as UTC, which put a review's edges up to a
 working day away from the chart's.

@@ -21,7 +21,7 @@ from conftest import SAMPLE_SESSION, Workspace, record_one_session
 
 from prudence import config as config_module
 from prudence.cli import main
-from prudence.store import app_views, db, meta, pipeline, views
+from prudence.store import app_views, buckets, db, meta, pipeline, views
 from prudence.store import observations as observations_module
 
 
@@ -53,46 +53,92 @@ def test_app_status_is_one_row_naming_every_version_behind_it(lab: Workspace) ->
     assert row["last_ingest_at"], "the archive knows when it last saw a file"
     for column in ("parser_version", "commit_fact_version", "outcome_fact_version"):
         assert row[column] >= 1, column
+    assert row["bucket_rule_version"] == buckets.BUCKET_RULE_VERSION
+    assert row["coverage_gap_tokens"] == 0, "every reply of the sample session was read"
 
 
-def test_the_usage_view_totals_agree_with_usage_totals(lab: Workspace) -> None:
-    """Same tokens, same active time, same session count as the functions the CLI uses."""
+def test_the_bucket_view_totals_agree_with_the_response_table(lab: Workspace) -> None:
+    """Contract 4: the same tokens, per bucket, as `views.bucket_usage` sums for the CLI."""
     record_one_session(lab)
     connection = db.connect()
     try:
         repo_key = lab.repo_key()
-        _usage_session(connection, "synthetic-a", repo_key, "2026-09-10T09:00:00", "development")
-        _usage_session(connection, "synthetic-b", repo_key, "2026-09-11T09:00:00", "research")
+        _usage_session(connection, "synthetic-a", repo_key, "2026-09-10T09:00:00", "change")
+        _usage_session(connection, "synthetic-b", repo_key, "2026-09-11T09:00:00", "read")
+        _usage_session(connection, "synthetic-c", repo_key, "2026-09-11T10:00:00", None)
 
-        expected = views.usage_totals(connection)
-        ids = [row["session_id"] for row in connection.execute("SELECT session_id FROM session")]
-        active = views.active_seconds_map(connection, ids)
+        expected = views.bucket_usage(connection, "2000-01-01")
         row = connection.execute(
             "SELECT SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,"
             " SUM(cache_read_tokens) AS cache_read_tokens,"
             " SUM(cache_creation_tokens) AS cache_creation_tokens,"
-            " SUM(total_tokens) AS total_tokens, SUM(sessions) AS sessions,"
-            " SUM(measured_sessions) AS measured_sessions,"
-            " SUM(active_minutes) AS active_minutes FROM app_usage_by_purpose_day"
+            " SUM(total_tokens) AS total_tokens, SUM(responses) AS responses"
+            " FROM app_usage_by_bucket_day"
         ).fetchone()
-        purposes = {
-            r["purpose"]: r["total_tokens"]
+        by_bucket = {
+            r["bucket"]: r["total_tokens"]
             for r in connection.execute(
-                "SELECT purpose, SUM(total_tokens) AS total_tokens"
-                " FROM app_usage_by_purpose_day GROUP BY purpose"
+                "SELECT bucket, SUM(total_tokens) AS total_tokens"
+                " FROM app_usage_by_bucket_day GROUP BY bucket"
             )
         }
+        gap = connection.execute("SELECT coverage_gap_tokens FROM app_status").fetchone()[0]
     finally:
         connection.close()
 
+    bucketed = [cell for cell in expected if cell["bucket"] is not None]
     for column in views.TOKEN_COLUMNS:
-        assert row[column] == expected[column], column
-    assert row["total_tokens"] == expected["total_tokens"]
-    assert row["sessions"] == len(ids)
-    assert row["measured_sessions"] == expected["sessions"]
-    assert abs(row["active_minutes"] - sum(active.values()) / 60) < 0.001
-    assert purposes["development"] == 165
-    assert purposes["research"] == 30
+        assert row[column] == sum(cell[column] for cell in bucketed), column
+    assert row["responses"] == sum(cell["responses"] for cell in bucketed)
+    assert by_bucket["change"] == 165
+    assert by_bucket["read"] == 30
+    assert by_bucket["run"] == 0, "the sample session's git commit, which recorded no usage"
+    assert None not in by_bucket, "a reply with no bucket is in no row of the view"
+    assert gap == 30, "it is the coverage gap on app_status instead"
+
+
+def test_the_session_list_carries_each_sessions_bucket_shares(lab: Workspace) -> None:
+    """Contract 4: four shares that sum to one, or four NULLs for a session with no tokens."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        repo_key = lab.repo_key()
+        _usage_session(connection, "synthetic-a", repo_key, "2026-09-10T09:00:00", "change")
+        _response(connection, "synthetic-a", "synthetic-a-r2", "2026-09-10T09:01:00", "talk")
+        rows = {
+            row["session_id"]: row
+            for row in connection.execute(
+                "SELECT session_id, change_share, run_share, read_share, talk_share"
+                " FROM app_session_list"
+            )
+        }
+        expected = views.bucket_shares_map(connection, list(rows))
+    finally:
+        connection.close()
+
+    mixed = rows["synthetic-a"]
+    assert mixed["change_share"] == pytest.approx(165 / 195)
+    assert mixed["talk_share"] == pytest.approx(30 / 195)
+    assert mixed["run_share"] == 0 and mixed["read_share"] == 0
+    for bucket in ("change", "run", "read", "talk"):
+        assert mixed[f"{bucket}_share"] == pytest.approx(expected["synthetic-a"][bucket])
+    unmeasured = rows[SAMPLE_SESSION]
+    assert [unmeasured[f"{b}_share"] for b in ("change", "run", "read", "talk")] == [None] * 4
+
+
+def test_the_retired_purpose_view_is_dropped_from_an_upgraded_store(lab: Workspace) -> None:
+    """A store written at contract 3 had `app_usage_by_purpose_day`; 4 takes it away."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        connection.execute("CREATE VIEW app_usage_by_purpose_day AS SELECT 1 AS day")
+        app_views.replace_app_views(connection)
+        left = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'app_usage_by_purpose_day'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert left == 0
 
 
 def test_the_session_list_agrees_with_search_sessions(lab: Workspace) -> None:
@@ -402,7 +448,7 @@ def test_every_command_the_app_calls_prints_json(lab: Workspace) -> None:
     runner = CliRunner()
     expected = {
         "status": ("engine_version", "repositories", "derived", "usage", "observations"),
-        "usage": ("window", "sessions", "by_purpose", "by_project", "by_week", "total"),
+        "usage": ("window", "sessions", "by_bucket", "by_project", "by_week", "total"),
         "outcomes": ("window", "sessions", "by_session", "by_project", "observations"),
         "observations": ("observations", "pooled", "min_sessions", "fact_version"),
         "sessions": ("window", "sessions", "notes"),
@@ -421,7 +467,7 @@ def test_the_json_and_the_text_carry_the_same_totals(lab: Workspace) -> None:
     connection = db.connect()
     try:
         repo_key = lab.repo_key()
-        _usage_session(connection, "synthetic-a", repo_key, "2026-09-10T09:00:00", "development")
+        _usage_session(connection, "synthetic-a", repo_key, "2026-09-10T09:00:00", "change")
     finally:
         connection.close()
 
@@ -430,8 +476,9 @@ def test_the_json_and_the_text_carry_the_same_totals(lab: Workspace) -> None:
     text = runner.invoke(main, ["usage", "--last", "3650d"]).output
     assert as_json["total"]["total_tokens"] == 165
     assert as_json["sessions"] == 2
-    assert "all purposes" in text
-    assert f"{as_json['sessions']} sessions in the last 3650d" in text
+    assert as_json["responses"] == 3, "the sample session's two, and the synthetic one"
+    assert "all buckets" in text
+    assert f"{as_json['responses']} responses in the last 3650d" in text
 
 
 def _observation(
@@ -522,24 +569,66 @@ def _followed_commit(
 
 
 def _usage_session(
-    connection: sqlite3.Connection, session_id: str, repo_key: str, first_at: str, purpose: str
+    connection: sqlite3.Connection,
+    session_id: str,
+    repo_key: str,
+    first_at: str,
+    bucket: str | None,
 ) -> None:
-    """A synthetic session with one usage row and one purpose label, nothing else."""
+    """A synthetic session with one reply: its usage row and its response row.
+
+    A `change` reply costs 165 tokens, any other 30. `bucket` None is a reply whose record
+    could not be read, which has tokens and no bucket.
+    """
     connection.execute(
         "INSERT INTO session (session_id, repo_key, source, entrypoint, cwd, first_at,"
         " last_at, record_count, capture_level, parser_version, notes)"
-        " VALUES (?, ?, 'claude_code', 'cli', NULL, ?, ?, 1, 'full', 2, NULL)",
+        " VALUES (?, ?, 'claude_code', 'cli', NULL, ?, ?, 1, 'full', 6, NULL)",
         (session_id, repo_key, first_at, first_at),
     )
-    tokens = (100, 50, 10, 5) if purpose == "development" else (20, 10, 0, 0)
+    _response(connection, session_id, f"{session_id}-r1", first_at, bucket)
+
+
+def _response(
+    connection: sqlite3.Connection, session_id: str, reply_id: str, at: str, bucket: str | None
+) -> None:
+    tokens = (100, 50, 10, 5) if bucket == "change" else (20, 10, 0, 0)
     connection.execute(
         "INSERT INTO usage (record_id, session_id, turn_id, request_id, model, input_tokens,"
         " output_tokens, cache_read_tokens, cache_creation_tokens, parser_version)"
-        " VALUES (?, ?, NULL, ?, 'claude-x', ?, ?, ?, ?, 2)",
-        (f"{session_id}-u1", session_id, f"{session_id}-req1", *tokens),
+        " VALUES (?, ?, NULL, ?, 'claude-x', ?, ?, ?, ?, 6)",
+        (f"{reply_id}-record", session_id, f"{reply_id}-req", *tokens),
     )
     connection.execute(
-        "INSERT INTO session_label (session_id, name, label, rule_version)"
-        " VALUES (?, 'purpose', ?, 1)",
-        (session_id, purpose),
+        "INSERT INTO response (response_id, session_id, turn_id, agent_id, started_at, bucket,"
+        " bucket_rule_version, heuristic, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_creation_tokens, parser_version) VALUES (?, ?, NULL, NULL, ?, ?, 1, 0,"
+        " ?, ?, ?, ?, 6)",
+        (reply_id, session_id, at, bucket, *tokens),
     )
+
+
+def test_the_activity_view_carries_each_days_active_minutes(lab: Workspace) -> None:
+    """Active time is per session; the view sums it per local day and project and says
+    how many of the day's sessions measured any time at all."""
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        rows = connection.execute(
+            "SELECT day, project, active_minutes, sessions, measured_sessions"
+            " FROM app_activity_by_day ORDER BY day, project"
+        ).fetchall()
+        assert rows, "the recorded session has a start time"
+        for day, project, minutes, sessions, measured in rows:
+            assert day and project
+            assert minutes >= 0
+            assert 0 <= measured <= sessions
+        total = connection.execute(
+            "SELECT SUM(active_minutes) FROM app_activity_by_day"
+        ).fetchone()[0]
+        expected = connection.execute(
+            "SELECT COALESCE(SUM(active_seconds), 0) / 60.0 FROM app_session_time"
+        ).fetchone()[0]
+        assert abs(total - expected) < 1e-6
+    finally:
+        connection.close()

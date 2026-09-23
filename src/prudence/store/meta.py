@@ -32,7 +32,12 @@ APP_CONTRACT_VERSION_KEY = "app_contract_version"
 # 3 (M4 batch 3): `app_observation.threshold_value` and `.threshold_op`, the split as a
 # number and an operator beside the words already in `threshold_text`, and
 # `app_review.segment_language`. Appended at the end of each list for the same reason.
-APP_CONTRACT_VERSION = "3"
+#
+# 4 (usage buckets): `app_usage_by_bucket_day` replaces `app_usage_by_purpose_day`, the
+# first view ever removed, so an app built for 3 must not read a store at 4;
+# `app_session_list` gains `change_share`, `run_share`, `read_share` and `talk_share`, and
+# `app_status` gains `bucket_rule_version` and `coverage_gap_tokens`, appended.
+APP_CONTRACT_VERSION = "4"
 
 
 def ensure_meta(connection: sqlite3.Connection) -> None:

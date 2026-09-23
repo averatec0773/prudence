@@ -1,4 +1,4 @@
-"""Token usage as the archive reported it, the purpose label, and the active time it is over."""
+"""Token usage as the archive reported it, by bucket and by purpose, and the active time."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from prudence.store.buckets import BUCKETS
 from prudence.store.views.common import SITTING_GAP, _batched
 from prudence.store.views.sessions import repository_names
 
@@ -260,3 +261,141 @@ def active_seconds_map(connection: sqlite3.Connection, ids: list[str]) -> dict[s
             totals.get(session_id, 0.0) + (last - starts[session_id]).total_seconds()
         )
     return totals
+
+
+# --- buckets: what each reply did, summed ----------------------------------------------
+
+
+def bucket_usage(
+    connection: sqlite3.Connection,
+    since: str,
+    until: str | None = None,
+    repo_key: str | None = None,
+) -> list[sqlite3.Row]:
+    """The replies that began in a window, summed per project, bucket and UTC day.
+
+    One row per (`repo_key`, `bucket`, `day`) from the `response` table: `responses`,
+    `measured` (the replies that reported usage at all), the four token counts, and
+    `heuristic_tokens` (the part whose bucket rests on the name heuristic). A reply with
+    no bucket, whose record could not be read, comes back under `bucket` None: it is the
+    coverage gap, never a fifth bucket. Empty before parser version 6.
+    """
+    columns = ", ".join(f"SUM(COALESCE(p.{column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
+    total = " + ".join(f"COALESCE(p.{column}, 0)" for column in TOKEN_COLUMNS)
+    query, parameters = _window(
+        f"SELECT s.repo_key AS repo_key, p.bucket AS bucket, substr(p.started_at, 1, 10) AS day,"
+        f" COUNT(*) AS responses, COUNT(p.input_tokens) AS measured, {columns},"
+        f" SUM(CASE WHEN p.heuristic = 1 THEN {total} ELSE 0 END) AS heuristic_tokens"
+        " FROM response p JOIN session s ON s.session_id = p.session_id",
+        since,
+        until,
+        repo_key,
+    )
+    try:
+        return connection.execute(
+            query + " GROUP BY s.repo_key, p.bucket, day ORDER BY day", parameters
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def bucket_sessions(
+    connection: sqlite3.Connection,
+    since: str,
+    until: str | None = None,
+    repo_key: str | None = None,
+) -> int:
+    """How many sessions had at least one reply in the window `bucket_usage` sums."""
+    query, parameters = _window(
+        "SELECT COUNT(DISTINCT p.session_id) FROM response p"
+        " JOIN session s ON s.session_id = p.session_id",
+        since,
+        until,
+        repo_key,
+    )
+    try:
+        return connection.execute(query, parameters).fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
+
+
+def _window(
+    query: str, since: str, until: str | None, repo_key: str | None
+) -> tuple[str, list[str]]:
+    """The WHERE clause both bucket queries share: replies begun in a window, one project."""
+    query += " WHERE p.started_at >= ?"
+    parameters = [since]
+    if until is not None:
+        query += " AND p.started_at < ?"
+        parameters.append(until)
+    if repo_key is not None:
+        query += " AND s.repo_key = ?"
+        parameters.append(repo_key)
+    return query, parameters
+
+
+def bucket_totals(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Every reply in the store, by bucket, with the rule version and the doubts beside it.
+
+    `heuristic_tokens` rest on a guess from a tool's name; `coverage_gap_tokens` are in
+    replies no bucket could be given at all; `subagent_tokens` are subagents' replies and
+    `subagent_unlinked_tokens` the part of them no turn was found for.
+    """
+    total = " + ".join(f"COALESCE({column}, 0)" for column in TOKEN_COLUMNS)
+    empty: dict[str, Any] = {
+        "responses": 0,
+        "total_tokens": 0,
+        "by_bucket": {},
+        "rule_version": None,
+        "heuristic_tokens": 0,
+        "coverage_gap_tokens": 0,
+        "subagent_tokens": 0,
+        "subagent_unlinked_tokens": 0,
+    }
+    try:
+        rows = connection.execute(
+            f"SELECT bucket, COUNT(*) AS responses, SUM({total}) AS tokens,"
+            f" SUM(CASE WHEN heuristic = 1 THEN {total} ELSE 0 END) AS heuristic,"
+            f" SUM(CASE WHEN agent_id IS NOT NULL THEN {total} ELSE 0 END) AS subagent,"
+            f" SUM(CASE WHEN agent_id IS NOT NULL AND turn_id IS NULL THEN {total} ELSE 0 END)"
+            " AS unlinked, MAX(bucket_rule_version) AS version FROM response GROUP BY bucket"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return empty
+    if not rows:
+        return empty
+    return {
+        "responses": sum(row["responses"] for row in rows),
+        "total_tokens": sum(row["tokens"] for row in rows),
+        "by_bucket": {
+            row["bucket"]: {"responses": row["responses"], "total_tokens": row["tokens"]}
+            for row in rows
+            if row["bucket"] is not None
+        },
+        "rule_version": max(row["version"] for row in rows),
+        "heuristic_tokens": sum(row["heuristic"] for row in rows),
+        "coverage_gap_tokens": sum(row["tokens"] for row in rows if row["bucket"] is None),
+        "subagent_tokens": sum(row["subagent"] for row in rows),
+        "subagent_unlinked_tokens": sum(row["unlinked"] for row in rows),
+    }
+
+
+def bucket_shares_map(
+    connection: sqlite3.Connection, ids: list[str]
+) -> dict[str, dict[str, float]]:
+    """Each session's bucketed tokens as four shares. Absent: no reply with tokens."""
+    total = " + ".join(f"COALESCE({column}, 0)" for column in TOKEN_COLUMNS)
+    found: dict[str, dict[str, int]] = {}
+    for row in _batched(
+        connection,
+        f"SELECT session_id, bucket, SUM({total}) AS tokens FROM response WHERE bucket IS NOT NULL",
+        ids,
+        " GROUP BY session_id, bucket",
+    ):
+        found.setdefault(row["session_id"], {})[row["bucket"]] = row["tokens"] or 0
+    shares: dict[str, dict[str, float]] = {}
+    for session_id, by_bucket in found.items():
+        grand = sum(by_bucket.values())
+        if grand:
+            shares[session_id] = {bucket: by_bucket.get(bucket, 0) / grand for bucket in BUCKETS}
+    return shares

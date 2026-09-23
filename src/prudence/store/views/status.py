@@ -5,7 +5,12 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from prudence.store.views.usage import purpose_counts, purpose_rule_version, usage_totals
+from prudence.store.views.usage import (
+    bucket_totals,
+    purpose_counts,
+    purpose_rule_version,
+    usage_totals,
+)
 
 
 def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
@@ -69,6 +74,7 @@ def status_summary(connection: sqlite3.Connection | None) -> dict[str, Any]:
         return result
     result["derived"] = {**counts, "parser_version": derived.PARSER_VERSION}
     result["usage"] = usage_totals(connection)
+    result["buckets"] = bucket_totals(connection)
     result["purposes"] = {
         "by_label": purpose_counts(connection),
         "rule_version": purpose_rule_version(connection),

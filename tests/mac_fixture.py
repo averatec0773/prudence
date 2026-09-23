@@ -22,9 +22,10 @@ them is deliberate here rather than incidental:
 
 - **two projects** (`alpha` and `beta`, each with sessions, usage, a commit and an
   observation), so that choosing one in the picker can drop the other's rows;
-- **three ISO weeks of usage**, one of them holding two days of the same purpose, so a
-  chart of weekly bars has more than one bar and a week is one slice per purpose rather
-  than one per day;
+- **three ISO weeks of usage**, one of them holding two days of the same bucket, so a
+  chart of weekly bars has more than one bar and a week is one slice per bucket rather
+  than one per day (contract 4: each session is one reply in `response`, in the bucket
+  its old purpose maps to, plus a `talk` reply, so a session's mix has two shares);
 - **three ISO weeks of outcomes for `alpha` where the middle one has `measured_30d = 0`**,
   so a survival line has a hole to leave open. The hole is drawn on purpose: real 30-day
   marks arrive in commit order, and no ordinary history has a measured week, then an
@@ -67,8 +68,9 @@ TARGET = os.environ.get("MAC_FIXTURE_TARGET")
 
 BETA = "repo-beta"
 
-# The three ISO weeks of usage. The two September 1 and 3 sessions share a purpose and a
-# week, so that week is one slice made of two days.
+# The three ISO weeks of usage. The two September 1 and 3 sessions share a purpose, a
+# bucket and a week, so that week is one slice made of two days. The purpose label is still
+# written, because `app_session_list.purpose` stays for one release beside the shares.
 USAGE: tuple[tuple[str, str, str, str], ...] = (
     ("synthetic-w1a", "alpha", "2026-09-01T09:00:00", "development"),
     ("synthetic-w1b", "alpha", "2026-09-03T09:00:00", "development"),
@@ -79,6 +81,9 @@ USAGE: tuple[tuple[str, str, str, str], ...] = (
     ("synthetic-b", "alpha", "2026-09-15T10:00:00", "research"),
     ("synthetic-c", "alpha", "2026-09-14T09:00:00", "debugging"),
 )
+
+# The bucket of each session's main reply, by the purpose the session was labelled with.
+BUCKET_OF_PURPOSE = {"development": "change", "research": "read", "debugging": "run"}
 
 # One commit per ISO week. `measured_30d` is the third field: 0 means the 30-day mark has
 # not arrived for any of its lines, which is the hole the survival chart has to leave.
@@ -210,7 +215,7 @@ def test_make_fixture(lab: Workspace) -> None:
 
         # The fixture is only worth having if it is what the app will read. Contract and
         # column lists first, then the shapes the app's tests need.
-        assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "3"
+        assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "4"
         for name, columns in app_views.APP_VIEWS.items():
             assert app_views.columns(connection, name) == columns, name
 
@@ -264,6 +269,10 @@ def test_make_fixture(lab: Workspace) -> None:
         assert _count(connection, GAP_IN_THE_SERIES) >= 1
         assert _count(connection, "SELECT COUNT(*) FROM app_commits_by_day") >= 1
         assert _count(connection, "SELECT SUM(edits) FROM app_session_list") >= 1
+        # Contract 4: all four buckets have tokens somewhere, and a session's shares add up.
+        assert _count(connection, "SELECT COUNT(DISTINCT bucket) FROM app_usage_by_bucket_day") == 4
+        assert _count(connection, "SELECT COUNT(*) FROM app_session_list WHERE change_share > 0")
+        assert _count(connection, UNBALANCED_SHARES) == 0
         # One commit, two sessions: the per-day count and the per-session sum disagree,
         # and a test in the app can only see that if they do.
         per_day = _count(connection, "SELECT SUM(commits) FROM app_commits_by_day")
@@ -297,16 +306,22 @@ def test_make_fixture(lab: Workspace) -> None:
 WEEKS_OF_USAGE = """
     SELECT COUNT(*) FROM (
         SELECT DISTINCT date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days') AS week
-          FROM app_usage_by_purpose_day WHERE COALESCE(total_tokens, 0) > 0
+          FROM app_usage_by_bucket_day WHERE COALESCE(total_tokens, 0) > 0
     )
 """
 
 WEEK_WITH_TWO_DAYS = """
     SELECT COUNT(*) FROM (
-        SELECT date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days') AS week, purpose
-          FROM app_usage_by_purpose_day WHERE COALESCE(total_tokens, 0) > 0
-         GROUP BY week, purpose HAVING COUNT(DISTINCT day) >= 2
+        SELECT date(day, '-' || ((strftime('%w', day) + 6) % 7) || ' days') AS week, bucket
+          FROM app_usage_by_bucket_day WHERE COALESCE(total_tokens, 0) > 0
+         GROUP BY week, bucket HAVING COUNT(DISTINCT day) >= 2
     )
+"""
+
+UNBALANCED_SHARES = """
+    SELECT COUNT(*) FROM app_session_list
+     WHERE change_share IS NOT NULL
+       AND abs(change_share + run_share + read_share + talk_share - 1) > 1e-9
 """
 
 GAP_IN_THE_SERIES = """
@@ -511,12 +526,24 @@ def _usage_session(
     tokens = {"development": (4000, 900, 120, 60), "research": (700, 150, 20, 5)}.get(
         purpose, (200, 40, 0, 0)
     )
-    connection.execute(
-        "INSERT INTO usage (record_id, session_id, turn_id, request_id, model, input_tokens,"
-        " output_tokens, cache_read_tokens, cache_creation_tokens, parser_version)"
-        " VALUES (?, ?, NULL, ?, 'claude-x', ?, ?, ?, ?, 2)",
-        (f"{session_id}-u1", session_id, f"{session_id}-req1", *tokens),
+    replies = (
+        (f"{session_id}-r1", first_at, BUCKET_OF_PURPOSE[purpose], tokens),
+        (f"{session_id}-r2", first_at[:-2] + "30", "talk", (50, 20, 0, 0)),
     )
+    for reply_id, at, bucket, counts in replies:
+        connection.execute(
+            "INSERT INTO usage (record_id, session_id, turn_id, request_id, model,"
+            " input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,"
+            " parser_version) VALUES (?, ?, NULL, ?, 'claude-x', ?, ?, ?, ?, 6)",
+            (f"{reply_id}-record", session_id, f"{reply_id}-req", *counts),
+        )
+        connection.execute(
+            "INSERT INTO response (response_id, session_id, turn_id, agent_id, started_at,"
+            " bucket, bucket_rule_version, heuristic, input_tokens, output_tokens,"
+            " cache_read_tokens, cache_creation_tokens, parser_version)"
+            " VALUES (?, ?, NULL, NULL, ?, ?, 1, 0, ?, ?, ?, ?, 6)",
+            (reply_id, session_id, at, bucket, *counts),
+        )
     connection.execute(
         "INSERT INTO session_label (session_id, name, label, rule_version)"
         " VALUES (?, 'purpose', ?, 1)",

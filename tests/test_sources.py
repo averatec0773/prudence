@@ -92,3 +92,78 @@ def test_a_prompt_crosses_as_its_length_and_a_tool_call_as_its_shape() -> None:
     assert isinstance(call, base.ToolCall)
     assert call.tool_name == "Bash"
     assert call.command is not None and call.command.command_class == "test"
+    assert call.shell_command == "pytest -q", "the whole command, for the bucket rule"
+    assert read[1].message_id == "a1", "a reply with no id of its own is its own record"
+    assert read[0].message_id is None, "a prompt is not part of a reply"
+
+
+def test_the_adapter_says_which_subagent_files_are_logs_and_what_is_beside_them() -> None:
+    root = "/p/s1/subagents"
+    paths = [
+        f"{root}/agent-a1.jsonl",
+        f"{root}/agent-a1.meta.json",
+        f"{root}/33333333-3333-4333-8333-333333333333.jsonl",
+        f"{root}/workflows/wf_1/agent-a2.jsonl",
+        f"{root}/workflows/wf_1/journal.jsonl",
+    ]
+    logs = sources.source().agent_logs(paths)
+    assert [(log.agent_id, log.sidecar) for log in logs] == [
+        ("33333333-3333-4333-8333-333333333333", None),
+        ("a1", f"{root}/agent-a1.meta.json"),
+        ("a2", None),
+    ], "sidecars and a workflow's journal are not logs; the id loses its file prefix"
+
+
+def test_a_subagent_is_linked_to_the_call_that_started_it() -> None:
+    """By its sidecar, by the result's structured field, or by the result's last line."""
+    sidecar = json.dumps({"agentType": "general-purpose", "toolUseId": "toolu_spawn"}).encode()
+    child = [{"type": "assistant", "uuid": "c1", "message": {"id": "msg_c1", "content": []}}]
+    read = list(claude_events.events(_lines(child), "/tmp/agent-a1.jsonl", "s1", "a1", sidecar))
+    assert read[0].dispatch_id == "toolu_spawn"
+    assert read[0].message_id == "msg_c1"
+
+    parent = [
+        _call("toolu_a", "Agent", {}),
+        _result("toolu_a", "done", {"agentId": "a2", "status": "completed"}),
+        _call("toolu_b", "Agent", {}),
+        _result("toolu_b", "Done.\nagentId: a3333333333333333 (use SendMessage to continue)"),
+        _call("toolu_s", "SendMessage", {"to": "a3333333333333333"}),
+    ]
+    read = list(claude_events.events(_lines(parent), "/tmp/s1.jsonl", "s1", None))
+    started = [p.started_agent for e in read for p in e.payloads if isinstance(p, base.ToolResult)]
+    assert started == ["a2", "a3333333333333333"]
+    sent = [p.sends_to_agent for e in read for p in e.payloads if isinstance(p, base.ToolCall)]
+    assert sent == [None, None, "a3333333333333333"]
+
+
+def test_a_line_that_will_not_parse_is_counted_with_the_tokens_it_shows() -> None:
+    """The coverage gap: kept, counted, and never given a bucket."""
+    cut = b'{"type":"assistant","message":{"usage":{"input_tokens":7,"output_tokens":90'
+    read = list(claude_events.events([(0, cut), (80, b"   ")], "/tmp/s1.jsonl", "s1", None))
+    assert len(read) == 1, "a blank line is not a record"
+    assert read[0].record_type == "unreadable" and read[0].known_type is False
+    assert read[0].message_id is None
+    (usage,) = read[0].payloads
+    assert (usage.input_tokens, usage.output_tokens, usage.cache_read_tokens) == (7, 90, None)
+
+
+def _call(call_id: str, name: str, payload: dict) -> dict:
+    return {
+        "type": "assistant",
+        "uuid": f"use-{call_id}",
+        "message": {
+            "id": f"msg-{call_id}",
+            "content": [{"type": "tool_use", "id": call_id, "name": name, "input": payload}],
+        },
+    }
+
+
+def _result(call_id: str, text: str, outcome: dict | None = None) -> dict:
+    record: dict = {
+        "type": "user",
+        "uuid": f"result-{call_id}",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": call_id, "content": text}]},
+    }
+    if outcome is not None:
+        record["toolUseResult"] = outcome
+    return record

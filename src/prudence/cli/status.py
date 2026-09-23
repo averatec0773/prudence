@@ -20,6 +20,7 @@ from prudence.reviews import readiness
 from prudence.store import (
     archive,
     attribution,
+    buckets,
     commits,
     db,
     derived,
@@ -173,11 +174,11 @@ def _store_lines(connection: sqlite3.Connection) -> list[str]:
         f"{counts['command']} commands (parser version {derived.PARSER_VERSION})"
     )
     lines.extend(_usage_lines(connection))
+    lines.extend(_bucket_lines(connection))
     lines.extend(_command_lines(connection))
     lines.extend(_hook_lines(connection))
     lines.extend(_commit_lines(connection))
     lines.extend(_outcome_lines(connection))
-    lines.extend(_purpose_lines(connection))
     lines.extend(_observation_lines(connection))
     lines.extend(_readiness_lines(connection))
     lines.extend(_mapping_lines(connection))
@@ -274,16 +275,34 @@ def _outcome_lines(connection: sqlite3.Connection) -> list[str]:
     return lines
 
 
-def _purpose_lines(connection: sqlite3.Connection) -> list[str]:
-    """What the sessions were for, as the tool-mix rules read them. Labels, not numbers."""
-    counted = views.purpose_counts(connection)
-    if not counted:
-        return ["purpose: no labels yet (run `prudence rebuild`)"]
-    detail = ", ".join(f"{count} {label}" for label, count in counted.items())
-    version = views.purpose_rule_version(connection)
+def _bucket_lines(connection: sqlite3.Connection) -> list[str]:
+    """What the responses did, by the tool calls in each, and the doubt beside the shares.
+
+    The session-level purpose label is still stored for comparison, but no longer printed.
+    """
+    totals = views.bucket_totals(connection)
+    if not totals["responses"]:
+        return ["buckets: none yet (run `prudence rebuild`)"]
+    grand = sum(cell["total_tokens"] for cell in totals["by_bucket"].values())
+    if grand:
+        shares = ", ".join(
+            f"{bucket} {totals['by_bucket'][bucket]['total_tokens'] / grand * 100:.1f}%"
+            for bucket in buckets.BUCKETS
+            if bucket in totals["by_bucket"]
+        )
+        spread = f"{shares} of {thousands(grand)} tokens"
+    else:
+        spread = "no token counts recorded"
+    linked = totals["subagent_tokens"] - totals["subagent_unlinked_tokens"]
     return [
-        f"purpose: {detail} (rule version {version}; a label from the tool mix, not from "
-        "reading the conversation)"
+        f"buckets: {spread} over {totals['responses']} responses "
+        f"(bucket rule version {totals['rule_version']}; from each response's tool calls, "
+        "not from reading the conversation)",
+        f"coverage gap: {thousands(totals['coverage_gap_tokens'])} tokens in responses no "
+        f"bucket could be given; {thousands(totals['heuristic_tokens'])} tokens bucketed by "
+        "a guess from a tool's name",
+        f"subagents: {thousands(totals['subagent_tokens'])} tokens, {thousands(linked)} of "
+        "them attached to the turn that dispatched the agent",
     ]
 
 

@@ -33,6 +33,11 @@ src/prudence/
                    the archive and nothing else; owner of the capture level, of the
                    pairing of a call with its result, and of which session a record
                    belongs to
+    agent_turns.py  which turn a subagent's records belong to: the turn whose call
+                   dispatched the agent, resolved once a session's every file is read
+    buckets.py    what one response did (change, run, read, talk), from its tool calls
+                   alone: the tool lists, the read-only shell parser and the precedence,
+                   as data with `BUCKET_RULE_VERSION` and a table of cases
     edits.py      what one tool call did: lines changed, what a command was for
     lines.py      one normalisation and one keyed hash, used by both sides of a match
     commits.py    what each commit added, harvested from the repository itself
@@ -92,6 +97,20 @@ tests/            pytest; fixtures are synthetic, one file per observed format v
 docs/reference/store-schema.md   every table and column, with its trust level
 ```
 
+## The units of the record
+
+project (a git repository, keyed by its root commit) > session (one conversation; forks
+and resumes resolved by the ownership rule below) > turn (one prompt of the person, until
+the next) > response (one reply of the model: the records that share one message id).
+A subagent's responses belong to the turn whose tool call dispatched the agent
+(`store/agent_turns.py`), not to the turn its own records name.
+
+Usage is classified at the response and nowhere else: `store/buckets.py` gives each one of
+four buckets from its tool calls, with no text read and no threshold, and every level
+above is a sum of responses (the `response` table, and `app_usage_by_bucket_day` for the
+app). The tokens that rest on a guess from a tool's name and the tokens in records that
+could not be read are carried beside the sums, never folded into a bucket.
+
 ## Rules
 
 1. **Raw bytes are the truth.** Agent data is archived unmodified. Every derived table can
@@ -145,6 +164,8 @@ docs/reference/store-schema.md   every table and column, with its trust level
    `session_fact`, whose `value` is REAL and is summed and averaged. Labels are grouped
    by and printed; they are never ranked, scored or averaged, and every surface that
    prints one says that it comes from counts rather than from reading the conversation.
+   A response's bucket is the same kind of word, on the `response` row with its
+   `bucket_rule_version`: tokens are summed by it, and the bucket itself is never scored.
 13. **An observation is a join, and it is descriptive.** One row of `observation`
    (`store/observations.py`) compares one behaviour fact, at a threshold stored on the
    row as text, against one outcome of the user's own sessions: the sessions credited

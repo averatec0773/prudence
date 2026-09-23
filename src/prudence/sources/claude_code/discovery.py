@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from prudence.sources.base import (
     FILE_HISTORY,
     SUBAGENT,
     TOOL_RESULT,
+    AgentLog,
     CompanionFile,
     SessionFile,
 )
@@ -31,6 +33,11 @@ TAIL_BYTES = 64 * 1024  # bytes to read from the end of a file for the last time
 # `file-history` is the exception: Claude Code keeps it under its own root, one
 # directory per session, rather than beside the transcript.
 COMPANION_DIRS = (("subagents", SUBAGENT), ("tool-results", TOOL_RESULT))
+
+# Inside `subagents/`: the file beside an agent's log that names the call that started
+# it, and a workflow's own record of the agents it ran.
+SIDECAR_SUFFIX = ".meta.json"
+WORKFLOW_JOURNAL = "journal.jsonl"
 
 
 def list_session_files(projects_dir: Path | None = None) -> list[Path]:
@@ -98,6 +105,34 @@ def companion_files(
         CompanionFile(path, FILE_HISTORY) for path in _files_in(history_root / session.session_id)
     ]
     return found
+
+
+def agent_logs(paths: Sequence[str]) -> list[AgentLog]:
+    """The subagent logs among a session's archived `subagents/` files, in path order.
+
+    A subagent's log is `agent-<id>.jsonl`, directly under `subagents/` or under a
+    workflow's own directory beside it, with `agent-<id>.meta.json` next to it in recent
+    versions saying which tool call started it (older versions named the log by the id
+    alone and wrote no sidecar). A workflow's `journal.jsonl` is the workflow's own
+    bookkeeping, not an agent, and the sidecars are not logs either: both are archived
+    and read by nothing.
+    """
+    present = set(paths)
+    logs = []
+    for path in sorted(present):
+        name = path.rsplit("/", 1)[-1]
+        if not name.endswith(".jsonl") or name == WORKFLOW_JOURNAL:
+            continue
+        stem = name[: -len(".jsonl")]
+        sidecar = path[: -len(".jsonl")] + SIDECAR_SUFFIX
+        logs.append(
+            AgentLog(
+                path=path,
+                agent_id=stem.removeprefix("agent-"),
+                sidecar=sidecar if sidecar in present else None,
+            )
+        )
+    return logs
 
 
 def cleanup_period_days(settings_file: Path | None = None) -> int:

@@ -16,16 +16,18 @@ transaction, so an ingest that fails leaves the contract it found rather than no
 Every view is written from the same tables and the same rules as the matching function
 in `store/views/`, so the app and the CLI cannot disagree:
 
-- `app_usage_by_purpose_day` buckets a session's tokens, active time and count on the
-  day its first record was written, exactly as `cli/usage.py` buckets them on the week
-  of `session.first_at`. Active time is the sum of the gaps between consecutive records
-  that are an hour or less, which is what `views.active_seconds_map` computes one
-  session at a time (`julianday` rather than `datetime.fromisoformat`, so the totals
-  agree to about a millisecond over a day of work, not to the microsecond).
-  The one deliberate difference from the CLI: the day is the local
-  day (`date(..., 'localtime')`), because a person reading a chart of their own week
-  means their own midnight, while `cli/usage.py` takes the stored UTC timestamp. Only
-  the bucket a session falls in can differ, never a total.
+- `app_usage_by_bucket_day` (contract 4) sums the `response` table: each reply's four
+  token counts, on the day the reply began, under the bucket `store/buckets.py` gave it
+  and the project of its session, exactly as `views.bucket_usage` sums them for
+  `cli/usage.py`. `heuristic_tokens` is the part of a row whose bucket rests on the name
+  heuristic, and `sessions` counts the sessions with at least one reply in the row. A
+  reply with no bucket (a record the adapter could not read) is in no row; its tokens
+  are `app_status.coverage_gap_tokens`. The one deliberate difference from the CLI: the
+  day is the local day (`date(..., 'localtime')`), because a person reading a chart of
+  their own week means their own midnight, while `cli/usage.py` takes the stored UTC
+  timestamp. Only the day a reply falls on can differ, never a total. It replaced
+  `app_usage_by_purpose_day`, which put a whole session's tokens under one word chosen
+  by thresholds (`RETIRED_VIEWS`).
 - `app_outcomes_by_week` counts a commit once, at its best confidence label, over the
   commits `views.counted_pairs` would count (`fact` and `inferred` only), and sums
   `line_fate` the way `views.outcomes_by_repository` sums it. The week begins on the
@@ -40,7 +42,9 @@ in `store/views/`, so the app and the CLI cannot disagree:
 - `app_session_list` counts commits per session the way `views.credited_map` does: one
   commit once, at its best label, `uncertain` reported and never folded into the other
   two. A session whose records carried no usage fields has `total_tokens` NULL, not 0
-  (architecture rule 10).
+  (architecture rule 10). Contract 4 added the four bucket shares, each the share of the
+  session's bucketed tokens, NULL when the session has no reply with tokens. `purpose`
+  stays for this release beside them, for comparison, and goes in the next.
 - `app_commits_by_day` counts a commit once, on the local day it was committed, at its
   best confidence label, over exactly the commits `views.credited_by_commit` returns
   (`fact` and `inferred`; a commit whose only attribution is `uncertain` is not counted
@@ -69,7 +73,7 @@ sessions, 227,399 records, 2,054 attributions, 82,680 line fates), best of three
 `COUNT(*)` then a full `SELECT *`:
 
     app_status                    0 ms /  1 ms
-    app_usage_by_purpose_day     10 ms / 10 ms
+    app_usage_by_purpose_day     10 ms / 10 ms   (retired at contract 4)
     app_outcomes_by_week         24 ms / 24 ms
     app_observation               0 ms /  0 ms
     app_session_list             12 ms / 13 ms
@@ -97,6 +101,7 @@ from collections.abc import Callable
 from prudence import __version__
 from prudence.facts import purpose as purpose_module
 from prudence.store import attribution as attribution_module
+from prudence.store import buckets as buckets_module
 from prudence.store import commits as commits_module
 from prudence.store import derived as derived_module
 from prudence.store import meta as meta_module
@@ -123,17 +128,31 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "outcome_fact_version",
         "observation_fact_version",
         "hook_fact_version",
+        # Contract 4: which rule gave the replies their buckets, and how many tokens sit
+        # in replies no bucket could be given.
+        "bucket_rule_version",
+        "coverage_gap_tokens",
     ),
-    "app_usage_by_purpose_day": (
+    "app_usage_by_bucket_day": (
         "day",
         "repo_key",
         "project",
-        "purpose",
+        "bucket",
         "input_tokens",
         "output_tokens",
         "cache_read_tokens",
         "cache_creation_tokens",
         "total_tokens",
+        "responses",
+        "heuristic_tokens",
+        "sessions",
+    ),
+    # Active time is a property of a session, not of a response, so it keeps a view of
+    # its own: the hours figure and the heat strip read this, the token charts the one above.
+    "app_activity_by_day": (
+        "day",
+        "repo_key",
+        "project",
         "active_minutes",
         "sessions",
         "measured_sessions",
@@ -208,6 +227,11 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "content_archived",
         # Contract 2, appended for the same reason.
         "edits",
+        # Contract 4: the share of the session's tokens in each bucket, 0 to 1.
+        "change_share",
+        "run_share",
+        "read_share",
+        "talk_share",
     ),
     "app_review": (
         "id",
@@ -230,6 +254,10 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "segment_language",
     ),
 }
+
+# Views an earlier contract had and this one does not. Dropped with the rest, so a store
+# upgraded in place does not keep answering a question no engine maintains any more.
+RETIRED_VIEWS: tuple[str, ...] = ("app_usage_by_purpose_day",)
 
 # Indexes these views need beyond the ones `derived.INDEXES` already creates. Recreated
 # after every rebuild, because a rebuild swaps the table this one sits on. The sitting
@@ -380,7 +408,7 @@ def replace_app_views(
 
 def drop_app_views(connection: sqlite3.Connection) -> None:
     """Take the contract down, for the moment before it goes back up."""
-    for name in APP_VIEWS:
+    for name in (*APP_VIEWS, *RETIRED_VIEWS):
         _quietly(connection, f"DROP VIEW IF EXISTS {name}")
 
 
@@ -434,6 +462,8 @@ def _install(connection: sqlite3.Connection, progress: progress_module.Step | No
     _quietly(connection, f"DROP TABLE IF EXISTS {OBSERVATION_TEXT_TABLE}")
     _quietly(connection, _OBSERVATION_TEXT_SCHEMA)
     _quietly_call(lambda: fill_observation_text(connection))
+    for name in RETIRED_VIEWS:
+        _quietly(connection, f"DROP VIEW IF EXISTS {name}")
     for name, select in definitions().items():
         progress.advance(label=f"Building {name}")
         _quietly(connection, f"DROP VIEW IF EXISTS {name}")
@@ -473,9 +503,13 @@ def definitions() -> dict[str, str]:
     and the view is rewritten on every ingest anyway.
     """
     totals = " + ".join(f"COALESCE(u.{column}, 0)" for column in TOKEN_COLUMNS)
-    per_kind = ", ".join(f"SUM(COALESCE({column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
-    summed = ", ".join(f"SUM(COALESCE(t.{column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
-    grand = " + ".join(f"COALESCE(t.{column}, 0)" for column in TOKEN_COLUMNS)
+    per_kind = ", ".join(f"SUM(COALESCE(p.{column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
+    reply = " + ".join(f"COALESCE(p.{column}, 0)" for column in TOKEN_COLUMNS)
+    shares = ",\n".join(
+        f"           SUM(CASE WHEN p.bucket = '{bucket}' THEN {reply} ELSE 0 END) * 1.0"
+        f" / NULLIF(SUM({reply}), 0) AS {bucket}_share"
+        for bucket in buckets_module.BUCKETS
+    )
     return {
         "app_status": f"""
     SELECT '{__version__}' AS engine_version,
@@ -490,30 +524,41 @@ def definitions() -> dict[str, str]:
            {attribution_module.FACT_VERSION} AS attribution_fact_version,
            {outcomes_module.FACT_VERSION} AS outcome_fact_version,
            {observations_module.FACT_VERSION} AS observation_fact_version,
-           {spool_module.FACT_VERSION} AS hook_fact_version
+           {spool_module.FACT_VERSION} AS hook_fact_version,
+           (SELECT MAX(bucket_rule_version) FROM response) AS bucket_rule_version,
+           (SELECT COALESCE(SUM({reply}), 0) FROM response p WHERE p.bucket IS NULL)
+               AS coverage_gap_tokens
 """,
-        "app_usage_by_purpose_day": f"""
-    WITH tokens AS (
-        SELECT session_id, {per_kind} FROM usage GROUP BY session_id
-    )
+        "app_usage_by_bucket_day": f"""
+    SELECT date(p.started_at, 'localtime') AS day,
+           s.repo_key AS repo_key,
+           COALESCE(r.name, s.repo_key, 'unassigned') AS project,
+           p.bucket AS bucket,
+           {per_kind},
+           SUM({reply}) AS total_tokens,
+           COUNT(*) AS responses,
+           SUM(CASE WHEN p.heuristic = 1 THEN {reply} ELSE 0 END) AS heuristic_tokens,
+           COUNT(DISTINCT p.session_id) AS sessions
+    FROM response p
+    JOIN session s ON s.session_id = p.session_id
+    LEFT JOIN repository r ON r.repo_key = s.repo_key
+    WHERE p.bucket IS NOT NULL AND p.started_at IS NOT NULL
+    GROUP BY day, s.repo_key, project, p.bucket
+    ORDER BY day, project, p.bucket
+""",
+        "app_activity_by_day": f"""
     SELECT date(s.first_at, 'localtime') AS day,
            s.repo_key AS repo_key,
            COALESCE(r.name, s.repo_key, 'unassigned') AS project,
-           COALESCE(l.label, '{purpose_module.UNKNOWN}') AS purpose,
-           {summed},
-           SUM({grand}) AS total_tokens,
            SUM(COALESCE(a.active_seconds, 0)) / 60.0 AS active_minutes,
            COUNT(*) AS sessions,
-           SUM(CASE WHEN t.session_id IS NULL THEN 0 ELSE 1 END) AS measured_sessions
+           SUM(CASE WHEN a.session_id IS NULL THEN 0 ELSE 1 END) AS measured_sessions
     FROM session s
     LEFT JOIN repository r ON r.repo_key = s.repo_key
-    LEFT JOIN session_label l
-           ON l.session_id = s.session_id AND l.name = '{purpose_module.LABEL.name}'
-    LEFT JOIN tokens t ON t.session_id = s.session_id
     LEFT JOIN {SESSION_TIME_TABLE} a ON a.session_id = s.session_id
     WHERE s.first_at IS NOT NULL
-    GROUP BY day, s.repo_key, project, purpose
-    ORDER BY day, project, purpose
+    GROUP BY day, s.repo_key, project
+    ORDER BY day, project
 """,
         "app_outcomes_by_week": f"""
     WITH counted AS (
@@ -624,6 +669,10 @@ def definitions() -> dict[str, str]:
         SELECT session_id, SUM({totals}) AS total_tokens FROM usage u GROUP BY session_id
     ), edited AS (
         SELECT session_id, COUNT(*) AS edits FROM edit GROUP BY session_id
+    ), mix AS (
+        SELECT p.session_id,
+{shares}
+        FROM response p WHERE p.bucket IS NOT NULL GROUP BY p.session_id
     ), best AS ({_BEST_PER_SESSION.strip()}
     ), credited AS (
         SELECT session_id,
@@ -652,13 +701,18 @@ def definitions() -> dict[str, str]:
            COALESCE(sat.sittings, 1) AS sittings,
            s.capture_level AS capture_level,
            CASE WHEN s.capture_level = 'metadata-only' THEN 0 ELSE 1 END AS content_archived,
-           COALESCE(e.edits, 0) AS edits
+           COALESCE(e.edits, 0) AS edits,
+           m.change_share AS change_share,
+           m.run_share AS run_share,
+           m.read_share AS read_share,
+           m.talk_share AS talk_share
     FROM session s
     LEFT JOIN repository r ON r.repo_key = s.repo_key
     LEFT JOIN session_label l
            ON l.session_id = s.session_id AND l.name = '{purpose_module.LABEL.name}'
     LEFT JOIN tokens t ON t.session_id = s.session_id
     LEFT JOIN edited e ON e.session_id = s.session_id
+    LEFT JOIN mix m ON m.session_id = s.session_id
     LEFT JOIN credited c ON c.session_id = s.session_id
     LEFT JOIN {SESSION_TIME_TABLE} sat ON sat.session_id = s.session_id
     ORDER BY s.first_at DESC

@@ -98,6 +98,32 @@ Engine changes in the same release:
   What the rule assumes and when it would be wrong is registered in `ARCHITECTURE.md`
   under rule 17.
 
+- **Usage by what each response did, replacing usage by purpose.** Every reply of the
+  model now has a row in a new `response` table and one of four buckets, decided from its
+  tool calls alone by `store/buckets.py` (bucket rule version 1): `change` wrote a file,
+  `run` ran a command or a tool that acts, `read` only looked, `talk` did neither, and
+  when a reply did several the first of those wins. No text is read and no threshold is
+  involved. A turn, a session, a project and a week are sums of replies, a subagent's
+  replies count in the turn whose call started the agent, and the tokens that rest on a
+  guess from a tool's name, or sit in a record that could not be read, are reported
+  beside the shares rather than folded into them. `prudence usage` prints the four buckets
+  by project and week, `prudence status` the rule version and the coverage gap, and
+  `prudence sessions` a change/run/read/talk column. The read contract moves to version 4:
+  `app_usage_by_bucket_day` replaces `app_usage_by_purpose_day`, `app_session_list` gains
+  four shares and `app_status` the rule version and the gap. The session `purpose` label
+  is still stored, and still in `app_session_list`, for one release of comparison.
+
+  Five links under it were wrong and are fixed in `derived.PARSER_VERSION` 6, so
+  **`prudence rebuild` repairs existing history**: an assistant record now belongs to the
+  turn its prompt opened (it fell to one pseudo-turn per session before); a reply spread
+  over several records is counted with its last record's output (subagent output was 13M
+  tokens short on the founder's store); a subagent's replies belong to the turn that
+  dispatched it, not the turn the parent happened to be in; a reply copied into another
+  file under new record ids is counted once; and a turn's tokens are the sum of its replies.
+  A subagent's `meta.json` and a workflow's journal are no longer parsed as transcripts.
+  On the founder's store the buckets come out at change 23.2%, run 33.1%, read 26.7% and
+  talk 17.1% of 9.93B tokens, with nothing resting on a guess and nothing unread.
+
 ## Before 0.1.0
 
 The engine was first published on PyPI as `prudence-dev`, versions 0.1.0 to 0.4.0, between
