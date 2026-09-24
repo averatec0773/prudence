@@ -653,7 +653,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("prudence-rebuild-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a scratch directory");
-        let path = built_store(&directory, "4");
+        let path = built_store(&directory, "5");
 
         // It reads to begin with: `built_store` builds every view.
         assert!(readable(&path).is_ok(), "the built store does not read");
@@ -674,7 +674,7 @@ mod tests {
         // And the contract row is still there, which is exactly why asking only for it
         // was not enough.
         let connection = Connection::open(&path).expect("open again");
-        assert_eq!(contract_version(&connection).ok(), Some(4));
+        assert_eq!(contract_version(&connection).ok(), Some(5));
 
         std::fs::remove_dir_all(&directory).ok();
     }
@@ -683,9 +683,7 @@ mod tests {
     ///
     /// The message said "update whichever of the two is older" whatever the numbers were,
     /// so a reader on a contract 3 store was left to work out that `prudence rebuild` was
-    /// the answer. Contract 4 is the first bump this build refuses an older store over,
-    /// because 3 had the purpose view and 4 does not, so every older store now meets this
-    /// message once.
+    /// the answer. Source provenance requires contract 5.
     #[test]
     fn a_store_on_another_contract_is_refused_with_what_fixes_it() {
         let directory =
@@ -693,7 +691,7 @@ mod tests {
         for (found, fix) in [
             ("3", "prudence rebuild"),
             ("2", "Ingest now"),
-            ("5", "update the app"),
+            ("6", "update the app"),
         ] {
             std::fs::create_dir_all(&directory).expect("a scratch directory");
             let path = built_store(&directory, found);
@@ -703,7 +701,7 @@ mod tests {
             );
             assert!(
                 message.contains(&format!("contract version {found}"))
-                    && message.contains("reads 4"),
+                    && message.contains("reads 5"),
                 "the refusal does not name both versions: {message}"
             );
             assert!(
@@ -766,12 +764,10 @@ mod tests {
         }
     }
 
-    /// Eight: contract 4 retired the purpose view and added the bucket and activity
-    /// views. `app_session_time` and `app_observation_text` are helper tables and
-    /// `app_views.py` says they are not contract.
+    /// Contract 5 adds the source membership view.
     #[test]
-    fn the_contract_is_the_eight_views_the_engine_publishes() {
-        assert_eq!(contract::VIEWS.len(), 8);
+    fn the_contract_is_the_nine_views_the_engine_publishes() {
+        assert_eq!(contract::VIEWS.len(), 9);
         for view in contract::VIEWS {
             assert!(view.name.starts_with("app_"));
             assert!(!view.columns.is_empty());
@@ -803,7 +799,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("prudence-snapshot-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a scratch directory");
-        let path = built_store(&directory, "4");
+        let path = built_store(&directory, "5");
         forget();
 
         // One read, and the answer says it is the first.

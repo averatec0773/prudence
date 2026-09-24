@@ -46,6 +46,7 @@ import {
   tokenPhrase,
 } from "../text/fmt.js";
 import { t } from "../text/strings.js";
+import { repositorySessions } from "./repository-sessions.js";
 
 /**
  * What the screen asks the shell: the scan, and a change to one repository's level.
@@ -90,17 +91,14 @@ function levelOf(row) {
  * Which agents' sessions this repository holds.
  *
  * Recording is per repository and covers **every** AI coding agent that worked in it; a
- * session carries its own source. The scan does not print that list yet, so this answers
- * with the one source Prudence reads today. It is one function rather than a constant at
- * the call site so that the engine's future field drops in without a change to the page:
- * `repositories.rs` already decodes `sources`, and the day it is written the rows show it.
+ * session carries its own source. An absent source list is shown as unknown.
  *
  * @param {any} row one row of the engine's scan
- * @returns {string[]} source keys, never empty
+ * @returns {string[]} source keys
  */
 export function sourcesOf(row) {
   const said = Array.isArray(row?.sources) ? row.sources.filter(Boolean).map(String) : [];
-  return said.length ? said : ["claude-code"];
+  return said;
 }
 
 /**
@@ -111,10 +109,11 @@ export function sourcesOf(row) {
  * is what `strings.test.mjs` refuses. A key Prudence has not learned yet is drawn as the
  * engine wrote it rather than hidden.
  */
-const SOURCE_NAMES = { "claude-code": "Claude Code" };
+const SOURCE_NAMES = { "claude-code": "Claude Code", claude_code: "Claude Code", codex: "Codex" };
 
 function sourceNames(row) {
-  return list(sourcesOf(row).map((key) => SOURCE_NAMES[key] ?? key));
+  const keys = sourcesOf(row);
+  return keys.length ? list(keys.map((key) => SOURCE_NAMES[key] ?? key)) : t("common.dash");
 }
 
 /** The last path component, which is what a person calls the project. */
@@ -589,6 +588,7 @@ export function repositories(state) {
     disclosure({ summary: t("chart.method"), body: [el("p", { text: t("repositories.method") })] }),
   ]);
   screen.appendChild(card);
+  screen.appendChild(repositorySessions(data.sessions, state.project));
 
   if (!port) {
     // The page is open in a browser, which is a real thing to do while working on layout.

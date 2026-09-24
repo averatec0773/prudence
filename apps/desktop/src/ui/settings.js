@@ -1,4 +1,4 @@
-/* Settings: four tabs of controls, and the provenance of what they control.
+/* Settings: five tabs of controls, and the provenance of what they control.
  *
  * ## What changed and why
  *
@@ -8,18 +8,19 @@
  * display, not a settings screen; I do not need the what-is-recorded and never-recorded
  * prose there; I need real settings, with top tabs, and the options the earlier app had."
  *
- * So the prose is gone, the controls are real, and the screen is four tabs:
+ * So the prose is gone, the controls are real, and the screen is five tabs:
  *
  * - **General**: the app's own four settings, each one a segmented control.
  * - **Engine**: where `prudence` is, what version, the Install or Update button, the
  *   engine's recent runs with a diagnosis (`ui/engine-runs.js`), and where the store it
  *   reads is kept. Configuration only: the two actions that run the engine
  *   are in the window's toolbar, on every screen.
+ * - **Sources**: named agent history homes and whether capture is paused.
  * - **Model**: what `prudence config model` prints, and the one field of it this app may
  *   set. The app never calls a model itself, and the tab says so.
  * - **About**: what is running, on what, under what licence, and where to go next.
  *
- * Which repositories are recorded was a fifth tab until the founder gave it a screen of
+ * Which repositories are recorded was a Settings tab until the founder gave it a screen of
  * its own in the sidebar (`ui/repositories.js`, 2026-09-23).
  *
  * ## The page contract, and the one thing this screen keeps between renders
@@ -27,7 +28,7 @@
  * It is handed everything, returns one element and computes no figure. The exception is
  * `openTab`: which tab is open is navigation, not data, and a screen rebuilt because an
  * ingest landed must not throw the reader back to General while they are half way through
- * changing the appearance. The four panes are built together and shown by a class, so a
+ * changing the appearance. The five panes are built together and shown by a class, so a
  * tab change redraws nothing at all.
  *
  * ## Why the controls go through a port
@@ -42,11 +43,12 @@ import { el } from "../design/dom.js";
 import { MODEL_ANSWER } from "../store/asked.js";
 import { engineRuns } from "./engine-runs.js";
 import { engineSection } from "./engine-section.js";
+import { sources } from "./sources.js";
 import { list, relative, stamp } from "../text/fmt.js";
 import { t } from "../text/strings.js";
 
 /**
- * What the four tabs ask the shell.
+ * What the Settings tabs ask the shell.
  *
  * @typedef {{
  *   read: () => Promise<any>,
@@ -67,6 +69,7 @@ export const SETTINGS = { port: null };
 export const TABS = /** @type {const} */ ([
   { key: "general", label: "settings.tab.general" },
   { key: "engine", label: "settings.tab.engine" },
+  { key: "sources", label: "settings.tab.sources" },
   { key: "model", label: "settings.tab.model" },
   { key: "about", label: "settings.tab.about" },
 ]);
@@ -558,7 +561,7 @@ function about(state) {
 
 /* --- the screen --------------------------------------------------------------------- */
 
-const PANES = { general, engine, model, about };
+const PANES = { general, engine, sources, model, about };
 
 /**
  * @param {import("./screens.js").ScreenState} state
@@ -582,7 +585,7 @@ export function settings(state) {
     button.setAttribute("aria-selected", String(tab.key === shown));
     const pane = el("div", { class: "tab-pane", role: "tabpanel" }, [PANES[tab.key](state)]);
     pane.hidden = tab.key !== shown;
-    // The four panes are built together and shown by a flag, so choosing a tab redraws
+    // The five panes are built together and shown by a flag, so choosing a tab redraws
     // nothing: a redraw would ask the shell for the model settings again and would lose
     // whatever the engine block had already reported.
     button.addEventListener("click", () => {

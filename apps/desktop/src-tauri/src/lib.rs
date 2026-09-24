@@ -15,6 +15,7 @@ mod platform;
 mod readiness;
 mod repositories;
 mod runlog;
+mod sources;
 mod store;
 mod timer;
 mod ui_state;
@@ -548,6 +549,79 @@ async fn engine_repository_level(
     .await?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceUpdate {
+    sources: Vec<sources::Source>,
+    repositories: Vec<repositories::Repository>,
+}
+
+#[tauri::command]
+async fn engine_sources(shell: State<'_, Shell>) -> Result<Vec<sources::Source>, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        engine::shared()
+            .read(remembered.as_deref(), &["sources", "--json"])
+            .map_err(source_engine_error)
+            .and_then(|printed| sources::parse(&printed))
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn engine_source_add(
+    shell: State<'_, Shell>,
+    kind: String,
+    name: String,
+    home: String,
+) -> Result<SourceUpdate, String> {
+    let args = sources::add_arguments(&kind, &name, &home).ok_or("invalid source details")?;
+    source_change(shell, args).await
+}
+
+#[tauri::command]
+async fn engine_source_set(
+    shell: State<'_, Shell>,
+    id: String,
+    enabled: bool,
+    name: Option<String>,
+    home: Option<String>,
+) -> Result<SourceUpdate, String> {
+    let args = sources::set_arguments(&id, enabled, name.as_deref(), home.as_deref())
+        .ok_or("invalid source details")?;
+    source_change(shell, args).await
+}
+
+async fn source_change(shell: State<'_, Shell>, args: Vec<String>) -> Result<SourceUpdate, String> {
+    let remembered = shell.memory.read().usable_engine().map(str::to_string);
+    scheduled(move || {
+        let engine = engine::shared();
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let sources = engine
+            .read(remembered.as_deref(), &borrowed)
+            .map_err(source_engine_error)
+            .and_then(|printed| sources::parse(&printed))?;
+        let repositories = engine
+            .read(remembered.as_deref(), &["init", "--scan", "--json"])
+            .map_err(source_engine_error)
+            .and_then(|printed| repositories::parse(&printed))?;
+        Ok(SourceUpdate {
+            sources,
+            repositories,
+        })
+    })
+    .await?
+}
+
+fn source_engine_error(error: engine::EngineError) -> String {
+    let detail = error.detail();
+    if detail.is_empty() {
+        error.kind().to_string()
+    } else {
+        detail
+    }
+}
+
 /// Whether a review is ready, with the engine's own sentence when it is.
 #[tauri::command]
 async fn engine_readiness(shell: State<'_, Shell>) -> Result<Option<readiness::Readiness>, String> {
@@ -971,6 +1045,9 @@ pub fn run() {
             engine_install,
             engine_repositories,
             engine_repository_level,
+            engine_sources,
+            engine_source_add,
+            engine_source_set,
             engine_readiness,
             engine_runs,
             engine_diagnose,

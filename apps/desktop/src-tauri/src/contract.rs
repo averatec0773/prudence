@@ -5,19 +5,15 @@
 //! as long as it still answers with these columns, and changing one of them is what
 //! bumps `meta.APP_CONTRACT_VERSION`."* This is the other side of that sentence.
 //!
-//! **This build reads contract 4 and nothing else.** Contract 4 retired
-//! `app_usage_by_purpose_day`, which is where every token chart and the hours used to come
-//! from, so a contract 3 store is missing the two views the Overview and the panel now
-//! draw. Reading it would mean keeping the purpose charts alive beside the bucket ones for
-//! a store one `prudence rebuild` away from being current. The mismatch message says which
-//! side is behind (`store.rs`).
+//! **This build reads contract 5 and nothing else.** Source provenance and model names
+//! are part of the session list, and source membership has its own view.
 //!
 //! A test asserts that each view still answers with exactly these columns in this order,
 //! so a Python change that forgets to bump the version fails here rather than in front
 //! of the user.
 
 /// The contract versions this build renders.
-pub const SUPPORTED: &[u32] = &[4];
+pub const SUPPORTED: &[u32] = &[5];
 
 /// One view: its name, and the columns it must answer with, in order.
 pub struct View {
@@ -25,7 +21,7 @@ pub struct View {
     pub columns: &'static [&'static str],
 }
 
-/// The eight views. Not twelve: `app_session_time` and `app_observation_text` are
+/// The nine views. `app_session_time` and `app_observation_text` are
 /// helper tables that `app_views.py` marks explicitly as "not contract".
 pub const VIEWS: &[View] = &[
     View {
@@ -137,6 +133,10 @@ pub const VIEWS: &[View] = &[
         ],
     },
     View {
+        name: "app_session_sources",
+        columns: &["session_id", "source_id", "kind", "label", "home"],
+    },
+    View {
         name: "app_session_list",
         columns: &[
             "session_id",
@@ -160,6 +160,10 @@ pub const VIEWS: &[View] = &[
             "run_share",
             "read_share",
             "talk_share",
+            "source",
+            "source_ids",
+            "source_labels",
+            "models",
         ],
     },
     View {

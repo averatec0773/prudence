@@ -1,0 +1,85 @@
+.source-list,
+.source-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.source-row {
+  padding: var(--s3) 0;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.source-heading,
+.source-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.source-heading strong { font-size: var(--t-footnote); }
+.source-kind,
+.source-note,
+.source-message {
+  color: var(--text-3);
+  font-size: var(--t-caption);
+}
+
+.source-home {
+  margin-top: var(--s1);
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: var(--t-caption);
+}
+
+.source-note { margin: var(--s1) 0 var(--s2); }
+.source-message:empty { display: none; }
+
+.source-add-toggle { align-self: flex-start; }
+.source-add-form,
+.source-edit {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+  padding-top: var(--s3);
+}
+
+.source-add-form[hidden],
+.source-edit[hidden] { display: none; }
+
+.source-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+  font-size: var(--t-caption);
+  color: var(--text-2);
+}
+
+.source-field input,
+.source-field select {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--s2);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.source-field input:focus-visible,
+.source-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.source-add-form > button,
+.source-edit > button { justify-self: start; align-self: end; }
+
+@media (max-width: 620px) {
+  .source-add-form,
+  .source-edit { grid-template-columns: minmax(0, 1fr); }
+}

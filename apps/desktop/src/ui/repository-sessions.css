@@ -1,0 +1,51 @@
+.repository-sessions { padding: var(--s4); }
+.repository-sessions summary {
+  cursor: default;
+  font-weight: 590;
+}
+.repository-sessions summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.repository-sessions .panel-note { margin: var(--s3) 0; }
+.repository-session-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+  max-width: 440px;
+  margin-bottom: var(--s3);
+}
+.repository-session-filters select {
+  min-width: 0;
+  padding: var(--s2);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.repository-session-filters select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.repository-session-list { display: flex; flex-direction: column; gap: var(--s2); }
+.repository-session {
+  padding: var(--s2) 0;
+  border-top: 0.5px solid var(--separator);
+}
+.repository-session-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--s3);
+  font-size: var(--t-footnote);
+}
+.repository-session-main span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repository-session-meta {
+  margin-top: var(--s1);
+  color: var(--text-3);
+  font-size: var(--t-caption);
+}
+@media (max-width: 620px) {
+  .repository-session-main { grid-template-columns: minmax(0, 1fr) auto; }
+  .repository-session-main span:last-child { grid-column: 1 / -1; }
+}

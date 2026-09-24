@@ -18,6 +18,7 @@ import { ENGINE } from "./engine-section.js";
 import { REPOSITORIES } from "./repositories.js";
 import { REVIEW_NOW } from "./review.js";
 import { SETTINGS } from "./settings.js";
+import { SOURCES } from "./sources.js";
 
 /**
  * A write that failed, on the shell's standard error.
@@ -75,6 +76,12 @@ export function wireWindow() {
   REPOSITORIES.port = {
     scan: () => Bridge.engineRepositories(),
     level: (key, level) => Bridge.setRepositoryLevel(key, level),
+  };
+
+  SOURCES.port = {
+    read: () => Bridge.engineSources(),
+    add: (kind, name, home) => Bridge.addSource(kind, name, home),
+    set: (id, enabled, name, home) => Bridge.setSource(id, enabled, name, home),
   };
 
   SETTINGS.port = {

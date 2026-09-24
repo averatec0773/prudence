@@ -313,16 +313,16 @@ the store, does not touch `document` outside the tree it is building, and keeps 
 between renders: it is called again from scratch whenever anything changes.
 
 **One exception, and only one: a screen may remember its own navigation.** The Settings
-screen keeps which of its four tabs is open in a module-level variable. Which tab is open
+screen keeps which of its five tabs is open in a module-level variable. Which tab is open
 is navigation, not data, and a screen rebuilt because an ingest landed must not throw the
 reader back to the first tab while they are half way through changing a setting. Nothing
-about the data may be kept this way, and the four panes are built together and shown by a
+about the data may be kept this way, and the five panes are built together and shown by a
 flag, so choosing a tab redraws nothing at all. (A batch of level changes on the
 Repositories screen outlives the screen it was started on, and is kept in `BATCH` for the
 reason `store/asked.js` keeps the engine's answers: it is a process in flight, not data.)
 
-An answer from the engine is **data**, so a screen does not keep one either. The two the
-Settings screen asks for live in `store/asked.js`, which is also where the rule about how
+An answer from the engine is **data**, so a screen does not keep one either. The model,
+source and repository answers live in `store/asked.js`, which is also where the rule about how
 often the engine may be asked is kept.
 
 **It returns one element** and appends nothing to the page itself.
@@ -759,20 +759,6 @@ is not checked, so a token could be declared there.
 - **Removed when:** the test takes a list of stylesheets rather than one. Batch 5, which
   is the next batch to touch `window.css`.
 
-### The Sources column draws a constant
-
-`ui/repositories.js`, `sourcesOf`. Recording is per repository and covers every AI coding
-agent that worked in it, so the repository is where the list of agents belongs. The
-engine's `init --scan --json` does not print one yet, so the column answers with the one
-source Prudence reads today.
-
-- **Assumes:** every session found in a repository was written by Claude Code, which is
-  true of every session on the founder's machine and of the only hook the plugin installs.
-- **When it breaks:** a repository whose history came from a second agent is still labelled
-  Claude Code, which is a claim the app cannot check.
-- **Removed when:** the scan prints `sources`. `repositories.rs` already decodes the field
-  and `sourcesOf` already prefers it, so that day is an engine change and nothing else.
-
 ### An agent's display name is a constant, not a catalogue key
 
 `ui/repositories.js`, `SOURCE_NAMES`. "Claude Code" is the same in both languages, and
@@ -946,12 +932,14 @@ Grown by each batch. Batch 1 adds the window shell only.
 | `miniStack` | One row of a stacked bar: the composition of a whole, in a single line. It takes its parts in the caller's fixed order with their colours (the purposes on the Review screen, the buckets on the panel), and a `total` when the whole holds something none of the parts names | `src/design/charts.js` |
 | The backdrop | A plain full-screen window of the app's own, for screenshots only | `src/backdrop.html` |
 | The engine block | Configuration: where `prudence` is and whether it was found or chosen, with the picker, its version against the store's, and the Install or Update button with uv's own output under it. Install and Update are disabled while any run goes | `src/ui/engine-section.js`, `ui/engine-section.css` |
-| The tab strip | The Settings screen's four tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
-| A setting row | A name, a segmented control, and one sentence under both. **Every control on the Settings screen is this one**: four settings in four shapes is four things to learn, and a segmented control says what the choices are without being opened | `src/ui/settings.js`, `ui/settings.css` |
+| The tab strip | The Settings screen's five tabs. Control layer, so it takes the same frost and the same selected pill the segmented control takes | `src/ui/settings.css`, `design/tokens.css` |
+| A setting row | A name, a segmented control, and one sentence under both. General and Model use it for fixed choices; Sources uses text fields for named homes | `src/ui/settings.js`, `ui/settings.css` |
+| Source locations | The Settings Sources tab lists the engine's named homes, shows capture state and missing paths, and offers pause, resume, edit and typed add. A change redraws from the CLI answer and refreshes the repository scan | `src/ui/sources.js`, `ui/sources.css` |
 | `shareBars` | Shares, as horizontal bars on one axis: what each row is, how far it reaches, and the figure printed beside it. Drawn by the Review screen and the Observations screen, which had one each until this sheet | `src/design/charts.js` |
 | `runProgress` | What a run is doing: the step in the reader's language, the engine's two figures in monospaced digits, and a determinate bar that fills for the step it is on. Drawn on the panel, in the toolbar and the status row (`is-compact`, no step line), and in the batch bar | `src/design/components.js` |
 | `segmented`, `subhead` | The one row of choices every setting and every repository's level is, and the caption-and-note heading of a block inside a card. Moved out of `ui/settings.js` when the Repositories screen wanted both | `src/design/components.js`, `design/components.css` |
 | The repositories list | The Repositories screen: which repositories the engine found and which of them it records, split into the two, one row each with the name and the end of its path, sessions and source, first and last day, tokens by bucket as one bar, alive at thirty days over its lines, and the level. Content, so it is opaque. **Every column is declared**: `table-layout: fixed` and a `<colgroup>` adding to 504 pt, which fits the window's narrowest; the path and a long name are the only values allowed an ellipsis. A recorded row is the project picker: clicking it sets the window's filter, a quiet fill marks it, and clicking again clears it | `src/ui/repositories.js`, `ui/repositories.css`, `store/repositories.js` |
+| Recent sessions | A disclosure below the repository list, drawn from `app_session_list`. Source home and model menus filter its rows only; they do not change the repository figures or saved review scope | `src/ui/repository-sessions.js`, `ui/repository-sessions.css` |
 | The batch bar | What to do with the ticked rows: how many they are, the three levels, and what the engine refused. At the foot of the card, sticky, and only while something is ticked. **Control layer**, so it takes the frost while the list above it stays opaque | same file |
 | `disclosure` | A drawer with the line that says what is in it. The card builds one out of its `method` string; a caller with more to fold away builds its own, and `deferred` is content built the first time it is opened | `src/design/components.js` |
 | The figure strip | The Overview's three figures on one row, each carrying its own unit, with the words the engine lends the screen glossed in the strip's own drawer. It was three cards taking a full row above charts starved of width | `src/ui/overview.js`, `ui/overview.css` |

@@ -60,11 +60,7 @@ pub struct Repository {
     pub exists: bool,
     /// Which AI coding agents wrote the sessions found in this repository.
     ///
-    /// The engine does not print this field yet, so today it decodes empty and the page
-    /// draws the one source Prudence reads. It is declared here rather than left out so
-    /// that the day the scan carries it, it reaches the page without a change on either
-    /// side: recording is per repository and covers every agent that worked in it, so the
-    /// repository is where the list of agents belongs.
+    /// Recording is per repository and covers every agent that worked in it.
     #[serde(default)]
     pub sources: Vec<String>,
 }
