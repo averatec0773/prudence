@@ -71,7 +71,7 @@ const MODEL = {
 const INFO = {
   version: "0.5.0",
   database: "/tmp/a copy/prudence.db",
-  supported_contract: [2, 3],
+  supported_contract: [5],
   language: null,
   settings: {
     language: "system",
@@ -210,18 +210,18 @@ test("the screen returns one element and appends nothing to the page", () => {
   assert.ok(screen.tree.className.split(/\s+/).includes("screen-body"));
 });
 
-test("four tabs, left to right, and exactly one of them open", () => {
+test("five tabs, left to right, and exactly one of them open", () => {
   fakePort();
   const screen = screenFor();
   assert.deepEqual(
     screen.tree.findAll(".tab").map((node) => node.textContent),
-    ["General", "Engine", "Model", "About"]
+    ["General", "Engine", "Sources", "Model", "About"]
   );
   const shown = screen.tree.findAll(".tab-pane").filter((pane) => !pane.hidden);
   assert.equal(shown.length, 1, "one pane at a time");
   assert.deepEqual(
     screen.tree.findAll(".tab").map((node) => node.getAttribute("aria-selected")),
-    ["true", "false", "false", "false"]
+    ["true", "false", "false", "false", "false"]
   );
 });
 
@@ -394,7 +394,7 @@ test("the status row can open the Engine tab, and the Engine tab carries the run
     const screen = screenFor();
     assert.deepEqual(
       screen.tree.findAll(".tab").map((node) => node.getAttribute("aria-selected")),
-      ["false", "true", "false", "false"]
+      ["false", "true", "false", "false", "false"]
     );
     await new Promise(setImmediate);
     const pane = screen.tree.findAll(".tab-pane").filter((one) => !one.hidden)[0];
@@ -568,7 +568,7 @@ test("a store with no status row still draws, and says the figures are not read"
 test("no shell info at all draws rather than throwing", () => {
   fakePort();
   const screen = open(screenFor({}, undefined), "general");
-  assert.ok(screen.tree.findAll(".tab").length === 4, "the screen did not draw");
+  assert.ok(screen.tree.findAll(".tab").length === 5, "the screen did not draw");
   assert.equal(screen.tree.textContent.includes("undefined"), false);
 });
 

@@ -109,3 +109,6 @@ export const MODEL_ANSWER = memo();
 
 /** What `prudence init --scan --json` prints. */
 export const REPOSITORY_SCAN = memo();
+
+/** What `prudence sources --json` prints. */
+export const SOURCE_ANSWER = memo();

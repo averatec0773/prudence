@@ -319,7 +319,7 @@ test("every figure on a row is the engine's own", async () => {
   const row = rowFor(screen, "beatos");
   const cells = row.findAll("td");
   assert.equal(row.find(".repo-path").getAttribute("title"), "/Users/someone/code/beatos");
-  assert.equal(cells[2].textContent, "65Claude Code", "the count and its source");
+  assert.equal(cells[2].textContent, "65-", "a scan without a source is not labelled as Claude Code");
   assert.equal(cells[3].textContent, "2026-05-142026-08-06", "the first and the last day");
   assert.deepEqual(ticked(row), [Str.t("repositories.level.full")]);
 });
@@ -551,16 +551,16 @@ test("a day is the same ten characters in both languages, and a dash where there
 });
 
 test("a repository names the agents whose sessions it holds", async () => {
-  assert.deepEqual(sourcesOf({}), ["claude-code"]);
-  assert.deepEqual(sourcesOf({ sources: [] }), ["claude-code"]);
-  assert.deepEqual(sourcesOf({ sources: ["claude-code", "codex"] }), ["claude-code", "codex"]);
+  assert.deepEqual(sourcesOf({}), []);
+  assert.deepEqual(sourcesOf({ sources: [] }), []);
+  assert.deepEqual(sourcesOf({ sources: ["claude_code", "codex"] }), ["claude_code", "codex"]);
   const later = await screenFor({
     scan: SCAN.map((row) =>
-      String(row.path).includes("beatos") ? { ...row, sources: ["claude-code", "codex"] } : { ...row }
+      String(row.path).includes("beatos") ? { ...row, sources: ["claude_code", "codex"] } : { ...row }
     ),
   });
   const said = rowFor(later, "beatos").findAll("td")[2].textContent;
-  assert.ok(said.includes("Claude Code") && said.includes("codex"), said);
+  assert.ok(said.includes("Claude Code") && said.includes("Codex"), said);
 });
 
 /* The level control's three segments are equal and the column fits the widest label. */

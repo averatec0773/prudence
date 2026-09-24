@@ -29,7 +29,7 @@
   padding: 3px;
   border-radius: var(--r-control);
   background: var(--control-2);
-  /* Four short words; on a narrow window they wrap rather than pushing the screen wider
+  /* Five short words; on a narrow window they wrap rather than pushing the screen wider
      than the scroll area. */
   flex-wrap: wrap;
 }

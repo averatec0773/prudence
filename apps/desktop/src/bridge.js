@@ -133,6 +133,20 @@ export function setRepositoryLevel(key, level) {
   return core().invoke("engine_repository_level", { key: String(key), level: String(level) });
 }
 
+export function engineSources() {
+  return core().invoke("engine_sources");
+}
+
+export function addSource(kind, name, home) {
+  return core().invoke("engine_source_add", { kind: String(kind), name: String(name), home: String(home) });
+}
+
+export function setSource(id, enabled, name = null, home = null) {
+  return core().invoke("engine_source_set", {
+    id: String(id), enabled: Boolean(enabled), name, home,
+  });
+}
+
 /** Whether a review is ready, with the engine's own sentence when it is. Null where the
  *  engine does not answer the question. */
 export function engineReadiness() {
