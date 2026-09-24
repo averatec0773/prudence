@@ -32,9 +32,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from prudence.facts.base import Case, Fact
-from prudence.store import buckets
+from prudence.store import buckets, tokens
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 # The command class whose rerun after a change closes a loop.
 LOOP_CLASS = "test"
@@ -42,10 +42,7 @@ LOOP_CLASS = "test"
 # Sorts after every reply id, so a reply begun at the call's own instant counts as begun.
 _AFTER_ANY_ID = "\U0010ffff"
 
-_TOKENS = (
-    "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)"
-    " + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)"
-)
+_TOKENS = tokens.total_sql()
 
 
 @dataclass
@@ -136,7 +133,9 @@ def compute(connection: sqlite3.Connection, session_id: str) -> int:
 def compute_tokens(connection: sqlite3.Connection, session_id: str) -> int | None:
     """The loops' tokens, absent for a session whose replies reported no usage at all."""
     (measured,) = connection.execute(
-        "SELECT COUNT(input_tokens) FROM response WHERE session_id = ?", (session_id,)
+        "SELECT COUNT(COALESCE(total_input_tokens, input_tokens))"
+        " FROM response WHERE session_id = ?",
+        (session_id,),
     ).fetchone()
     if not measured:
         return None

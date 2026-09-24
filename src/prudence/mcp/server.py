@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - exercised only when `mcp` is 
     ) from error
 
 from prudence.paths import database_file
-from prudence.store import db, views
+from prudence.store import views
 
 NOT_INGESTED = "Nothing ingested yet. Run `prudence ingest`."
 
@@ -47,7 +47,9 @@ def _connect() -> sqlite3.Connection | None:
     """
     if not database_file().exists():
         return None
-    return db.connect()
+    connection = sqlite3.connect(database_file().as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def _resolve_session(connection: sqlite3.Connection, token: str) -> str | None:
@@ -69,6 +71,9 @@ def search_sessions(
     since: str | None = None,
     until: str | None = None,
     limit: int = 20,
+    source: str | None = None,
+    source_id: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Search recorded sessions, newest first.
 
@@ -76,6 +81,8 @@ def search_sessions(
     command classes (`git_commit`, `test`, and so on); it never matches message text,
     because none is stored at any capture level. `repo` filters by repository name or
     key. `since`/`until` accept an ISO date (`2026-09-01`) or `7d`/`30d`/`90d` shorthand.
+    `source` filters agent kind (claude_code or codex); `source_id` filters a named
+    collection location, and `model` filters sessions containing that model.
     `limit` defaults to 20 and is capped at 100 no matter what is asked for.
 
     Returns `{"results": [...], "total": N, "truncated": bool}`, or `{"message": "..."}`
@@ -95,7 +102,15 @@ def search_sessions(
             if repo_key is None:
                 return {"results": [], "total": 0, "truncated": False}
         return views.search_sessions(
-            connection, query=query, repo_key=repo_key, since=since, until=until, limit=limit
+            connection,
+            query=query,
+            repo_key=repo_key,
+            since=since,
+            until=until,
+            limit=limit,
+            source=source,
+            source_id=source_id,
+            model=model,
         )
     finally:
         connection.close()

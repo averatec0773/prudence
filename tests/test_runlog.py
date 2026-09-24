@@ -361,6 +361,28 @@ def test_every_check_holds_on_a_store_the_pipeline_built(lab: Workspace) -> None
     assert tokens.numbers["usage"] == tokens.numbers["response"] > 0
 
 
+def test_token_check_uses_explicit_input_total_when_cache_is_a_subset(lab: Workspace) -> None:
+    _scenario(lab)
+    _enable()
+    assert CliRunner().invoke(main, ["ingest"]).exit_code == 0
+    connection = db.connect()
+    try:
+        connection.execute(
+            "UPDATE usage SET input_tokens = 100, cache_read_tokens = 60,"
+            " cache_creation_tokens = NULL, total_input_tokens = 100, output_tokens = 20"
+        )
+        connection.execute(
+            "UPDATE response SET input_tokens = 100, cache_read_tokens = 60,"
+            " cache_creation_tokens = NULL, total_input_tokens = 100, output_tokens = 20"
+            " WHERE input_tokens IS NOT NULL"
+        )
+        result = checks.token_totals_agree(connection)
+    finally:
+        connection.close()
+    assert result.passed
+    assert result.numbers["usage"] == result.numbers["response"]
+
+
 @pytest.mark.parametrize(
     ("statement", "failing"),
     [
@@ -541,10 +563,10 @@ def test_hooks_install_and_uninstall_are_recorded(
     assert runner.invoke(main, ["hooks", "install", "--yes"]).exit_code == 0
     assert runner.invoke(main, ["hooks", "uninstall", "--yes"]).exit_code == 0
     uninstalled, installed = _records()[:2]
-    assert installed["command"] == ["hooks", "install", "--yes"]
+    assert installed["command"] == ["hooks", "install", "--yes", "--source", "claude"]
     assert installed["steps"][0]["name"] == "install"
     assert installed["steps"][0]["counts"]["added"] == 6
-    assert uninstalled["command"] == ["hooks", "uninstall", "--yes"]
+    assert uninstalled["command"] == ["hooks", "uninstall", "--yes", "--source", "claude"]
     assert uninstalled["steps"][0]["counts"]["removed"] > 0
 
 

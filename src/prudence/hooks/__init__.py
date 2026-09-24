@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
+from prudence.hooks.policy import CLAUDE_EVENTS, events_for
 from prudence.paths import (
     claude_settings_file,
     enabled_list_file,
@@ -39,17 +40,7 @@ from prudence.paths import (
     spool_file,
 )
 
-# The set from the hooks spike: boundary events for identity and turn keys, and the
-# Bash pair that is the only thing which sees a shell command change the tree. All
-# synchronous, because `async: true` silently loses `Stop` and `SessionEnd`.
-EVENTS: tuple[tuple[str, str | None], ...] = (
-    ("SessionStart", None),
-    ("UserPromptSubmit", None),
-    ("Stop", None),
-    ("SubagentStop", None),
-    ("PreToolUse", "Bash"),
-    ("PostToolUse", "Bash"),
-)
+EVENTS = CLAUDE_EVENTS
 
 # Seconds. The script measured 52 to 82 ms on the founder's machine, so this is a
 # guard against a pathological `git status`, not a working budget.
@@ -57,7 +48,6 @@ TIMEOUT_SECONDS = 10
 
 SCRIPT_NAME = "prudence-hook.sh"
 SCRIPT_MODE = 0o755
-BACKUP_PREFIX = "settings.json.prudence-backup-"
 
 ENABLED_HEADER = (
     "# Repositories you enabled, one absolute working-tree path per line.\n"
@@ -100,8 +90,10 @@ def install_script(target: Path | None = None) -> Path:
     """Copy the hook into the data directory at mode 0755."""
     destination = target or hook_script_file()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(script_source().read_bytes())
-    destination.chmod(SCRIPT_MODE)
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_bytes(script_source().read_bytes())
+    temporary.chmod(SCRIPT_MODE)
+    os.replace(temporary, destination)
     return destination
 
 
@@ -139,6 +131,8 @@ def install(
     settings_path: Path | None = None,
     script_path: Path | None = None,
     now: datetime | None = None,
+    kind: str = "claude_code",
+    source_id: str = "claude",
 ) -> InstallResult:
     """Add our hook entries to the user's settings file. Idempotent."""
     settings_file = settings_path or claude_settings_file()
@@ -148,7 +142,7 @@ def install(
 
     before = _read_text(settings_file)
     settings = _parse(before, settings_file)
-    added, already = _add_entries(settings, script)
+    added, already = _add_entries(settings, script, kind, source_id)
     result = InstallResult(
         settings_path=settings_file,
         script_path=script,
@@ -184,7 +178,11 @@ def uninstall(
     if backup is not None:
         backup_text = backup.read_text(encoding="utf-8")
         try:
-            same = json.loads(backup_text) == settings
+            original = json.loads(backup_text)
+            comparable = dict(original) if isinstance(original, dict) else original
+            if isinstance(comparable, dict) and comparable.get("hooks") == {}:
+                comparable.pop("hooks")
+            same = comparable == settings
         except ValueError:
             same = False
         if same:
@@ -198,7 +196,12 @@ def uninstall(
     return result
 
 
-def present(settings_path: Path | None = None, script_path: Path | None = None) -> list[str]:
+def present(
+    settings_path: Path | None = None,
+    script_path: Path | None = None,
+    kind: str = "claude_code",
+    source_id: str = "claude",
+) -> list[str]:
     """Which of our events are wired up in the settings file right now."""
     settings_file = settings_path or claude_settings_file()
     script = script_path or hook_script_file()
@@ -210,7 +213,7 @@ def present(settings_path: Path | None = None, script_path: Path | None = None) 
     if not isinstance(hooks, dict):
         return []
     found = []
-    for event, matcher in EVENTS:
+    for event, matcher in events_for(kind):
         groups = hooks.get(event)
         if not isinstance(groups, list):
             continue
@@ -219,7 +222,7 @@ def present(settings_path: Path | None = None, script_path: Path | None = None) 
                 continue
             entries = group.get("hooks")
             if isinstance(entries, list) and any(
-                _is_ours(entry, script, event) for entry in entries
+                _is_ours(entry, script, event, kind, source_id) for entry in entries
             ):
                 found.append(event if matcher is None else f"{event}({matcher})")
                 break
@@ -232,7 +235,7 @@ def latest_backup(settings_path: Path | None = None) -> Path | None:
     directory = settings_file.parent
     if not directory.is_dir():
         return None
-    backups = sorted(directory.glob(f"{BACKUP_PREFIX}*"))
+    backups = sorted(directory.glob(f"{settings_file.name}.prudence-backup-*"))
     return backups[-1] if backups else None
 
 
@@ -244,22 +247,34 @@ def spool_size(path: Path | None = None) -> int:
         return 0
 
 
-def _command(script: Path, event: str) -> str:
+def _command(script: Path, event: str, kind: str = "claude_code", source_id: str = "claude") -> str:
     """The shell line Claude Code runs. Quoted, because the data directory on macOS is
     `~/Library/Application Support/...` and an unquoted space splits the path."""
-    return f"{shlex.quote(str(script))} {event}"
+    command = f"{shlex.quote(str(script))} {event}"
+    if kind != "claude_code" or source_id != "claude":
+        command += f" {shlex.quote(kind)} {shlex.quote(source_id)}"
+    return command
 
 
-def _is_ours(entry: object, script: Path, event: str) -> bool:
+def _is_ours(
+    entry: object, script: Path, event: str, kind: str = "claude_code", source_id: str = "claude"
+) -> bool:
     """Recognise our entry whether it was written quoted or, by an older version, bare."""
     if not isinstance(entry, dict):
         return False
     command = entry.get("command")
-    return command in (_command(script, event), f"{script} {event}")
+    expected = {_command(script, event, kind, source_id)}
+    if kind == "claude_code" and source_id == "claude":
+        expected.add(f"{script} {event}")
+    return isinstance(command, str) and command in expected
 
 
-def _entry(script: Path, event: str) -> dict:
-    return {"type": "command", "command": _command(script, event), "timeout": TIMEOUT_SECONDS}
+def _entry(script: Path, event: str, kind: str = "claude_code", source_id: str = "claude") -> dict:
+    return {
+        "type": "command",
+        "command": _command(script, event, kind, source_id),
+        "timeout": TIMEOUT_SECONDS,
+    }
 
 
 def _matches(group: dict, matcher: str | None) -> bool:
@@ -269,13 +284,15 @@ def _matches(group: dict, matcher: str | None) -> bool:
     return current == matcher
 
 
-def _add_entries(settings: dict, script: Path) -> tuple[list[str], list[str]]:
+def _add_entries(
+    settings: dict, script: Path, kind: str = "claude_code", source_id: str = "claude"
+) -> tuple[list[str], list[str]]:
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise SettingsProblem("`hooks` in the settings file is not an object; nothing was written.")
     added: list[str] = []
     already: list[str] = []
-    for event, matcher in EVENTS:
+    for event, matcher in events_for(kind):
         label = event if matcher is None else f"{event}({matcher})"
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
@@ -291,10 +308,10 @@ def _add_entries(settings: dict, script: Path) -> tuple[list[str], list[str]]:
         entries = target.setdefault("hooks", [])
         if not isinstance(entries, list):
             raise SettingsProblem(f"`hooks.{event}[].hooks` is not a list; nothing was written.")
-        if any(_is_ours(entry, script, event) for entry in entries):
+        if any(_is_ours(entry, script, event, kind, source_id) for entry in entries):
             already.append(label)
             continue
-        entries.append(_entry(script, event))
+        entries.append(_entry(script, event, kind, source_id))
         added.append(label)
     return added, already
 
@@ -383,10 +400,10 @@ def _backup(path: Path, text: str, now: datetime | None) -> Path | None:
     if not path.exists():
         return None
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    target = path.with_name(f"{BACKUP_PREFIX}{stamp}")
+    target = path.with_name(f"{path.name}.prudence-backup-{stamp}")
     suffix = 1
     while target.exists():
-        target = path.with_name(f"{BACKUP_PREFIX}{stamp}-{suffix}")
+        target = path.with_name(f"{path.name}.prudence-backup-{stamp}-{suffix}")
         suffix += 1
     target.write_text(text, encoding="utf-8")
     return target
@@ -401,3 +418,20 @@ def _diff(before: str, after: str, path: Path) -> str:
             tofile=f"{path} (after)",
         )
     )
+
+
+def write_enabled_sources(config) -> None:
+    """Mirror collection consent for the cheap shell hook, without TOML parsing there."""
+    refresh_installed_script()
+    destination = enabled_list_file().with_name("sources-enabled.txt")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text("".join(f"{s.id}\n" for s in config.sources.values() if s.enabled))
+    os.replace(temporary, destination)
+
+
+def refresh_installed_script() -> None:
+    """Upgrade only Prudence's installed copy; never install a hook or change settings."""
+    installed = hook_script_file()
+    if installed.is_file() and installed.read_bytes() != script_source().read_bytes():
+        install_script(installed)

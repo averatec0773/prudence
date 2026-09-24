@@ -20,7 +20,7 @@ from pathlib import Path
 
 from prudence.paths import database_file, lock_file
 
-ARCHIVE_SCHEMA_VERSION = 1
+ARCHIVE_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
 FILE_MODE = 0o600
 
@@ -35,11 +35,24 @@ CREATE TABLE IF NOT EXISTS archive_file(
     sha256 TEXT,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
-    generation INTEGER NOT NULL DEFAULT 0
+    generation INTEGER NOT NULL DEFAULT 0,
+    agent_kind TEXT NOT NULL DEFAULT 'claude_code'
 );
 CREATE INDEX IF NOT EXISTS archive_file_repo ON archive_file(repo_key, source);
 CREATE INDEX IF NOT EXISTS archive_file_session ON archive_file(session_id);
 
+CREATE TABLE IF NOT EXISTS collection_source(
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    home TEXT NOT NULL,
+    enabled INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS archive_origin(
+    path TEXT NOT NULL REFERENCES archive_file(path) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    PRIMARY KEY(path, source_id)
+);
 CREATE TABLE IF NOT EXISTS archive_chunk(
     path TEXT NOT NULL,
     "offset" INTEGER NOT NULL,
@@ -79,6 +92,15 @@ def migrate(connection: sqlite3.Connection) -> None:
     if version >= ARCHIVE_SCHEMA_VERSION:
         return
     connection.executescript(ARCHIVE_SCHEMA)
+    columns = {r[1] for r in connection.execute("PRAGMA table_info(archive_file)")}
+    if "agent_kind" not in columns:
+        connection.execute(
+            "ALTER TABLE archive_file ADD COLUMN agent_kind TEXT NOT NULL DEFAULT 'claude_code'"
+        )
+    connection.execute(
+        "INSERT OR IGNORE INTO archive_origin SELECT path, 'claude' FROM archive_file"
+        " WHERE agent_kind = 'claude_code' AND source != 'spool'"
+    )
     connection.execute(f"PRAGMA user_version={ARCHIVE_SCHEMA_VERSION}")
 
 

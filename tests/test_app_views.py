@@ -88,13 +88,36 @@ def test_the_bucket_view_totals_agree_with_the_response_table(lab: Workspace) ->
 
     bucketed = [cell for cell in expected if cell["bucket"] is not None]
     for column in views.TOKEN_COLUMNS:
-        assert row[column] == sum(cell[column] for cell in bucketed), column
+        assert row[column] == sum(cell[column] or 0 for cell in bucketed), column
     assert row["responses"] == sum(cell["responses"] for cell in bucketed)
     assert by_bucket["change"] == 165
     assert by_bucket["read"] == 30
     assert by_bucket["run"] == 0, "the sample session's git commit, which recorded no usage"
     assert None not in by_bucket, "a reply with no bucket is in no row of the view"
     assert gap == 30, "it is the coverage gap on app_status instead"
+
+
+def test_app_bucket_keeps_unknown_token_subsets_null(lab: Workspace) -> None:
+    record_one_session(lab)
+    connection = db.connect()
+    try:
+        connection.execute(
+            "INSERT INTO session (session_id, repo_key, source, first_at, parser_version)"
+            " VALUES ('codex:s', ?, 'codex', '2030-01-01T12:00:00Z', 7)",
+            (lab.repo_key(),),
+        )
+        connection.execute(
+            "INSERT INTO response (response_id, session_id, started_at, bucket,"
+            " bucket_rule_version, total_input_tokens, output_tokens, parser_version)"
+            " VALUES ('codex:r', 'codex:s', '2030-01-01T12:00:00Z', 'run', 2, 100, 20, 7)"
+        )
+        row = connection.execute(
+            "SELECT input_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
+            " FROM app_usage_by_bucket_day WHERE day = '2030-01-01'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert tuple(row) == (None, None, None, 120)
 
 
 def test_the_session_list_carries_each_sessions_bucket_shares(lab: Workspace) -> None:

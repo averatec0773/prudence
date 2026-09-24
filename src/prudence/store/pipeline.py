@@ -51,6 +51,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 from prudence import config as config_module
 from prudence.facts import registry as facts_registry
@@ -212,8 +213,32 @@ def _steps(
         names = {repository.repo_key: repository.name for repository in repositories}
 
         if with_archive:
+            from prudence.hooks import write_enabled_sources
+
+            write_enabled_sources(config)
             with reporter.step(ARCHIVE) as step:
-                targets = archive.collect_targets(resolver.keys, resolver=resolver)
+                targets = []
+                for location in config.sources.values():
+                    connection.execute(
+                        "INSERT OR REPLACE INTO collection_source VALUES (?, ?, ?, ?, ?)",
+                        (
+                            location.id,
+                            location.kind,
+                            location.label,
+                            location.home,
+                            location.enabled,
+                        ),
+                    )
+                    if location.enabled:
+                        targets.extend(
+                            archive.collect_targets(
+                                resolver.keys,
+                                resolver=resolver,
+                                kind=location.kind,
+                                home=Path(location.home),
+                                source_id=location.id,
+                            )
+                        )
                 targets += archive.spool_targets()
                 result.archived = archive.archive(connection, targets, names, progress=step)
             repos.save_discoveries(connection, resolver)

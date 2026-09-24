@@ -37,7 +37,12 @@ APP_CONTRACT_VERSION_KEY = "app_contract_version"
 # first view ever removed, so an app built for 3 must not read a store at 4;
 # `app_session_list` gains `change_share`, `run_share`, `read_share` and `talk_share`, and
 # `app_status` gains `bucket_rule_version` and `coverage_gap_tokens`, appended.
-APP_CONTRACT_VERSION = "4"
+#
+# 5 (Codex support): the new view `app_session_sources`, one row per session and the
+# collection location it was found in; `app_session_list` gains `source`, `source_ids`,
+# `source_labels` and `models`, appended. Token totals follow `store/tokens.py`, so a
+# Codex response counts its cached input once.
+APP_CONTRACT_VERSION = "5"
 
 
 def ensure_meta(connection: sqlite3.Connection) -> None:

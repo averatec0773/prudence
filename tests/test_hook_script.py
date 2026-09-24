@@ -88,6 +88,10 @@ def test_the_hook_writes_one_line_of_git_state_for_an_enabled_repository(
         "dirty_fingerprint",
         "dirty_count",
         "elapsed_ms",
+        "source",
+        "source_id",
+        "tool_name",
+        "capture_version",
     }
     assert line["event"] == "PostToolUse"
     assert line["session_id"] == "abcd1234-0000-4000-8000-000000000001"
@@ -138,3 +142,21 @@ def test_a_missing_enabled_list_means_no_recording(lab: Workspace) -> None:
     result = _run(script, data, _payload(str(lab.repo)), "SessionStart")
     assert result.returncode == 0
     assert _spool(data) == [], "nothing is enabled until the list says so"
+
+
+def test_pause_refreshes_an_installed_legacy_script_before_enforcing_source_consent(
+    lab, monkeypatch
+):
+    from dataclasses import replace
+
+    from prudence import config, hooks
+
+    script, data = _installed(lab, [str(lab.repo)])
+    monkeypatch.setenv("PRUDENCE_DATA_DIR", str(data))
+    script.write_text("#!/bin/sh\nprintf old-hook\\n\n")
+    cfg = config.load()
+    cfg.sources["claude"] = replace(cfg.sources["claude"], enabled=False)
+    hooks.write_enabled_sources(cfg)
+    assert script.read_bytes() == hooks.script_source().read_bytes()
+    result = _run(script, data, _payload(str(lab.repo)), "PostToolUse")
+    assert result.returncode == 0 and not _spool(data)

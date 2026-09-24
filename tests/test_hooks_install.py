@@ -37,6 +37,13 @@ def _settings(lab: Workspace, monkeypatch: pytest.MonkeyPatch, body: dict | None
     path = directory / "settings.json"
     path.write_text(json.dumps(body if body is not None else EXISTING, indent=2) + "\n")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
+    from dataclasses import replace
+
+    from prudence import config as config_module
+
+    config = config_module.load()
+    config.sources["claude"] = replace(config.sources["claude"], home=str(directory))
+    config_module.save(config)
     return path
 
 
@@ -150,6 +157,13 @@ def test_a_settings_file_that_is_not_json_is_refused_untouched(
     settings = directory / "settings.json"
     settings.write_text("{ this is not json\n")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
+    from dataclasses import replace
+
+    from prudence import config as config_module
+
+    config = config_module.load()
+    config.sources["claude"] = replace(config.sources["claude"], home=str(directory))
+    config_module.save(config)
 
     result = CliRunner().invoke(main, ["hooks", "install", "--yes"])
     assert result.exit_code != 0
@@ -187,3 +201,34 @@ def test_install_quotes_a_script_path_with_a_space(
         connection.close()
     gone = hooks_module.uninstall(settings_path=settings, script_path=script)
     assert len(gone.removed) == 6
+
+
+def test_codex_hooks_are_selected_by_source_and_restore_only_their_entries(lab, monkeypatch):
+    from dataclasses import replace
+
+    from prudence import config as config_module
+
+    record_one_session(lab)
+    home = lab.root / "codex"
+    home.mkdir()
+    settings = home / "hooks.json"
+    original = '{"description":"mine","hooks":{}}\n'
+    settings.write_text(original)
+    config = config_module.load()
+    config.sources["codex"] = replace(config.sources["codex"], home=str(home), enabled=True)
+    config_module.save(config)
+    runner = CliRunner()
+    first = runner.invoke(main, ["hooks", "install", "--source", "codex", "--yes"])
+    assert first.exit_code == 0, first.output
+    written = json.loads(settings.read_text())
+    assert written["hooks"]["PreToolUse"][0]["matcher"] == "Bash|apply_patch"
+    assert written["hooks"]["Stop"][0]["hooks"][0]["command"].endswith("Stop codex codex")
+    assert "SubagentStop" not in written["hooks"]
+    status = runner.invoke(main, ["hooks", "status", "--source", "codex"])
+    assert status.exit_code == 0, status.output
+    assert "missing:" not in status.output
+    again = runner.invoke(main, ["hooks", "install", "--source", "codex", "--yes"])
+    assert again.exit_code == 0 and "Nothing to change" in again.output
+    removed = runner.invoke(main, ["hooks", "uninstall", "--source", "codex", "--yes"])
+    assert removed.exit_code == 0, removed.output
+    assert settings.read_text() == original

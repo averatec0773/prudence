@@ -101,9 +101,9 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from prudence import sources
+from prudence import config, sources
 from prudence.sources import base
-from prudence.store import buckets, parse_plan, parse_pool, parse_state, repos, run_warnings
+from prudence.store import buckets, parse_plan, parse_pool, parse_state, repos, run_warnings, tokens
 from prudence.store import commits as commits_module
 from prudence.store import edits as edits_module
 from prudence.store import lines as lines_module
@@ -111,7 +111,7 @@ from prudence.store import meta as meta_module
 from prudence.store import progress as progress_module
 from prudence.store.agent_turns import AgentTurns, Call, Link
 
-PARSER_VERSION = 6
+PARSER_VERSION = 7
 
 TABLES = (
     "session",
@@ -183,7 +183,8 @@ SCHEMA = {
         )""",
     "edit": """
         CREATE TABLE {name}(
-            tool_use_id TEXT PRIMARY KEY,
+            tool_use_id TEXT NOT NULL,
+            edit_index INTEGER NOT NULL DEFAULT 0,
             session_id TEXT,
             turn_id TEXT,
             repo_key TEXT,
@@ -194,14 +195,16 @@ SCHEMA = {
             lines_added INTEGER NOT NULL DEFAULT 0,
             lines_removed INTEGER NOT NULL DEFAULT 0,
             is_new_file INTEGER NOT NULL DEFAULT 0,
-            parser_version INTEGER NOT NULL
+            parser_version INTEGER NOT NULL,
+            PRIMARY KEY(tool_use_id, edit_index)
         )""",
     "edit_line": """
         CREATE TABLE {name}(
             tool_use_id TEXT NOT NULL,
+            edit_index INTEGER NOT NULL DEFAULT 0,
             side TEXT NOT NULL,
             line_hash TEXT NOT NULL,
-            PRIMARY KEY(tool_use_id, side, line_hash)
+            PRIMARY KEY(tool_use_id, edit_index, side, line_hash)
         ) WITHOUT ROWID""",
     "command": """
         CREATE TABLE {name}(
@@ -225,6 +228,8 @@ SCHEMA = {
             output_tokens INTEGER,
             cache_read_tokens INTEGER,
             cache_creation_tokens INTEGER,
+            total_input_tokens INTEGER,
+            reasoning_output_tokens INTEGER,
             parser_version INTEGER NOT NULL
         )""",
     "response": """
@@ -241,6 +246,8 @@ SCHEMA = {
             output_tokens INTEGER,
             cache_read_tokens INTEGER,
             cache_creation_tokens INTEGER,
+            total_input_tokens INTEGER,
+            reasoning_output_tokens INTEGER,
             tool_calls INTEGER NOT NULL DEFAULT 0,
             change_calls INTEGER NOT NULL DEFAULT 0,
             run_calls INTEGER NOT NULL DEFAULT 0,
@@ -324,7 +331,7 @@ class _ToolCall:
     result_bytes: int | None = None
     is_error: int | None = None
     error_hash: str | None = None
-    edit: edits_module.EditFacts | None = None
+    edits: tuple[edits_module.EditFacts, ...] = ()
     command: edits_module.CommandFacts | None = None
 
 
@@ -349,7 +356,7 @@ class _Reply:
     kinds: list[tuple[str, bool]] = field(default_factory=list)
     # The calls whose kind is only a guess from the tool's name, for the run log.
     guessed: list[tuple[str | None, str]] = field(default_factory=list)
-    files: set[str] = field(default_factory=set)
+    call_ids: list[str] = field(default_factory=list)
     commands: int = 0
 
 
@@ -360,6 +367,7 @@ class _Session:
     session_id: str
     repo_key: str | None
     capture_level: str
+    kind: str = sources.DEFAULT_KIND
     mapping_method: str = "cwd"
     entrypoint: str | None = None
     cwd: str | None = None
@@ -419,7 +427,7 @@ def build(
     resolver = resolver if resolver is not None else repos.resolver(connection)
     adapter = sources.source()
     key = lines_module.load_key()
-    current_key = parse_state.parser_key(key, adapter.kind, PARSER_VERSION)
+    current_key = parse_state.parser_key(key, ",".join(config.SOURCE_KINDS), PARSER_VERSION)
     planned = parse_plan.plan(connection, adapter, resolver, levels)
     stats.mapping_methods = Counter(item.mapping_method for item in planned)
     stats.unassigned_sessions = sum(1 for item in planned if item.repo_key is None)
@@ -595,6 +603,7 @@ class _Fold:
                 session_id=declared,
                 repo_key=reader.repo_key,
                 capture_level=reader.capture_level,
+                kind=reader.kind,
                 mapping_method=reader.mapping_method,
             ),
         )
@@ -633,7 +642,9 @@ def _parse(
     )
     chosen = [item for item in planned if reparsed is None or item.session_id in reparsed]
     tasks = [
-        parse_pool.FileTask(archived.path, item.session_id, archived.agent_id, archived.sidecar)
+        parse_pool.FileTask(
+            archived.path, item.session_id, archived.agent_id, archived.sidecar, item.kind
+        )
         for item in chosen
         for archived in item.files
     ]
@@ -648,13 +659,15 @@ def _parse(
                 session_id=item.session_id,
                 repo_key=item.repo_key,
                 capture_level=item.capture_level,
+                kind=item.kind,
                 mapping_method=item.mapping_method,
             )
             for archived in item.files:
                 _read_file(fold, session, archived, next(reader), key)
-            _flush_session(connection, session, fold, resolver, key, adapter.kind)
+            _flush_session(connection, session, fold, resolver, key, item.kind)
     for session_id in sorted(fold.orphans):
-        _flush_session(connection, fold.orphans[session_id], fold, resolver, key, adapter.kind)
+        orphan = fold.orphans[session_id]
+        _flush_session(connection, orphan, fold, resolver, key, orphan.kind)
     return fold
 
 
@@ -829,16 +842,18 @@ def _reply_of(
 ) -> _Reply | None:
     """The reply this record is part of, opened by its first record.
 
-    A record with no reply id is not part of a reply, unless it carries usage: that is a
-    record the adapter could not read, and it becomes a reply of its own with no bucket,
-    so its tokens are counted as a coverage gap rather than lost.
+    A record with no reply id is not part of a reply, unless it carries usage or a
+    tool call. Usage alone is an unreadable coverage gap. A tool call whose source
+    reports no usage remains a bucketed reply with NULL token counts.
     """
     reply_id = event.message_id
     gap = reply_id is None
     if gap:
-        if not any(isinstance(payload, base.Usage) for payload in event.payloads):
+        has_tool = any(isinstance(payload, base.ToolCall) for payload in event.payloads)
+        if not has_tool and not any(isinstance(payload, base.Usage) for payload in event.payloads):
             return None
         reply_id = event.record_id
+        gap = not has_tool
     reply = session.replies.get(reply_id)
     if reply is None:
         reply = _Reply(
@@ -850,6 +865,7 @@ def _reply_of(
             gap=gap,
         )
         session.replies[reply_id] = reply
+    reply.gap = reply.gap or event.response_gap
     return reply
 
 
@@ -857,10 +873,9 @@ def _note_reply_call(reply: _Reply, call: base.ToolCall) -> None:
     """One tool call's part in its reply's bucket, and the two counts beside it."""
     kind = buckets.call_kind(call.tool_name, call.shell_command)
     reply.kinds.append(kind)
+    reply.call_ids.append(call.call_id)
     if kind[1]:
         reply.guessed.append((call.tool_name, kind[0]))
-    if kind[0] == buckets.CHANGE and call.file_path:
-        reply.files.add(call.file_path)
     if call.shell_command is not None:
         reply.commands += 1
 
@@ -884,7 +899,7 @@ def _note_call(
     held.started_at = stamp
     held.file_path = call.file_path
     held.input_bytes = call.input_bytes
-    held.edit = call.edit
+    held.edits = call.edits or ((call.edit,) if call.edit is not None else ())
     held.command = call.command
 
 
@@ -904,12 +919,18 @@ def _note_result(session: _Session, result: base.ToolResult, key: bytes) -> None
     if session.capture_level == "full" and result.error_content is not None:
         held.error_hash = _hash_error(key, result.error_content)
     if result.is_error:
-        held.edit = None
-    elif result.edit is not None:
-        better = result.edit
-        better.file_path = better.file_path or (held.edit.file_path if held.edit else None)
-        better.is_new_file = better.is_new_file or bool(held.edit and held.edit.is_new_file)
-        held.edit = better
+        held.edits = ()
+    elif result.edits or result.edit is not None:
+        completed = result.edits or (result.edit,)
+        proposed = {facts.file_path: facts for facts in held.edits}
+        for better in completed:
+            previous = proposed.get(better.file_path)
+            if previous is None and len(held.edits) == 1:
+                previous = held.edits[0]
+            if previous is not None:
+                better.file_path = better.file_path or previous.file_path
+                better.is_new_file = better.is_new_file or previous.is_new_file
+        held.edits = tuple(completed)
     if held.command is None:
         return
     held.command.exit_code = result.exit_code
@@ -1053,9 +1074,11 @@ def _flush_replies(connection: sqlite3.Connection, session: _Session, fold: _Fol
                 usage.output_tokens,
                 usage.cache_read_tokens,
                 usage.cache_creation_tokens,
+                usage.total_input_tokens,
+                usage.reasoning_output_tokens,
             )
             if usage is not None
-            else (None, None, None, None)
+            else (None, None, None, None, None, None)
         )
         if usage is not None:
             usage_rows.append(
@@ -1074,6 +1097,12 @@ def _flush_replies(connection: sqlite3.Connection, session: _Session, fold: _Fol
         else:
             bucket, guessed = buckets.bucket_of(reply.kinds)
         _note_guesses(fold, reply, bucket if guessed else None, counts)
+        files = {
+            facts.file_path
+            for call_id in reply.call_ids
+            for facts in session.tool_calls[call_id].edits
+            if facts.file_path
+        }
         by_kind = Counter(kind for kind, _ in reply.kinds)
         response_rows.append(
             (
@@ -1088,24 +1117,28 @@ def _flush_replies(connection: sqlite3.Connection, session: _Session, fold: _Fol
                 *counts,
                 len(reply.kinds),
                 *(by_kind[name] for name in buckets.BUCKETS),
-                len(reply.files),
+                len(files),
                 reply.commands,
                 PARSER_VERSION,
             )
         )
     connection.executemany(
-        "INSERT OR REPLACE INTO usage__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", usage_rows
+        "INSERT OR REPLACE INTO usage__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", usage_rows
     )
     connection.executemany(
-        "INSERT OR REPLACE INTO response__new VALUES"
-        " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO response__new VALUES (" + ", ".join("?" for _ in range(22)) + ")",
         response_rows,
     )
 
 
 def _note_guesses(fold: _Fold, reply: _Reply, guessed_bucket: str | None, counts: tuple) -> None:
     """One reply's calls bucketed by the name heuristic, onto `fold.heuristic`."""
-    tokens = sum(count or 0 for count in counts)
+    input_tokens, output_tokens, cache_read, cache_creation, total_input, _ = counts
+    tokens = (
+        total_input
+        if total_input is not None
+        else sum(count or 0 for count in (input_tokens, cache_read, cache_creation))
+    ) + (output_tokens or 0)
     for tool_name, _ in reply.guessed:
         fold.heuristic.setdefault(tool_name, [0, 0])[0] += 1
     for tool_name in {tool for tool, kind in reply.guessed if kind == guessed_bucket}:
@@ -1125,10 +1158,10 @@ def _report(fold: _Fold, warnings: run_warnings.Warnings) -> None:
         warnings.unreadable_line(session_id, path, offset)
     for agent_id, session_id, reason in fold.unattached:
         warnings.unattached_subagent(agent_id, session_id, reason)
-    for tool_name, (calls, tokens) in sorted(
+    for tool_name, (calls, token_count) in sorted(
         fold.heuristic.items(), key=lambda item: item[0] or ""
     ):
-        warnings.heuristic_bucket(tool_name, calls, tokens)
+        warnings.heuristic_bucket(tool_name, calls, token_count)
 
 
 def _flush_edits(
@@ -1142,36 +1175,36 @@ def _flush_edits(
     rows: list[tuple] = []
     line_rows: list[tuple] = []
     for tool_use_id, call in sorted(session.tool_calls.items()):
-        facts = call.edit
-        if facts is None:
-            continue
-        repo_key, rel_path = resolver.repo_of_path(facts.file_path)
-        rows.append(
-            (
-                tool_use_id,
-                call.session_id,
-                call.turn_id,
-                repo_key or session.repo_key,
-                call.tool_name,
-                facts.file_path if full else None,
-                rel_path if full else None,
-                commits_module.utc(call.started_at),
-                len(facts.added),
-                len(facts.removed),
-                1 if facts.is_new_file else 0,
-                edits_module.EDIT_FACT_VERSION,
+        for edit_index, facts in enumerate(call.edits):
+            repo_key, rel_path = resolver.repo_of_path(facts.file_path)
+            rows.append(
+                (
+                    tool_use_id,
+                    edit_index,
+                    call.session_id,
+                    call.turn_id,
+                    repo_key or session.repo_key,
+                    call.tool_name,
+                    facts.file_path if full else None,
+                    rel_path if full else None,
+                    commits_module.utc(call.started_at),
+                    len(facts.added),
+                    len(facts.removed),
+                    1 if facts.is_new_file else 0,
+                    edits_module.EDIT_FACT_VERSION,
+                )
             )
-        )
-        if not full:
-            continue
-        for side, block in (("added", facts.added), ("removed", facts.removed)):
-            line_rows.extend(
-                (tool_use_id, side, digest) for digest in lines_module.hash_lines(key, block)
-            )
+            if not full:
+                continue
+            for side, block in (("added", facts.added), ("removed", facts.removed)):
+                line_rows.extend(
+                    (tool_use_id, edit_index, side, digest)
+                    for digest in lines_module.hash_lines(key, block)
+                )
     connection.executemany(
-        "INSERT OR REPLACE INTO edit__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+        "INSERT OR REPLACE INTO edit__new VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
     )
-    connection.executemany("INSERT OR REPLACE INTO edit_line__new VALUES (?, ?, ?)", line_rows)
+    connection.executemany("INSERT OR REPLACE INTO edit_line__new VALUES (?, ?, ?, ?)", line_rows)
 
 
 def _flush_commands(connection: sqlite3.Connection, session: _Session) -> None:
@@ -1419,10 +1452,7 @@ def _count_tables(connection: sqlite3.Connection, stats: BuildStats) -> None:
     stats.edit_lines = one("SELECT COUNT(*) FROM edit_line")
     stats.commands = one("SELECT COUNT(*) FROM command")
     stats.usage_rows = one("SELECT COUNT(*) FROM usage")
-    stats.usage_tokens = one(
-        "SELECT SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)"
-        " + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) FROM usage"
-    )
+    stats.usage_tokens = one(f"SELECT SUM({tokens.total_sql()}) FROM usage")
     stats.responses = one("SELECT COUNT(*) FROM response")
     stats.unknown_types = one("SELECT COUNT(*) FROM unknown_record_type")
     stats.replayed_records = one("SELECT SUM(replayed_records) FROM session")

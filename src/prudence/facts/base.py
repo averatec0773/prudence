@@ -35,6 +35,14 @@ ComputeFn = Callable[[sqlite3.Connection, str], "int | float | None"]
 LabelFn = Callable[[sqlite3.Connection, str], "str | None"]
 
 
+def observes_file_reads(connection: sqlite3.Connection, session_id: str) -> bool:
+    """Whether this source supplies reliable file paths for read operations."""
+    row = connection.execute(
+        "SELECT source FROM session WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    return row is not None and row[0] in (None, "claude_code")
+
+
 @dataclass(frozen=True)
 class Case:
     """One synthetic session: rows to insert per derived table, and the expected value.

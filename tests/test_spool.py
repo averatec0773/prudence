@@ -64,7 +64,7 @@ def test_the_spool_becomes_hook_events_and_a_repeated_line_becomes_one_row(
     assert rows[0][3] == str(lab.repo)
     assert rows[0][4] == lab.repo_key(), "the cwd is resolved to the repository like any other"
     assert rows[1][5] == "b" * 40 and rows[1][6] == 2
-    assert rows[0][7] == 41 and rows[0][8] == 1
+    assert rows[0][7] == 41 and rows[0][8] == 2
 
     archived = _rows("SELECT source, session_id, repo_key FROM archive_file WHERE source = 'spool'")
     assert len(archived) == 1, "the spool is archived, because raw bytes are the truth"

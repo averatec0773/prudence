@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-BUCKET_RULE_VERSION = 1
+BUCKET_RULE_VERSION = 2
 
 CHANGE = "change"
 RUN = "run"
@@ -52,7 +52,17 @@ _RANK = {CHANGE: 3, RUN: 2, READ: 1, TALK: 0}
 
 # --- tools, by name ----------------------------------------------------------------
 
-CHANGE_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
+CHANGE_TOOLS = frozenset(
+    {
+        "Edit",
+        "MultiEdit",
+        "Write",
+        "NotebookEdit",
+        "FileChange",
+        "apply_patch",
+        "functions.apply_patch",
+    }
+)
 RUN_TOOLS = frozenset(
     {"Skill", "Workflow", "Monitor", "KillShell", "EnterWorktree", "ExitWorktree"}
 )
@@ -93,7 +103,7 @@ TALK_TOOLS = frozenset(
         "SendUserFile",
     }
 )
-SHELL_TOOLS = frozenset({"Bash", "bash"})
+SHELL_TOOLS = frozenset({"Bash", "bash", "CommandExecution"})
 
 # MCP tools, keyed by the part of the name after the last `__`, classified by hand from
 # the names that occur on the founder's store. A name not listed falls to the write
@@ -575,6 +585,9 @@ CASES = (
     Case("read tools only", (("Read", None), ("Grep", None), ("Glob", None)), READ),
     Case("a test run", (_shell("uv run pytest -q"),), RUN),
     Case("an edit", (("Edit", None),), CHANGE),
+    Case("a completed file change", (("FileChange", None),), CHANGE),
+    Case("a completed read command", (("CommandExecution", "git status"),), READ),
+    Case("a completed running command", (("CommandExecution", "pytest -q"),), RUN),
     Case(
         "compound read-only shell, quoted SQL with semicolons, git read, stderr to null",
         (

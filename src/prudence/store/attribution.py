@@ -319,7 +319,8 @@ def _line_match(connection: sqlite3.Connection, repo_key: str) -> dict[str, list
     index: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
     for row in connection.execute(
         "SELECT e.session_id, e.rel_path, el.line_hash, MIN(e.edited_at) AS at"
-        " FROM edit e JOIN edit_line el ON el.tool_use_id = e.tool_use_id AND el.side = 'added'"
+        " FROM edit e JOIN edit_line el ON el.tool_use_id = e.tool_use_id"
+        " AND el.edit_index = e.edit_index AND el.side = 'added'"
         " WHERE e.repo_key = ? AND e.rel_path IS NOT NULL AND e.edited_at IS NOT NULL"
         " GROUP BY e.session_id, e.rel_path, el.line_hash",
         (repo_key,),

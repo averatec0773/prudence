@@ -17,12 +17,14 @@ src/prudence/
   sources/        where we see the developer's work: one package per agent, behind one
                    interface, so the store never learns an agent's file format
     base.py       the `Source` protocol and the event types; no agent knowledge
-    __init__.py   the registry: kind -> adapter (`claude_code` today, Codex later)
+    __init__.py   the registry: kind -> adapter (`claude_code` and `codex`)
+    codex/        Codex rollouts, completed operations and per-response/cumulative usage
     claude_code/  everything that knows Claude Code's layout and format
       discovery.py  where the files are, and what a scan reads from one
       events.py     transcript lines -> events
   hooks/          the one thing we write into the user's world, and how to undo it
     __init__.py       install, uninstall and inspect the settings entries
+    policy.py         agent-specific event selection and observation normalization
     prudence-hook.sh  the POSIX shell hook itself, shipped as package data
   store/          Prudence's own record
     identity.py   which repository a directory belongs to
@@ -479,3 +481,19 @@ into `hook_event`; the spool is never truncated.
   lives in the repository.
 - Tests never read `~/.claude`; they build their own files under a temporary directory and
   point Prudence at it with `CLAUDE_CONFIG_DIR`.
+
+### Current capture limits
+
+Codex log parsing does not evaluate `functions.exec` JavaScript. Structured completed
+inner operations supply command and patch evidence; wrappers without that evidence
+leave a response coverage gap. Shell reads do not reliably identify file paths, so
+Codex's unread-edit and repeated-file-read facts remain unknown. A fork marker alone
+does not establish which records were replayed; without matching record or response
+identity, the parser reports incomplete coverage rather than deleting presumed history.
+
+Source-location membership survives ordinary export through `session_source`, without
+requiring archived transcript bytes. New observations update that membership without
+removing prior imported locations; forgetting the session removes it. Hook policy is
+independent from history parsing. Its normalized observation carries capture version,
+agent kind, location ID and tool name, so future event-selection changes need not
+change transcript adapters.

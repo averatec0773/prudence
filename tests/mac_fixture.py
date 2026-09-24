@@ -215,7 +215,7 @@ def test_make_fixture(lab: Workspace) -> None:
 
         # The fixture is only worth having if it is what the app will read. Contract and
         # column lists first, then the shapes the app's tests need.
-        assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "4"
+        assert meta.get_meta(connection, meta.APP_CONTRACT_VERSION_KEY) == "5"
         for name, columns in app_views.APP_VIEWS.items():
             assert app_views.columns(connection, name) == columns, name
 

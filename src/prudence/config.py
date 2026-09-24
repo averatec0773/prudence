@@ -18,10 +18,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from prudence.paths import config_file
+from prudence.paths import claude_config_dir, codex_home, config_file
 
 LEVELS = ("full", "metadata-only")
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
+SOURCE_KINDS = ("claude_code", "codex")
 
 # The model block's defaults. They are named here rather than imported from
 # `prudence.model` so that reading the config never loads a backend, and so that
@@ -40,6 +41,39 @@ HEADER = """\
 # Nothing is recorded until a repository appears below. Delete a block to stop
 # recording that repository; `prudence forget` removes what was already recorded.
 """
+
+
+@dataclass(frozen=True)
+class SourceConfig:
+    """A named collection location, independent of repository capture and model choice."""
+
+    id: str
+    kind: str
+    label: str
+    home: str
+    enabled: bool = True
+
+
+def default_sources() -> dict[str, SourceConfig]:
+    return {
+        "claude": SourceConfig("claude", "claude_code", "Claude Code", str(claude_config_dir())),
+        "codex": SourceConfig("codex", "codex", "Codex", str(codex_home()), False),
+    }
+
+
+def add_source(config: Config, kind: str, label: str, home: Path) -> SourceConfig:
+    if kind not in SOURCE_KINDS:
+        raise ValueError(f"unknown source kind {kind!r}")
+    if not label.strip():
+        raise ValueError("a source needs a name")
+    resolved = str(home.expanduser().resolve())
+    if any(str(Path(s.home).expanduser().resolve()) == resolved for s in config.sources.values()):
+        raise ValueError("this source directory is already configured")
+    from uuid import uuid4
+
+    item = SourceConfig(uuid4().hex, kind, label.strip(), resolved)
+    config.sources[item.id] = item
+    return item
 
 
 @dataclass(frozen=True)
@@ -88,6 +122,7 @@ class Config:
     repositories: dict[str, RepoConfig] = field(default_factory=dict)
     model: ModelSettings = field(default_factory=ModelSettings)
     review: ReviewSettings = field(default_factory=ReviewSettings)
+    sources: dict[str, SourceConfig] = field(default_factory=default_sources)
 
     @property
     def levels(self) -> dict[str, str]:
@@ -134,7 +169,32 @@ def load(path: Path | None = None) -> Config:
         repositories=repositories,
         model=_model_settings(raw.get("model")),
         review=_review_settings(raw.get("review")),
+        sources=_source_settings(raw.get("source")),
     )
+
+
+def _source_settings(blocks: object) -> dict[str, SourceConfig]:
+    found = default_sources()
+    if blocks is None:
+        return found
+    if not isinstance(blocks, list):
+        raise ValueError("source settings must be a list of tables")
+    seen = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            raise ValueError("invalid source settings")
+        key, kind, label, home = (block.get(k) for k in ("id", "kind", "label", "home"))
+        if not all(isinstance(v, str) and v.strip() for v in (key, kind, label, home)):
+            raise ValueError("each source needs an id, kind, label and home")
+        if kind not in SOURCE_KINDS or key in seen:
+            raise ValueError("unknown source kind or duplicate source id")
+        if not isinstance(block.get("enabled", True), bool):
+            raise ValueError("source enabled must be true or false")
+        seen.add(key)
+        found[key] = SourceConfig(
+            key, kind, label, str(Path(home).expanduser()), block.get("enabled", True)
+        )
+    return found
 
 
 def _model_settings(block: object) -> ModelSettings:
@@ -194,6 +254,18 @@ def dumps(config: Config) -> str:
         lines.append("[review]")
         lines.append(f"explain = {'true' if config.review.explain else 'false'}")
         lines.append("")
+    for source in config.sources.values():
+        lines.extend(
+            [
+                "[[source]]",
+                f"id = {_string(source.id)}",
+                f"kind = {_string(source.kind)}",
+                f"label = {_string(source.label)}",
+                f"home = {_string(source.home)}",
+                f"enabled = {'true' if source.enabled else 'false'}",
+                "",
+            ]
+        )
     for repo in sorted(config.repositories.values(), key=lambda r: (r.name, r.key)):
         lines.append("[[repository]]")
         lines.append(f"key = {_string(repo.key)}")

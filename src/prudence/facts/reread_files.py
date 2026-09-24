@@ -8,16 +8,17 @@ read; the call's input is not kept, so the two cannot be told apart, which is th
 limit of this count.
 
 File paths are kept at `full` capture only, so a `metadata-only` session is absent here
-rather than a false zero, exactly as it is from `files_edited_unread`.
+rather than a false zero, exactly as it is from `files_edited_unread`. Codex shell
+reads have no structured path, so a Codex session is absent too.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from prudence.facts.base import Case, Fact
+from prudence.facts.base import Case, Fact, observes_file_reads
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 # Reads of one file in one turn and context at which it counts as reread.
 REREAD_THRESHOLD = 3
@@ -27,7 +28,11 @@ def compute(connection: sqlite3.Connection, session_id: str) -> int | None:
     row = connection.execute(
         "SELECT capture_level FROM session WHERE session_id = ?", (session_id,)
     ).fetchone()
-    if row is None or row["capture_level"] != "full":
+    if (
+        row is None
+        or row["capture_level"] != "full"
+        or not observes_file_reads(connection, session_id)
+    ):
         return None
     (count,) = connection.execute(
         "SELECT COUNT(*) FROM (SELECT 1 FROM tool_call t"

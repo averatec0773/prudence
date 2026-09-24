@@ -109,6 +109,7 @@ from prudence.store import observations as observations_module
 from prudence.store import outcomes as outcomes_module
 from prudence.store import progress as progress_module
 from prudence.store import spool as spool_module
+from prudence.store import tokens
 from prudence.store.views.usage import TOKEN_COLUMNS
 
 # The contract. These lists are what the app compiles against and what the tests assert;
@@ -210,6 +211,7 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "threshold_value",
         "threshold_op",
     ),
+    "app_session_sources": ("session_id", "source_id", "kind", "label", "home"),
     "app_session_list": (
         "session_id",
         "repo_key",
@@ -232,6 +234,10 @@ APP_VIEWS: dict[str, tuple[str, ...]] = {
         "run_share",
         "read_share",
         "talk_share",
+        "source",
+        "source_ids",
+        "source_labels",
+        "models",
     ),
     "app_review": (
         "id",
@@ -385,6 +391,33 @@ _FATE_PER_COMMIT = """
 """
 
 
+SESSION_SOURCE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS session_source(
+    session_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    label TEXT NOT NULL,
+    home TEXT,
+    PRIMARY KEY(session_id, source_id)
+)
+"""
+
+
+def fill_session_sources(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "DELETE FROM session_source WHERE session_id NOT IN (SELECT session_id FROM session)"
+    )
+    connection.execute("""
+        INSERT OR REPLACE INTO session_source
+        SELECT DISTINCT s.session_id, o.source_id, s.source,
+               COALESCE(c.label, o.source_id), c.home
+        FROM session s
+        JOIN archive_file a ON a.session_id = s.session_id AND a.agent_kind = s.source
+        JOIN archive_origin o ON o.path = a.path
+        LEFT JOIN collection_source c ON c.id = o.source_id
+    """)
+
+
 def replace_app_views(
     connection: sqlite3.Connection, progress: progress_module.Step | None = None
 ) -> None:
@@ -435,6 +468,7 @@ def prepare_sources(connection: sqlite3.Connection) -> None:
     from prudence.reviews import schema as review_schema
 
     _quietly_call(lambda: review_schema.ensure(connection))
+    connection.execute(SESSION_SOURCE_SCHEMA)
 
 
 def _install(connection: sqlite3.Connection, progress: progress_module.Step | None = None) -> None:
@@ -448,7 +482,9 @@ def _install(connection: sqlite3.Connection, progress: progress_module.Step | No
     all of them together, so a progress bar that left them out would stall on the step.
     """
     progress = progress or progress_module.silent()
-    progress.start(len(APP_VIEWS) + 2, "tables")
+    progress.start(len(APP_VIEWS) + 3, "tables")
+    progress.advance(label="Recording session origins")
+    _quietly_call(lambda: fill_session_sources(connection))
     meta_module.set_meta(
         connection, meta_module.APP_CONTRACT_VERSION_KEY, meta_module.APP_CONTRACT_VERSION
     )
@@ -502,9 +538,9 @@ def definitions() -> dict[str, str]:
     the store: they are the answer to "which rules produced what you are looking at",
     and the view is rewritten on every ingest anyway.
     """
-    totals = " + ".join(f"COALESCE(u.{column}, 0)" for column in TOKEN_COLUMNS)
-    per_kind = ", ".join(f"SUM(COALESCE(p.{column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
-    reply = " + ".join(f"COALESCE(p.{column}, 0)" for column in TOKEN_COLUMNS)
+    totals = tokens.total_sql("u")
+    per_kind = ", ".join(f"SUM(p.{column}) AS {column}" for column in TOKEN_COLUMNS)
+    reply = tokens.total_sql("p")
     shares = ",\n".join(
         f"           SUM(CASE WHEN p.bucket = '{bucket}' THEN {reply} ELSE 0 END) * 1.0"
         f" / NULLIF(SUM({reply}), 0) AS {bucket}_share"
@@ -664,6 +700,10 @@ def definitions() -> dict[str, str]:
     LEFT JOIN repository r ON r.repo_key = v.project
     ORDER BY v.id DESC
 """,
+        "app_session_sources": """
+    SELECT o.session_id, o.source_id, o.kind, o.label, o.home
+    FROM session_source o JOIN session s ON s.session_id = o.session_id
+""",
         "app_session_list": f"""
     WITH tokens AS (
         SELECT session_id, SUM({totals}) AS total_tokens FROM usage u GROUP BY session_id
@@ -705,7 +745,17 @@ def definitions() -> dict[str, str]:
            m.change_share AS change_share,
            m.run_share AS run_share,
            m.read_share AS read_share,
-           m.talk_share AS talk_share
+           m.talk_share AS talk_share,
+           s.source AS source,
+           (SELECT json_group_array(source_id) FROM
+               (SELECT source_id FROM app_session_sources ss
+                WHERE ss.session_id = s.session_id ORDER BY source_id)) AS source_ids,
+           (SELECT json_group_array(label) FROM
+               (SELECT label FROM app_session_sources ss
+                WHERE ss.session_id = s.session_id ORDER BY source_id)) AS source_labels,
+           (SELECT json_group_array(model) FROM
+               (SELECT DISTINCT model FROM usage u WHERE u.session_id = s.session_id
+                AND model IS NOT NULL ORDER BY model)) AS models
     FROM session s
     LEFT JOIN repository r ON r.repo_key = s.repo_key
     LEFT JOIN session_label l

@@ -12,8 +12,9 @@ every session linked to them; everything else keeps its rows.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from prudence import sources
 from prudence.sources import base
 from prudence.store import archive, parse_state, repos
 
@@ -50,6 +51,7 @@ class Planned:
     capture_level: str
     files: tuple[ArchivedFile, ...]
     archived: dict[str, tuple[int, int, str | None]]
+    kind: str = sources.DEFAULT_KIND
 
 
 def plan(
@@ -67,10 +69,24 @@ def plan(
     parse of one archive does not depend on the order it learned things in.
     """
     planned = []
+    positions: dict[tuple[str, str], int] = {}
     for row, head in transcripts_in_order(connection, adapter):
         match = resolver.resolve(head.cwd, head.git_branch)
         repo_key = match.repo_key or row["repo_key"]
-        files, archived = _files_of(connection, adapter, row)
+        kind = row["agent_kind"]
+        files, archived = _files_of(connection, sources.source(kind), row)
+        identity = (kind, _session_id(row))
+        if identity in positions:
+            index = positions[identity]
+            previous = planned[index]
+            held = {f.path for f in previous.files}
+            planned[index] = replace(
+                previous,
+                files=previous.files + tuple(f for f in files if f.path not in held),
+                archived={**previous.archived, **archived},
+            )
+            continue
+        positions[identity] = len(planned)
         planned.append(
             Planned(
                 session_id=_session_id(row),
@@ -81,9 +97,21 @@ def plan(
                 capture_level=levels.get(repo_key, "full"),
                 files=tuple(files),
                 archived=archived,
+                kind=kind,
             )
         )
-    return planned
+    return [
+        replace(
+            item,
+            files=tuple(
+                sorted(
+                    item.files,
+                    key=lambda f: (f.agent_id is not None, -item.archived[f.path][1], f.path),
+                )
+            ),
+        )
+        for item in planned
+    ]
 
 
 def _files_of(
@@ -99,8 +127,8 @@ def _files_of(
         sub["path"]: sub
         for sub in connection.execute(
             "SELECT path, first_seen, generation, size, sha256 FROM archive_file"
-            " WHERE session_id = ? AND source = ?",
-            (row["session_id"], base.SUBAGENT),
+            " WHERE session_id = ? AND source = ? AND agent_kind = ?",
+            (row["session_id"], base.SUBAGENT, row["agent_kind"]),
         )
     }
     files = [ArchivedFile(row["path"], None, row["first_seen"])]
@@ -133,9 +161,9 @@ def transcripts_in_order(
     tables, which `tests/test_derived.py` and `tests/test_forks.py` both assert.
     """
     rows = [
-        (row, _head(connection, adapter, row["path"]))
+        (row, _head(connection, sources.source(row["agent_kind"]), row["path"]))
         for row in connection.execute(
-            "SELECT path, session_id, repo_key, first_seen, generation, size, sha256"
+            "SELECT path, session_id, repo_key, first_seen, generation, size, sha256, agent_kind"
             " FROM archive_file WHERE source = ?",
             (base.SESSION,),
         )

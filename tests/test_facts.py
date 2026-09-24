@@ -250,7 +250,7 @@ def _labels() -> list[tuple]:
 
 def test_a_session_that_writes_and_commits_is_labelled_development(lab: Workspace) -> None:
     record_one_session(lab)
-    assert _labels() == [(SAMPLE_SESSION, "purpose", "development", 1)]
+    assert _labels() == [(SAMPLE_SESSION, "purpose", "development", 2)]
 
 
 def test_rebuild_reproduces_session_label(lab: Workspace) -> None:
@@ -279,7 +279,7 @@ def test_sessions_print_the_bucket_mix_and_show_keeps_the_purpose(lab: Workspace
     shown = CliRunner().invoke(main, ["show", "--session", SAMPLE_SESSION[:8]])
     assert shown.exit_code == 0, shown.output
     assert "session purpose" in shown.output
-    assert "rule version 1" in shown.output
+    assert "rule version 2" in shown.output
 
 
 def test_usage_renders_tokens_by_bucket_project_and_week(lab: Workspace) -> None:
@@ -296,7 +296,7 @@ def test_usage_renders_tokens_by_bucket_project_and_week(lab: Workspace) -> None
     assert "change" in output and "run" in output, "a Write and a git commit"
     assert "development" not in output
     flat = output.replace("\n", " ")
-    assert "bucket rule version 1" in flat
+    assert "bucket rule version 2" in flat
     assert "Nothing in the conversation is read." in flat
 
 
@@ -316,7 +316,7 @@ def test_status_prints_the_bucket_rule_version_and_the_coverage_gap(lab: Workspa
     result = CliRunner().invoke(main, ["status"])
     assert result.exit_code == 0, result.output
     assert "buckets: no token counts recorded over 2 responses" in result.output
-    assert "bucket rule version 1" in result.output
+    assert "bucket rule version 2" in result.output
     assert "coverage gap: 0 tokens" in result.output
     assert "purpose:" not in result.output, "the label is stored, no longer printed"
 

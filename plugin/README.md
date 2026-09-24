@@ -59,3 +59,16 @@ No message text ever leaves the local store, at any capture level: neither the M
 tools nor the hooks read or transmit prompt or response text. The MCP server runs as a
 local process over stdio; it is not a network service and nothing it reads leaves this
 machine except through Claude Code itself, the same as any other local MCP server.
+
+## Codex access
+
+Codex uses the same read-only MCP server without loading this Claude-specific plugin:
+
+```sh
+codex mcp add prudence -- prudence mcp
+```
+
+Enable history collection independently with `prudence sources set codex --enabled`.
+Optional Codex git-state hooks use `prudence hooks install --source codex`; their event
+selection is separate from the Claude plugin's hooks. The source type, named history
+location, and response model are stored separately.

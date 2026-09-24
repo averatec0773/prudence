@@ -9,6 +9,7 @@ history, not a read of the store, so it may ask this agent its own questions).
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
+from pathlib import Path
 
 from prudence.paths import claude_projects_dir
 from prudence.sources import base
@@ -38,11 +39,17 @@ class ClaudeCode:
 
     kind = KIND
 
+    def __init__(self, home: Path | None = None):
+        self.home = home
+
     def session_files(self) -> list[base.SessionFile]:
-        return [read_session_file(path) for path in list_session_files()]
+        return [
+            read_session_file(path)
+            for path in list_session_files(self.home / "projects" if self.home else None)
+        ]
 
     def companion_files(self, session: base.SessionFile) -> list[base.CompanionFile]:
-        return discovery.companion_files(session)
+        return discovery.companion_files(session, self.home / "file-history" if self.home else None)
 
     def head(self, lines: Iterable[bytes]) -> base.FileHead:
         return reader.head(lines)

@@ -5,18 +5,18 @@
 (itself a derived table; nothing here touches the archive):
 
 `turn_tree` is one row per turn (`prompt_id`): the fingerprint at the turn's own
-`UserPromptSubmit` (start) and at its last `Stop` (end), plus how many `PreToolUse` Bash
-calls happened in between. Only `PreToolUse` is hooked with the `Bash` matcher
-(`hooks.EVENTS`), so every `PreToolUse` row in `hook_event` is a Bash call; no tool name
-needs to be read to know that.
+`UserPromptSubmit` (start) and at its last `Stop` (end), plus how many shell calls
+(`PreToolUse` for Bash, or Codex's shell tools) happened in between. `hook_event.tool_name`
+tells a shell call from an `apply_patch`; a row with no tool name is from an older hook
+that only matched Bash.
 
 `hand_edit` is one row per gap between two consecutive turns where the tree changed with
-no Bash call in between: the end fingerprint of turn N differs from the start
-fingerprint of turn N+1, and no `PreToolUse` event landed between them. A Bash call
-could have changed the tree itself, so its presence is what rules a hand edit out; its
-absence is what rules one in. The dirty-count delta between the two moments is stored as
-an estimate of how many files were touched, never a path: `hook_event.dirty_count` is a
-count, and this module never asks for more.
+no shell call in between: the end fingerprint of turn N differs from the start
+fingerprint of turn N+1, and no shell call landed between them. The dirty-count delta
+between the two moments is stored as an estimate of how many files were touched, never
+a path. A gap during which another recorded session or hook was active in the same
+repository is not a hand edit: another agent may have changed the tree, so the turn's
+`hand_edit_coverage` is 0 and the gap is left unknown rather than blamed on the user.
 
 Both `UserPromptSubmit` and `Stop` can fire more than once for the same `prompt_id` (the
 hooks spike measured both, around a subagent invocation). The start is the earliest
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 
 from prudence.store import progress as progress_module
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 TURN_TREE_TABLE = "turn_tree"
 HAND_EDIT_TABLE = "hand_edit"
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS {name}(
     end_dirty INTEGER,
     bash_calls_between INTEGER NOT NULL DEFAULT 0,
     parser_version INTEGER NOT NULL,
+    hand_edit_coverage INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY(session_id, prompt_id)
 ) WITHOUT ROWID
 """
@@ -100,6 +101,7 @@ class _Turn:
     end_fingerprint: str | None = None
     end_dirty: int | None = None
     bash_calls: int = 0
+    hand_edit_coverage: bool = True
 
 
 def build(
@@ -129,11 +131,20 @@ def build(
     for session_id in sessions:
         progress.advance()
         events = connection.execute(
-            "SELECT event, ts, prompt_id, head, dirty_fingerprint, dirty_count FROM hook_event"
+            "SELECT event, ts, prompt_id, head, dirty_fingerprint, dirty_count,"
+            " cwd, repo_key, tool_name"
+            " FROM hook_event"
             " WHERE session_id = ? ORDER BY ts, event",
             (session_id,),
         ).fetchall()
         turns = _turns(events)
+        for previous, current in zip(turns, turns[1:], strict=False):
+            if not previous.end_ts or not current.start_ts:
+                current.hand_edit_coverage = False
+                continue
+            current.hand_edit_coverage = not _other_agent_in_gap(
+                connection, session_id, events, previous.end_ts, current.start_ts
+            )
         for turn in turns:
             turn_rows.append(
                 (
@@ -147,12 +158,13 @@ def build(
                     turn.end_dirty,
                     turn.bash_calls,
                     PARSER_VERSION,
+                    int(turn.hand_edit_coverage),
                 )
             )
         hand_rows.extend(_hand_edits(session_id, turns, events))
 
     connection.executemany(
-        f"INSERT OR REPLACE INTO {TURN_TREE_TABLE}__new VALUES (?,?,?,?,?,?,?,?,?,?)", turn_rows
+        f"INSERT OR REPLACE INTO {TURN_TREE_TABLE}__new VALUES (?,?,?,?,?,?,?,?,?,?,?)", turn_rows
     )
     connection.executemany(
         f"INSERT OR REPLACE INTO {HAND_EDIT_TABLE}__new VALUES (?,?,?,?,?)", hand_rows
@@ -212,6 +224,7 @@ def _turns(events: list[sqlite3.Row]) -> list[_Turn]:
             1
             for row in events
             if row["event"] == "PreToolUse"
+            and row["tool_name"] in (None, "", "Bash", "bash", "exec_command", "shell")
             and turn.start_ts is not None
             and row["ts"] >= turn.start_ts
             and (turn.end_ts is None or row["ts"] <= turn.end_ts)
@@ -223,6 +236,8 @@ def _hand_edits(session_id: str, turns: list[_Turn], events: list[sqlite3.Row]) 
     """A row per consecutive pair whose tree moved with no Bash call to explain it."""
     rows: list[tuple] = []
     for previous, current in zip(turns, turns[1:], strict=False):
+        if not current.hand_edit_coverage:
+            continue
         if previous.end_fingerprint is None or current.start_fingerprint is None:
             continue
         if previous.end_fingerprint == current.start_fingerprint:
@@ -242,6 +257,25 @@ def _hand_edits(session_id: str, turns: list[_Turn], events: list[sqlite3.Row]) 
             delta = abs(current.start_dirty - previous.end_dirty)
         rows.append((session_id, current.prompt_id, previous.prompt_id, delta, PARSER_VERSION))
     return rows
+
+
+def _other_agent_in_gap(connection, session_id, events, start, end) -> bool:
+    repositories = {row["repo_key"] for row in events if row["repo_key"]}
+    directories = {row["cwd"] for row in events if row["cwd"]}
+    for row in connection.execute(
+        "SELECT repo_key, cwd FROM hook_event WHERE session_id != ? AND ts >= ? AND ts <= ?",
+        (session_id, start, end),
+    ):
+        if row["repo_key"] in repositories or row["cwd"] in directories:
+            return True
+    for row in connection.execute(
+        "SELECT repo_key, cwd FROM session WHERE session_id != ? AND first_at <= ?"
+        " AND last_at >= ?",
+        (session_id, end, start),
+    ):
+        if row["repo_key"] in repositories or row["cwd"] in directories:
+            return True
+    return False
 
 
 def _swap(connection: sqlite3.Connection) -> None:

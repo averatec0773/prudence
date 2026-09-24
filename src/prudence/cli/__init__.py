@@ -27,6 +27,7 @@ from prudence.cli.sample import sample
 from prudence.cli.sessions import sessions
 from prudence.cli.settings import config
 from prudence.cli.show import show
+from prudence.cli.sources import sources
 from prudence.cli.status import status
 from prudence.cli.suggestions import suggestions
 from prudence.cli.usage import usage
@@ -56,6 +57,7 @@ main.add_command(facts)
 main.add_command(classify)
 main.add_command(show)
 main.add_command(status)
+main.add_command(sources)
 main.add_command(logs)
 main.add_command(diagnose)
 main.add_command(forget)

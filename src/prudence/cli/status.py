@@ -195,7 +195,7 @@ def _usage_lines(connection: sqlite3.Connection) -> list[str]:
     """Tokens, counted once per API response. Nothing at all before parser version 3."""
     totals = views.usage_totals(connection)
     if not totals["requests"]:
-        return ["tokens: none recorded (no Claude Code version here wrote usage fields)"]
+        return ["tokens: none recorded (no agent here wrote usage fields)"]
     models = ", ".join(f"{count} {model}" for model, count in totals["by_model"].items())
     return [
         f"tokens: {thousands(totals['total_tokens'])} over {totals['requests']} API responses "

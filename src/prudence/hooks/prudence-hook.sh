@@ -27,6 +27,14 @@
 [ -n "${PRUDENCE_INTERNAL:-}" ] && exit 0
 
 event_arg=${1:-}
+source_kind=${2:-claude_code}
+source_id=${3:-claude}
+case "$source_kind" in claude_code|codex) ;; *) exit 0 ;; esac
+case "$source_id" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
+# Codex Stop requires a JSON response; no instruction or blocking decision is returned.
+if [ "$source_kind" = codex ]; then
+    trap 'printf "{}\n"' EXIT
+fi
 
 # The data directory. This script is installed at <data dir>/hooks/prudence-hook.sh, so
 # it can find its own store with no configuration at all; the variable is for tests.
@@ -42,6 +50,10 @@ else
 fi
 enabled_file=$data_dir/hooks/enabled.txt
 spool=$data_dir/spool.jsonl
+sources_file=$data_dir/hooks/sources-enabled.txt
+if [ -f "$sources_file" ]; then
+    grep -Fxq "$source_id" "$sources_file" 2>/dev/null || exit 0
+fi
 
 # A millisecond clock, from whatever this machine has. GNU date does it alone; BSD date
 # (macOS) does not, so perl's Time::HiRes stands in, and seconds are the last resort.
@@ -95,16 +107,18 @@ function pull(key,   at, rest, end, out) {
     return out
 }
 {
-    printf "%s|%s|%s|%s|%s", pull("session_id"), pull("prompt_id"),
-        pull("tool_use_id"), pull("cwd"), pull("hook_event_name")
+    printf "%s|%s|%s|%s|%s|%s|%s", pull("session_id"), pull("prompt_id"),
+        pull("tool_use_id"), pull("cwd"), pull("hook_event_name"), pull("tool_name"), pull("turn_id")
 }
 ' 2>/dev/null)
 
 # A non-whitespace separator, so an empty id stays an empty field instead of shifting
 # every later one along. The separator itself was sanitised out of the values above.
-IFS='|' read -r session_id prompt_id tool_use_id cwd event_name <<SPOOL_FIELDS
+IFS='|' read -r session_id prompt_id tool_use_id cwd event_name tool_name turn_id <<SPOOL_FIELDS
 $fields
 SPOOL_FIELDS
+
+[ -n "$prompt_id" ] || prompt_id=$turn_id
 
 event=$event_arg
 [ -n "$event" ] || event=$event_name
@@ -172,8 +186,9 @@ elapsed_ms=$((end_ms - start_ms))
 mkdir -p "$data_dir" 2>/dev/null
 # One printf of one short line to a file opened O_APPEND, so two hooks firing at once
 # cannot interleave. Every value below was sanitised, so none of them needs escaping.
-printf '{"event":"%s","ts":"%s","session_id":"%s","prompt_id":"%s","tool_use_id":"%s","cwd":"%s","head":"%s","branch":"%s","dirty_fingerprint":"%s","dirty_count":%s,"elapsed_ms":%s}\n' \
+printf '{"event":"%s","ts":"%s","session_id":"%s","prompt_id":"%s","tool_use_id":"%s","cwd":"%s","head":"%s","branch":"%s","dirty_fingerprint":"%s","dirty_count":%s,"elapsed_ms":%s,"source":"%s","source_id":"%s","tool_name":"%s","capture_version":2}\n' \
     "$event" "$ts" "$session_id" "$prompt_id" "$tool_use_id" "$cwd" "$head_hash" \
-    "$branch" "$fingerprint" "$dirty_count" "$elapsed_ms" >>"$spool" 2>/dev/null
+    "$branch" "$fingerprint" "$dirty_count" "$elapsed_ms" \
+    "$source_kind" "$source_id" "$tool_name" >>"$spool" 2>/dev/null
 
 exit 0

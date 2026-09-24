@@ -3,31 +3,47 @@
 An edit tool call that touches a path the session never `Read` first is the strongest
 of the coaching reference's tool-mix signals (part a: "pure tool-call counting, no
 NLP"). File paths are only kept at `full` capture, so a `metadata-only` session cannot
-answer this at all: the fact is absent, not zero, for exactly the sessions `tool_call`
-withholds its `file_path` column for.
+answer this at all: the fact is absent, not zero. Each `edit` row is considered, so one
+call touching several files counts every unread path. Codex shell reads have no
+structured path, so a Codex session has no measurement here until that evidence exists.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from prudence.facts.base import Case, Fact
+from prudence.facts.base import Case, Fact, observes_file_reads
 
-FACT_VERSION = 1
-EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+FACT_VERSION = 3
+EDIT_TOOLS = (
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "FileChange",
+    "apply_patch",
+    "functions.apply_patch",
+)
 
 
 def compute(connection: sqlite3.Connection, session_id: str) -> int | None:
     row = connection.execute(
         "SELECT capture_level FROM session WHERE session_id = ?", (session_id,)
     ).fetchone()
-    if row is None or row["capture_level"] != "full":
+    if (
+        row is None
+        or row["capture_level"] != "full"
+        or not observes_file_reads(connection, session_id)
+    ):
         return None
     seen_read: set[str] = set()
     unread: set[str] = set()
     for call in connection.execute(
-        "SELECT tool_name, file_path FROM tool_call WHERE session_id = ? AND file_path IS NOT NULL"
-        " ORDER BY started_at, tool_use_id",
+        "SELECT c.tool_name, COALESCE(e.file_path, c.file_path) AS file_path"
+        " FROM tool_call c LEFT JOIN edit e ON e.tool_use_id = c.tool_use_id"
+        " WHERE c.session_id = ? AND COALESCE(c.is_error, 0) = 0"
+        " AND COALESCE(e.file_path, c.file_path) IS NOT NULL"
+        " ORDER BY c.started_at, c.tool_use_id, e.edit_index",
         (session_id,),
     ):
         path = call["file_path"]

@@ -35,6 +35,7 @@ from prudence.ask import schema as ask_schema
 from prudence.facts import registry as facts_registry
 from prudence.reviews import schema as review_schema
 from prudence.store import (
+    app_views,
     attribution,
     commits,
     db,
@@ -55,6 +56,7 @@ FORMAT_VERSION = 1
 
 # Derived and harvested tables, in an order an import can follow without care.
 DERIVED_TABLES = derived.TABLES + (
+    "session_source",
     "hook_event",
     hand_edits.TURN_TREE_TABLE,
     hand_edits.HAND_EDIT_TABLE,
@@ -70,7 +72,7 @@ HARVESTED_TABLES = (
     "line_fate",
     "observation",
 )
-ARCHIVE_TABLES = ("archive_file", "archive_chunk")
+ARCHIVE_TABLES = ("archive_file", "archive_chunk", "collection_source", "archive_origin")
 
 # Rows a person's own history produced rather than the archive: the reviews they have
 # been given, the suggestions those left open, and the questions they asked with the
@@ -215,6 +217,7 @@ def import_bundle(
             if config is not None:
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 config_path.write_bytes(config.read())
+    app_views.replace_app_views(connection)
     stats.elapsed = time.monotonic() - started
     return stats
 
@@ -225,6 +228,7 @@ def ensure_tables(connection: sqlite3.Connection) -> None:
     for table in derived.TABLES:
         statement = derived.SCHEMA[table].format(name=table)
         connection.execute(statement.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
+    connection.execute(app_views.SESSION_SOURCE_SCHEMA)
     connection.execute(spool.SCHEMA.format(name=spool.TABLE))
     connection.execute(hand_edits.TURN_TREE_SCHEMA.format(name=hand_edits.TURN_TREE_TABLE))
     connection.execute(hand_edits.HAND_EDIT_SCHEMA.format(name=hand_edits.HAND_EDIT_TABLE))

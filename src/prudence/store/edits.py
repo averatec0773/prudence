@@ -24,7 +24,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 
-EDIT_FACT_VERSION = 1
+EDIT_FACT_VERSION = 2
 COMMAND_FACT_VERSION = 1
 
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})

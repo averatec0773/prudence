@@ -738,15 +738,14 @@ def _ids_in(connection: sqlite3.Connection, window: Window) -> list[str]:
 
 
 def _tokens(cell: dict[str, Any]) -> float:
-    return float(sum(cell.get(column, 0) for column in views.TOKEN_COLUMNS))
+    return float(cell.get("total_tokens", 0))
 
 
 def _merge(cells: Any) -> dict[str, Any]:
-    total = {"measured": 0, **dict.fromkeys(views.TOKEN_COLUMNS, 0)}
+    total = {"measured": 0, "total_tokens": 0}
     for cell in cells:
         total["measured"] += cell.get("measured", 0)
-        for column in views.TOKEN_COLUMNS:
-            total[column] += cell.get(column, 0)
+        total["total_tokens"] += cell.get("total_tokens", 0)
     return total
 
 

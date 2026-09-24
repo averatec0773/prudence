@@ -76,7 +76,7 @@ def init(
                 {"enabled": len(enable_tokens), "disabled": len(disable_tokens)},
             )
         return
-    result = scan()
+    result = scan(config=config)
     if as_json:
         click.echo(json.dumps(as_objects(result, config), indent=2))
         return
@@ -94,8 +94,7 @@ def init(
 def render(result: ScanResult, config: config_module.Config | None = None) -> str:
     enabled = config.levels if config else {}
     lines = [
-        f"Claude Code history in {result.projects_dir}: "
-        f"{result.total_sessions} sessions, {size(result.total_bytes)}.",
+        f"Agent history: {result.total_sessions} sessions, {size(result.total_bytes)}.",
         "",
         f"{'repository':<32} {'sessions':>8} {'first':>10} {'last':>10} {'size':>9}  capture",
     ]
@@ -138,6 +137,8 @@ def _as_object(group: ProjectGroup, config: config_module.Config) -> dict:
         "path": path,
         "repo_key": group.key,
         "sessions": group.sessions,
+        "sources": sorted(group.sources),
+        "source_ids": sorted(group.source_ids),
         "first_at": group.first_at.isoformat() if group.first_at else None,
         "last_at": group.last_at.isoformat() if group.last_at else None,
         "enabled": group.key in config.levels,
@@ -160,7 +161,7 @@ def _apply(
         changed = True
         click.echo(f"Disabled {repo.name} ({repo.key}). Recorded data is kept until you forget it.")
     if enable_tokens:
-        result = scan()
+        result = scan(config=config)
         for token in enable_tokens:
             group = _resolve(result, token)
             _enable_group(config, group, level)

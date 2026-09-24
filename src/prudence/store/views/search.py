@@ -48,6 +48,9 @@ def search_sessions(
     since: str | None = None,
     until: str | None = None,
     limit: int = DEFAULT_LIMIT,
+    source: str | None = None,
+    source_id: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Sessions matching `query`, newest first, capped at `MAX_LIMIT` regardless of `limit`.
 
@@ -67,6 +70,17 @@ def search_sessions(
     if until:
         clauses.append("session.first_at <= ?")
         params.append(resolve_date(until))
+    if source:
+        clauses.append("session.source = ?")
+        params.append(source)
+    if source_id:
+        clauses.append(
+            "session.session_id IN (SELECT session_id FROM app_session_sources WHERE source_id = ?)"
+        )
+        params.append(source_id)
+    if model:
+        clauses.append("session.session_id IN (SELECT session_id FROM usage WHERE model = ?)")
+        params.append(model)
     if query:
         clauses.append(
             "session.session_id IN ("
@@ -78,7 +92,7 @@ def search_sessions(
         params.extend([like, like])
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = connection.execute(
-        f"SELECT session_id, repo_key, first_at, capture_level, notes FROM session{where}"
+        f"SELECT session_id, repo_key, first_at, capture_level, notes, source FROM session{where}"
         " ORDER BY first_at DESC",
         params,
     ).fetchall()
@@ -98,6 +112,7 @@ def search_sessions(
     results = [
         {
             "session_id": row["session_id"],
+            "source": row["source"],
             "repository": names.get(row["repo_key"], row["repo_key"]),
             "started_at": row["first_at"],
             "purpose": purposes.get(row["session_id"]),

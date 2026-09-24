@@ -93,6 +93,49 @@ Extras: `mcp` adds the MCP server the Claude Code plugin uses; `model` adds the 
 
 The desktop app is a separate download. The DMG ships with 0.1.0 (unsigned until the Developer ID certificate exists; right-click, Open, on first launch); until that release is out, build it yourself from [apps/desktop](apps/desktop/README.md).
 
+## Claude Code and Codex
+
+Prudence reads both agents' local history. The desktop app's Settings > Sources shows
+Claude Code and Codex, plus **+ Add source** for an additional named directory with an
+explicit agent type. A source is a history location, not an account or a model.
+
+Existing Claude collection remains enabled. Codex starts paused so upgrading does not
+silently add a new agent's history to enabled repositories:
+
+```sh
+prudence sources
+prudence sources set codex --enabled
+prudence init --scan
+prudence init --enable <repo> --level full
+prudence ingest
+prudence sessions --source codex --last 30d
+prudence sources add --kind claude_code --name Work --home /path/to/claude-home
+```
+
+Both the source and repository must be enabled for new collection. Pausing a source
+keeps its recorded history. Copied sessions retain their collection locations without
+counting their responses twice. The repository screen's session list filters by source
+and model; those filters do not change saved reviews or collection settings.
+
+Token totals are total input plus output. Claude's cache reads and writes are added to
+its ordinary input; Codex's reported input already includes cached tokens. Reasoning is
+a subset of output. Missing breakdowns remain unknown. One completed patch can have
+several file changes while remaining one tool call.
+
+Codex can query the same read-only MCP server as Claude Code:
+
+```sh
+codex mcp add prudence -- prudence mcp
+```
+
+The MCP tools accept recorded evidence from either agent; `search_sessions` also accepts
+`source`, `source_id`, and `model` filters. Capturing history does not require MCP or hooks.
+For optional git-state observations, run `prudence hooks install --source codex` or
+`prudence hooks install --source claude`. Hook installation is a separate, explicit
+settings change with a backup and an uninstall command. Codex may require its own hook
+trust review. Hook events and field normalization live in `hooks/policy.py`, so capture
+policy can change without changing archived transcripts or the analysis rules.
+
 ## Quick start
 
 ```
