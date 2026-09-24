@@ -166,6 +166,11 @@ def hand_edits(connection: sqlite3.Connection, session_id: str) -> list[dict[str
         return None
     if not has_hooks:
         return None
+    if connection.execute(
+        "SELECT 1 FROM turn_tree WHERE session_id = ? AND hand_edit_coverage = 0 LIMIT 1",
+        (session_id,),
+    ).fetchone():
+        return None
     ordinals = turn_ordinals(connection, session_id)
     try:
         rows = connection.execute(

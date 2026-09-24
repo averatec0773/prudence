@@ -18,7 +18,7 @@ import sqlite3
 
 from prudence.facts.base import Case, Fact
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 
 def compute(connection: sqlite3.Connection, session_id: str) -> int | None:
@@ -26,6 +26,11 @@ def compute(connection: sqlite3.Connection, session_id: str) -> int | None:
         "SELECT EXISTS(SELECT 1 FROM hook_event WHERE session_id = ?)", (session_id,)
     ).fetchone()
     if not has_hooks:
+        return None
+    if connection.execute(
+        "SELECT 1 FROM turn_tree WHERE session_id = ? AND hand_edit_coverage = 0 LIMIT 1",
+        (session_id,),
+    ).fetchone():
         return None
     (count,) = connection.execute(
         "SELECT COUNT(*) FROM hand_edit WHERE session_id = ?", (session_id,)

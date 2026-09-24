@@ -164,3 +164,19 @@ def test_no_hook_data_is_not_captured_rather_than_zero(lab: Workspace) -> None:
 
     facts_output = CliRunner().invoke(main, ["facts", "--last", "30d"]).output
     assert "handedit" in facts_output
+
+
+def test_other_agent_activity_makes_hand_edit_gap_unknown(lab):
+    record_one_session(lab)
+    other = json.loads(_line(lab, "PreToolUse", "2026-09-15T15:02:00.000Z", "cx-turn", FP_B, 1))
+    other.update(session_id="codex:other", source="codex", tool_name="apply_patch")
+    _append(
+        _line(lab, "UserPromptSubmit", "2026-09-15T15:00:00.000Z", "turn-1", FP_A, 0),
+        _line(lab, "Stop", "2026-09-15T15:01:00.000Z", "turn-1", FP_A, 0),
+        json.dumps(other),
+        _line(lab, "UserPromptSubmit", "2026-09-15T15:05:00.000Z", "turn-2", FP_B, 1),
+        _line(lab, "Stop", "2026-09-15T15:06:00.000Z", "turn-2", FP_B, 1),
+    )
+    _ingest()
+    assert not _rows(f"SELECT * FROM hand_edit WHERE session_id = '{SAMPLE_SESSION}'")
+    assert _fact_value() is None, "other agents may explain the change; zero would claim coverage"

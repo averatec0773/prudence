@@ -29,7 +29,7 @@ from prudence.store import archive
 from prudence.store import progress as progress_module
 from prudence.store.repos import Resolver
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 TABLE = "hook_event"
 
@@ -48,7 +48,11 @@ CREATE TABLE IF NOT EXISTS {name}(
     dirty_fingerprint TEXT,
     dirty_count INTEGER,
     elapsed_ms INTEGER,
-    parser_version INTEGER NOT NULL
+    parser_version INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT 'claude_code',
+    source_id TEXT,
+    tool_name TEXT,
+    capture_version INTEGER
 )
 """
 
@@ -69,6 +73,10 @@ FIELDS = (
     "dirty_fingerprint",
     "dirty_count",
     "elapsed_ms",
+    "source",
+    "source_id",
+    "tool_name",
+    "capture_version",
 )
 
 
@@ -170,4 +178,6 @@ def _parse(line: bytes) -> dict | None:
         return None
     if not isinstance(record, dict) or not record.get("event"):
         return None
-    return record
+    from prudence.hooks.policy import normalize_observation
+
+    return normalize_observation(record)

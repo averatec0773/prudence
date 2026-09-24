@@ -251,10 +251,7 @@ def totals_of(usage: dict[str, Any] | None) -> dict[str, Any]:
     if not usage or not usage.get("sessions"):
         return {}
     by_purpose = usage["by_purpose"]
-    per_purpose = {
-        label: sum(cell.get(column, 0) for column in views.TOKEN_COLUMNS)
-        for label, cell in by_purpose.items()
-    }
+    per_purpose = {label: cell["total_tokens"] for label, cell in by_purpose.items()}
     measured = any(cell.get("measured") for cell in by_purpose.values())
     total = sum(per_purpose.values())
     return {

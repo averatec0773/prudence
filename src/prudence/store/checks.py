@@ -19,10 +19,9 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from prudence.store import app_views, buckets, derived, edits, meta
-from prudence.store.views.usage import TOKEN_COLUMNS
+from prudence.store import app_views, buckets, derived, edits, meta, tokens
 
-_TOTAL = " + ".join(f"COALESCE({column}, 0)" for column in TOKEN_COLUMNS)
+_TOTAL = tokens.total_sql()
 
 
 @dataclass(frozen=True)

@@ -213,7 +213,7 @@ def report(result: pipeline.Result, checks_line: bool = True) -> list[str]:
         )
     lines.append(
         f"Tokens: {parsed.usage_tokens} over {parsed.usage_rows} API responses "
-        "(input, output and cache together; a response is counted once)."
+        "(total input including cache plus output; a response is counted once)."
     )
     hooks = result.hooks
     if hooks.files or hooks.events:

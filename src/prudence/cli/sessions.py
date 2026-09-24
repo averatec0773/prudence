@@ -55,7 +55,17 @@ _UNITS = {"h": "hours", "d": "days", "w": "weeks"}
 )
 @click.option("--project", "project", metavar="NAME", help="One repository, by name or key.")
 @click.option("--json", "as_json", is_flag=True, help="Print the same rows as JSON.")
-def sessions(window: str, project: str | None, as_json: bool) -> None:
+@click.option("--source", type=click.Choice(config_module.SOURCE_KINDS))
+@click.option("--source-id", help="One collection location id.")
+@click.option("--model", help="Sessions containing responses from this model.")
+def sessions(
+    window: str,
+    project: str | None,
+    as_json: bool,
+    source: str | None,
+    source_id: str | None,
+    model: str | None,
+) -> None:
     """List recent sessions with their edits, commands and attributed commits."""
     since = _since(window)
     if not database_file().exists():
@@ -63,7 +73,7 @@ def sessions(window: str, project: str | None, as_json: bool) -> None:
     connection = db.connect()
     try:
         repo_key = _repo_key(connection, project)
-        data = summary(connection, since, repo_key, window)
+        data = summary(connection, since, repo_key, window, source, source_id, model)
         click.echo(json.dumps(data, indent=2) if as_json else render(data))
     except sqlite3.OperationalError as error:
         raise click.ClickException(
@@ -74,7 +84,13 @@ def sessions(window: str, project: str | None, as_json: bool) -> None:
 
 
 def summary(
-    connection: sqlite3.Connection, since: str, repo_key: str | None, window: str
+    connection: sqlite3.Connection,
+    since: str,
+    repo_key: str | None,
+    window: str,
+    source: str | None = None,
+    source_id: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """One dictionary per session, from the derived tables alone.
 
@@ -84,13 +100,24 @@ def summary(
     """
     names = {row["repo_key"]: row["name"] for row in connection.execute("SELECT * FROM repository")}
     query = (
-        "SELECT session_id, repo_key, first_at, capture_level, notes FROM session"
+        "SELECT session_id, repo_key, first_at, capture_level, notes, source FROM session"
         " WHERE first_at >= ?"
     )
     parameters: list[str] = [since]
     if repo_key is not None:
         query += " AND repo_key = ?"
         parameters.append(repo_key)
+    if source:
+        query += " AND source = ?"
+        parameters.append(source)
+    if source_id:
+        query += (
+            " AND session_id IN (SELECT session_id FROM app_session_sources WHERE source_id = ?)"
+        )
+        parameters.append(source_id)
+    if model:
+        query += " AND session_id IN (SELECT session_id FROM usage WHERE model = ?)"
+        parameters.append(model)
     rows = list(connection.execute(query + " ORDER BY first_at", parameters))
     head = {"window": window, "since": since, "repo_key": repo_key}
     if not rows:
@@ -115,6 +142,7 @@ def summary(
         listed.append(
             {
                 "session_id": session_id,
+                "source": row["source"],
                 "repo_key": row["repo_key"],
                 "project": names.get(row["repo_key"], row["repo_key"] or "unassigned"),
                 "started_at": row["first_at"],
@@ -169,7 +197,7 @@ def _footer(count: int, window: str) -> list[str]:
         f"{count} sessions in the last {window}. Commits are counted as "
         "fact (+inferred), with (?N) uncertain attributions beside them, which enter no "
         "statistic; coverage is the mean share of a counted commit's added lines that "
-        "session wrote. Tokens are input, output and cache tokens together, in thousands. "
+        "session wrote. Tokens are total input (including cache) plus output, in thousands. "
         "Alive 30d is the share of the session's counted lines still in the same file "
         "thirty days after the commit; a dash means that mark has not happened yet. "
         "`prudence outcomes` prints the rest.",
@@ -252,7 +280,9 @@ def _select(
 
 
 def _notes(cell: dict[str, Any]) -> str:
-    notes = [cell["capture_notes"]] if cell["capture_notes"] else []
+    notes = [cell["source"]]
+    if cell["capture_notes"]:
+        notes.append(cell["capture_notes"])
     if cell["capture_level"] and cell["capture_level"] != "full":
         notes.insert(0, cell["capture_level"])
     return "; ".join(notes)

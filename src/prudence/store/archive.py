@@ -64,6 +64,8 @@ class Target:
     source: str  # transcript, subagent, tool-result, file-history, spool
     session_id: str | None
     repo_key: str | None
+    agent_kind: str = sources.DEFAULT_KIND
+    source_id: str = "claude"
 
 
 @dataclass
@@ -81,6 +83,8 @@ def collect_targets(
     enabled_keys: set[str],
     resolver: Resolver | None = None,
     kind: str = sources.DEFAULT_KIND,
+    home: Path | None = None,
+    source_id: str = "claude",
 ) -> list[Target]:
     """Every file belonging to an enabled repository: transcript, subagents, spills, history.
 
@@ -91,15 +95,15 @@ def collect_targets(
     pattern and the session is archived like any other. Without a resolver only the
     directory itself is consulted.
     """
-    adapter = sources.source(kind)
+    adapter = sources.source(kind, home)
     targets: list[Target] = []
     for session in adapter.session_files():
         key = _repo_key(session, resolver)
         if key is None or key not in enabled_keys:
             continue
-        targets.append(Target(session.path, base.SESSION, session.session_id, key))
+        targets.append(Target(session.path, base.SESSION, session.session_id, key, kind, source_id))
         targets.extend(
-            Target(companion.path, companion.kind, session.session_id, key)
+            Target(companion.path, companion.kind, session.session_id, key, kind, source_id)
             for companion in adapter.companion_files(session)
         )
     return targets
@@ -136,6 +140,7 @@ def archive(
     progress.start(len(targets), "files")
     now = datetime.now(UTC).isoformat()
     seen: list[tuple[str, str]] = []
+    origins: list[tuple[str, str]] = []
     for target in targets:
         progress.advance(label=_label(target, names))
         stats.files_seen += 1
@@ -144,6 +149,8 @@ def archive(
         except OSError:
             stats.missing_files += 1
             continue
+        if target.source != "spool":
+            origins.append((str(target.path), target.source_id))
         row = connection.execute(
             "SELECT size, mtime, sha256, generation FROM archive_file WHERE path = ?",
             (str(target.path),),
@@ -186,6 +193,7 @@ def archive(
             )
     with _transaction(connection):
         connection.executemany("UPDATE archive_file SET last_seen = ? WHERE path = ?", seen)
+        connection.executemany("INSERT OR IGNORE INTO archive_origin VALUES (?, ?)", origins)
     stats.elapsed = time.monotonic() - started
     return stats
 
@@ -395,8 +403,9 @@ def _store(
     connection.execute(
         "INSERT INTO archive_file"
         "(path, source, session_id, repo_key, size, mtime, sha256, first_seen, last_seen,"
-        " generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        " generation, agent_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(path) DO UPDATE SET source = excluded.source,"
+        " agent_kind = excluded.agent_kind,"
         " session_id = excluded.session_id, repo_key = excluded.repo_key,"
         " size = excluded.size, mtime = excluded.mtime, sha256 = excluded.sha256,"
         " last_seen = excluded.last_seen, generation = excluded.generation",
@@ -411,6 +420,7 @@ def _store(
             first_seen or now,
             now,
             generation,
+            target.agent_kind,
         ),
     )
 

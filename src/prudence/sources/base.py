@@ -118,6 +118,8 @@ class Usage:
     output_tokens: int | None
     cache_read_tokens: int | None
     cache_creation_tokens: int | None
+    total_input_tokens: int | None = None
+    reasoning_output_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,7 @@ class ToolCall:
     command: CommandFacts | None
     shell_command: str | None = None
     sends_to_agent: str | None = None
+    edits: tuple[EditFacts, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,7 @@ class ToolResult:
     exit_code: int | None
     commit_hash: str | None
     started_agent: str | None = None
+    edits: tuple[EditFacts, ...] = ()
 
 
 Payload = Prompt | Usage | ToolCall | ToolResult
@@ -206,6 +210,7 @@ class Event:
     payloads: tuple[Payload, ...] = field(default_factory=tuple)
     offset: int | None = None
     key_shape: tuple[str, ...] = ()
+    response_gap: bool = False
 
 
 def key_shape(record: dict, depth: int = KEY_SHAPE_DEPTH) -> tuple[str, ...]:

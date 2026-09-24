@@ -96,7 +96,10 @@ def summary(connection: sqlite3.Connection, window: str, repo_key: str | None) -
     by_week: dict[tuple[str, str], dict[str, float]] = defaultdict(_empty)
     gap = _empty()
     for row in rows:
-        cell = {key: float(row[key] or 0) for key in _empty()}
+        cell = {
+            key: (None if row[key] is None and key in TOKEN_COLUMNS else float(row[key] or 0))
+            for key in _empty()
+        }
         if row["bucket"] is None:
             _add(gap, cell)
             continue
@@ -192,7 +195,10 @@ def _cell(cell: dict[str, float], total: dict[str, float]) -> dict[str, Any]:
     return {
         "responses": int(cell["responses"]),
         "measured": int(cell["measured"]),
-        **{column: int(cell[column]) for column in TOKEN_COLUMNS},
+        **{
+            column: (int(cell[column]) if cell[column] is not None else None)
+            for column in TOKEN_COLUMNS
+        },
         "total_tokens": int(_sum(cell)),
         "heuristic_tokens": int(cell["heuristic_tokens"]),
         "share": (_sum(cell) / grand) if grand else None,
@@ -203,18 +209,20 @@ def _empty() -> dict[str, float]:
     return {
         "responses": 0.0,
         "measured": 0.0,
-        **dict.fromkeys(TOKEN_COLUMNS, 0.0),
+        **dict.fromkeys(TOKEN_COLUMNS, None),
         "heuristic_tokens": 0.0,
+        "total_tokens": 0.0,
     }
 
 
 def _add(totals: dict[str, float], cell: dict[str, float]) -> None:
     for key, value in cell.items():
-        totals[key] += value
+        if value is not None:
+            totals[key] = (totals[key] or 0) + value
 
 
 def _sum(cell: dict[str, float]) -> float:
-    return sum(cell[column] for column in TOKEN_COLUMNS)
+    return cell["total_tokens"]
 
 
 def _header(first: str) -> str:
@@ -231,7 +239,7 @@ def _row(label: str, cell: dict[str, Any]) -> str:
     return (
         f"{label:<14} {cell['responses']:>9} "
         + " ".join(
-            f"{(_k(cell[column]) if measured else '-'):>{width}}"
+            f"{(_k(cell[column]) if measured and cell[column] is not None else '-'):>{width}}"
             for column, width in zip(TOKEN_COLUMNS, (8, 8, 9, 9), strict=True)
         )
         + f" {(_k(cell['total_tokens']) if measured else '-'):>9} {share:>6}"
@@ -260,7 +268,7 @@ def _footer(window: str, total: dict[str, float], gap: dict[str, float]) -> list
     return [
         f"{int(total['responses'])} responses in the last {window}, by when each began (UTC). "
         "Token counts are in thousands, split into input, output, cache read and cache write "
-        "because they do not cost the same; a dash means that Claude Code version wrote no "
+        "because they do not cost the same; a dash means the agent wrote no "
         "usage fields, which is not zero tokens.",
         "A response's bucket is what it did, from its tool calls alone (bucket rule version "
         f"{buckets.BUCKET_RULE_VERSION}): change wrote a file, run ran a command or a tool "

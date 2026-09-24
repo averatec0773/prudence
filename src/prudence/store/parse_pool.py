@@ -53,6 +53,7 @@ class FileTask:
     session_id: str
     agent_id: str | None
     sidecar: str | None
+    kind: str | None = None
 
 
 def default_workers() -> int:
@@ -101,7 +102,7 @@ def _open(database: Path) -> sqlite3.Connection:
 
 
 def _events(connection: sqlite3.Connection, task: FileTask, kind: str) -> list[base.Event]:
-    adapter = sources.source(kind)
+    adapter = sources.source(task.kind or kind)
     lines = archive.iter_lines(connection, task.path)
     sidecar = archive.read_file(connection, task.sidecar) if task.sidecar else None
     return list(adapter.events(lines, task.path, task.session_id, task.agent_id, sidecar))

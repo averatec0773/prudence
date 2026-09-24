@@ -203,23 +203,19 @@ def _usage(connection: sqlite3.Connection, session_id: str) -> list[str]:
     )
     summary = views.usage_of_session(connection, session_id)
     if summary is None:
-        lines.append("  none recorded (this Claude Code version wrote no usage fields)")
+        lines.append("  none recorded (the agent wrote no usage fields)")
         return lines
     lines.append(
         f"  {'model':<30} {'requests':>9} {'input':>10} {'output':>10} {'cache read':>11} "
         f"{'cache write':>12} {'total':>11}"
     )
-    for model, counted in summary["by_model"].items():
+    for model, counts in [*summary["by_model"].items(), ("all models", summary)]:
+        counted = {key: "-" if value is None else value for key, value in counts.items()}
         lines.append(
             f"  {model[:30]:<30} {counted['requests']:>9} {counted['input_tokens']:>10} "
             f"{counted['output_tokens']:>10} {counted['cache_read_tokens']:>11} "
             f"{counted['cache_creation_tokens']:>12} {counted['total_tokens']:>11}"
         )
-    lines.append(
-        f"  {'all models':<30} {summary['requests']:>9} {summary['input_tokens']:>10} "
-        f"{summary['output_tokens']:>10} {summary['cache_read_tokens']:>11} "
-        f"{summary['cache_creation_tokens']:>12} {summary['total_tokens']:>11}"
-    )
     lines.append(
         "  one row per API response, not per record: Claude Code repeats the same usage "
         "on every record of one response."
@@ -421,7 +417,7 @@ def _hand_edits(connection: sqlite3.Connection, session_id: str) -> list[str]:
     )
     gaps = views.hand_edits(connection, session_id)
     if gaps is None:
-        lines.append("  not captured (no hook data)")
+        lines.append("  not captured (no hook data) or uncertain because another agent was active")
         return lines
     if not gaps:
         lines.append("  none: the tree matched at every turn boundary the hooks saw")

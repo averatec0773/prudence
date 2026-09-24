@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 # Every derived and harvested table that holds a session id, with the column it uses.
 SESSION_TABLES = (
+    ("session_source", "session_id"),
     ("attribution", "session_id"),
     ("command", "session_id"),
     ("commit_alias", "session_id"),

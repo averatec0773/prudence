@@ -18,22 +18,21 @@ from __future__ import annotations
 import sqlite3
 
 from prudence.facts.base import Case, Fact
+from prudence.store import tokens
 
-FACT_VERSION = 1
+FACT_VERSION = 2
 
 # A turn above this many tokens, subagents included, is a giant turn.
 GIANT_TURN_TOKENS = 5_000_000
 
-_TOKENS = (
-    "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)"
-    " + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)"
-)
+_TOKENS = tokens.total_sql()
 
 
 def giant(connection: sqlite3.Connection, session_id: str) -> tuple[int, int] | None:
     """(giant turns, their tokens), or None when no reply of the session reported usage."""
     rows = connection.execute(
-        f"SELECT SUM({_TOKENS}) AS tokens, COUNT(input_tokens) AS measured FROM response"
+        f"SELECT SUM({_TOKENS}) AS tokens,"
+        " COUNT(COALESCE(total_input_tokens, input_tokens)) AS measured FROM response"
         " WHERE session_id = ? AND turn_id IS NOT NULL GROUP BY turn_id",
         (session_id,),
     ).fetchall()

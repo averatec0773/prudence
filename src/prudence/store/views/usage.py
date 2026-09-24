@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from prudence.store import tokens
 from prudence.store.buckets import BUCKETS
 from prudence.store.views.common import SITTING_GAP, _batched
 from prudence.store.views.sessions import repository_names
@@ -17,10 +18,11 @@ def session_usage(connection: sqlite3.Connection, session_id: str) -> list[sqlit
     """One row per model this session used, with its requests and its four token counts."""
     return connection.execute(
         "SELECT COALESCE(model, '?') AS model, COUNT(*) AS requests,"
-        " SUM(COALESCE(input_tokens, 0)) AS input_tokens,"
-        " SUM(COALESCE(output_tokens, 0)) AS output_tokens,"
-        " SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,"
-        " SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens"
+        " SUM(input_tokens) AS input_tokens,"
+        " SUM(output_tokens) AS output_tokens,"
+        " SUM(cache_read_tokens) AS cache_read_tokens,"
+        " SUM(cache_creation_tokens) AS cache_creation_tokens,"
+        f" SUM({tokens.total_sql()}) AS total_tokens"
         " FROM usage WHERE session_id = ? GROUP BY model ORDER BY model",
         (session_id,),
     ).fetchall()
@@ -35,16 +37,16 @@ def usage_of_session(connection: sqlite3.Connection, session_id: str) -> dict[st
     rows = session_usage(connection, session_id)
     if not rows:
         return None
-    totals = {column: sum(row[column] for row in rows) for column in TOKEN_COLUMNS}
+    totals = {column: tokens.sum_nullable(row[column] for row in rows) for column in TOKEN_COLUMNS}
     return {
         "requests": sum(row["requests"] for row in rows),
         **totals,
-        "total_tokens": sum(totals.values()),
+        "total_tokens": sum(row["total_tokens"] for row in rows),
         "by_model": {
             row["model"]: {
                 "requests": row["requests"],
                 **{column: row[column] for column in TOKEN_COLUMNS},
-                "total_tokens": sum(row[column] for column in TOKEN_COLUMNS),
+                "total_tokens": row["total_tokens"],
             }
             for row in rows
         },
@@ -57,20 +59,24 @@ def usage_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, int]:
         row["session_id"]: row["total"]
         for row in _batched(
             connection,
-            "SELECT session_id, SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)"
-            " + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) AS total"
-            " FROM usage",
+            f"SELECT session_id, SUM({tokens.total_sql()}) AS total FROM usage",
             ids,
             " GROUP BY session_id",
         )
     }
 
 
-def usage_by_kind_map(connection: sqlite3.Connection, ids: list[str]) -> dict[str, dict[str, int]]:
+def usage_by_kind_map(
+    connection: sqlite3.Connection, ids: list[str]
+) -> dict[str, dict[str, int | None]]:
     """The four token counts per session, absent for a session whose records carried none."""
-    columns = ", ".join(f"SUM(COALESCE({column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
+    columns = ", ".join(f"SUM({column}) AS {column}" for column in TOKEN_COLUMNS)
+    columns += f", SUM({tokens.total_sql()}) AS total_tokens"
     return {
-        row["session_id"]: {column: row[column] or 0 for column in TOKEN_COLUMNS}
+        row["session_id"]: {
+            **{column: row[column] for column in TOKEN_COLUMNS},
+            "total_tokens": row["total_tokens"] or 0,
+        }
         for row in _batched(
             connection, f"SELECT session_id, {columns} FROM usage", ids, " GROUP BY session_id"
         )
@@ -139,16 +145,26 @@ def usage_summary(
 
 
 def _empty_usage_cell() -> dict[str, Any]:
-    return {"sessions": 0, "hours": 0.0, "measured": 0, **dict.fromkeys(TOKEN_COLUMNS, 0)}
+    return {
+        "sessions": 0,
+        "hours": 0.0,
+        "measured": 0,
+        "total_tokens": 0,
+        **dict.fromkeys(TOKEN_COLUMNS, None),
+    }
 
 
-def _accumulate_usage(cell: dict[str, Any], counted: dict[str, int] | None, hours: float) -> None:
+def _accumulate_usage(
+    cell: dict[str, Any], counted: dict[str, int | None] | None, hours: float
+) -> None:
     cell["sessions"] += 1
     cell["hours"] += hours
     if counted:
         cell["measured"] += 1
         for column in TOKEN_COLUMNS:
-            cell[column] += counted[column]
+            if counted[column] is not None:
+                cell[column] = (cell[column] or 0) + counted[column]
+        cell["total_tokens"] += counted["total_tokens"] or 0
 
 
 def usage_totals(connection: sqlite3.Connection) -> dict[str, Any]:
@@ -156,10 +172,11 @@ def usage_totals(connection: sqlite3.Connection) -> dict[str, Any]:
     try:
         row = connection.execute(
             "SELECT COUNT(*) AS requests, COUNT(DISTINCT session_id) AS sessions,"
-            " SUM(COALESCE(input_tokens, 0)) AS input_tokens,"
-            " SUM(COALESCE(output_tokens, 0)) AS output_tokens,"
-            " SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,"
-            " SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens FROM usage"
+            " SUM(input_tokens) AS input_tokens,"
+            " SUM(output_tokens) AS output_tokens,"
+            " SUM(cache_read_tokens) AS cache_read_tokens,"
+            " SUM(cache_creation_tokens) AS cache_creation_tokens,"
+            f" SUM({tokens.total_sql()}) AS total_tokens FROM usage"
         ).fetchone()
         models = connection.execute(
             "SELECT COALESCE(model, '?') AS model, COUNT(*) AS requests FROM usage"
@@ -167,12 +184,12 @@ def usage_totals(connection: sqlite3.Connection) -> dict[str, Any]:
         ).fetchall()
     except sqlite3.OperationalError:
         return {"requests": 0, "sessions": 0, "total_tokens": 0, "by_model": {}}
-    totals = {column: row[column] or 0 for column in TOKEN_COLUMNS}
+    totals = {column: (0 if row["requests"] == 0 else row[column]) for column in TOKEN_COLUMNS}
     return {
         "requests": row["requests"],
         "sessions": row["sessions"],
         **totals,
-        "total_tokens": sum(totals.values()),
+        "total_tokens": row["total_tokens"] or 0,
         "by_model": {model["model"]: model["requests"] for model in models},
     }
 
@@ -280,11 +297,12 @@ def bucket_usage(
     no bucket, whose record could not be read, comes back under `bucket` None: it is the
     coverage gap, never a fifth bucket. Empty before parser version 6.
     """
-    columns = ", ".join(f"SUM(COALESCE(p.{column}, 0)) AS {column}" for column in TOKEN_COLUMNS)
-    total = " + ".join(f"COALESCE(p.{column}, 0)" for column in TOKEN_COLUMNS)
+    columns = ", ".join(f"SUM(p.{column}) AS {column}" for column in TOKEN_COLUMNS)
+    total = tokens.total_sql("p")
     query, parameters = _window(
         f"SELECT s.repo_key AS repo_key, p.bucket AS bucket, substr(p.started_at, 1, 10) AS day,"
-        f" COUNT(*) AS responses, COUNT(p.input_tokens) AS measured, {columns},"
+        f" COUNT(*) AS responses, COUNT(COALESCE(p.total_input_tokens, p.input_tokens))"
+        f" AS measured, {columns}, SUM({total}) AS total_tokens,"
         f" SUM(CASE WHEN p.heuristic = 1 THEN {total} ELSE 0 END) AS heuristic_tokens"
         " FROM response p JOIN session s ON s.session_id = p.session_id",
         since,
@@ -341,7 +359,7 @@ def bucket_totals(connection: sqlite3.Connection) -> dict[str, Any]:
     replies no bucket could be given at all; `subagent_tokens` are subagents' replies and
     `subagent_unlinked_tokens` the part of them no turn was found for.
     """
-    total = " + ".join(f"COALESCE({column}, 0)" for column in TOKEN_COLUMNS)
+    total = tokens.total_sql()
     empty: dict[str, Any] = {
         "responses": 0,
         "total_tokens": 0,
@@ -384,7 +402,7 @@ def bucket_shares_map(
     connection: sqlite3.Connection, ids: list[str]
 ) -> dict[str, dict[str, float]]:
     """Each session's bucketed tokens as four shares. Absent: no reply with tokens."""
-    total = " + ".join(f"COALESCE({column}, 0)" for column in TOKEN_COLUMNS)
+    total = tokens.total_sql()
     found: dict[str, dict[str, int]] = {}
     for row in _batched(
         connection,

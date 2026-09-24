@@ -22,6 +22,12 @@ def claude_config_dir() -> Path:
     return Path(override).expanduser() if override else Path.home() / ".claude"
 
 
+def codex_home() -> Path:
+    """Codex history root, respecting the same override as the agent."""
+    override = os.environ.get("CODEX_HOME")
+    return Path(override).expanduser() if override else Path.home() / ".codex"
+
+
 def claude_projects_dir() -> Path:
     """Where Claude Code keeps session transcripts, one subdirectory per project path."""
     return claude_config_dir() / "projects"

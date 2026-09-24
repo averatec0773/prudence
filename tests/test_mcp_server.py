@@ -90,3 +90,21 @@ def test_ask_writes_nothing_to_the_store(lab: Workspace) -> None:
     finally:
         connection.close()
     assert stored == 0
+
+
+def test_source_filter_and_readonly_connection(lab):
+    import sqlite3
+
+    record_one_session(lab)
+    found = server.search_sessions(source="claude_code")
+    assert found["total"] == 1
+    assert found["results"][0]["source"] == "claude_code"
+    assert server.search_sessions(source="codex")["total"] == 0
+    assert server.search_sessions(source_id="claude")["total"] == 1
+    assert server.search_sessions(source_id="missing")["total"] == 0
+    connection = server._connect()
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("DELETE FROM session")
+    finally:
+        connection.close()

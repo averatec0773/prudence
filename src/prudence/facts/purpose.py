@@ -42,9 +42,9 @@ from __future__ import annotations
 import sqlite3
 
 from prudence.facts import repeated_errors
-from prudence.facts.base import Case, Label
+from prudence.facts.base import Case, Label, observes_file_reads
 
-RULE_VERSION = 1
+RULE_VERSION = 2
 
 CONVERSATION = "conversation"
 RESEARCH = "research"
@@ -86,8 +86,9 @@ def compute(connection: sqlite3.Connection, session_id: str) -> str:
     if tool_calls == 0 or (tool_calls < CONVERSATION_TOOL_SHARE * prompts and edits == 0):
         return CONVERSATION
 
-    looked = _looked(connection, session_id)
-    if looked >= RESEARCH_RATIO * edits and edits < RESEARCH_MAX_EDITS:
+    reads_observable = observes_file_reads(connection, session_id)
+    looked = _looked(connection, session_id) if reads_observable else 0
+    if reads_observable and looked >= RESEARCH_RATIO * edits and edits < RESEARCH_MAX_EDITS:
         return RESEARCH
 
     tests = _count(
@@ -109,7 +110,7 @@ def compute(connection: sqlite3.Connection, session_id: str) -> str:
 
     if edits >= DEVELOPMENT_MIN_EDITS or _committed(connection, session_id):
         return DEVELOPMENT
-    return MIXED
+    return MIXED if reads_observable else UNKNOWN
 
 
 def _looked(connection: sqlite3.Connection, session_id: str) -> int:
